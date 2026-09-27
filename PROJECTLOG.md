@@ -102,3 +102,67 @@
 未完成事项：
 
 - 阶段 1 到阶段 9 的状态列仍是「待开始」。每阶段做完回填。
+
+## 2026-09-27 阶段 1 依赖合并
+
+目标：按 BUILD_GUIDE 第 5 节把依赖表落到 `pubspec.yaml`，并定下版本号规则。
+
+动作：
+
+1. `pubspec.yaml:33` 的 Dart SDK 约束从 `^3.12.0` 提到 `^3.12.2`，对齐第 5.1 节。
+2. `pubspec.yaml:19` 的版本号从 `1.0.0+1` 改成 `0.2.0+2`。规则见下。
+3. 并入 PictureViewer2 的四个依赖：`crypto: ^3.0.7`、`image: ^4.9.1`、`desktop_drop: ^0.4.4`、`exif: ^3.3.0`。
+4. 第 5.3 节的 sqlite3 来源写法沿用 AudioShelf 版，阶段 0 已迁入，本轮不动。
+
+版本号规则：
+
+| 段 | 规则 |
+| --- | --- |
+| 主版本 | 首个可用版本前保持 0 |
+| 次版本 | 每完成一个阶段加 1 |
+| 修订号 | 阶段内的小修加 1 |
+| 构建号 | `+` 后跟阶段序号加 1，与 Android 的 versionCode 对齐 |
+
+阶段 0 记作 `0.1.0+1`，本轮阶段 1 记作 `0.2.0+2`，阶段 9 收尾到 `1.0.0`。版本号只在 `pubspec.yaml` 维护。`windows/runner/Runner.rc:72` 的 `1.0.0` 是非 Flutter 构建的兜底，正常构建走 `FLUTTER_VERSION` 宏。
+
+阶段验收：
+
+- `flutter pub get` 成功，输出 `Changed 9 dependencies!`。
+- `pubspec.lock` 严格解析：file_picker 12.1.2、sqflite_common_ffi 2.4.2+1，与第 5.1 节一致。
+- `flutter analyze --no-fatal-infos`：6 条 info，0 error，退出码 0。与阶段 0 基线相同。
+- `flutter test`：72 个用例全过，输出 `+72: All tests passed!`。
+
+未完成事项：
+
+- 新增的四个依赖要到阶段 4 与阶段 5 才有用，本轮不写调用代码。
+
+## 2026-09-27 媒体类型查找能力实测
+
+目标：给「视频、图片、音乐怎么区分与查找」找实测依据，不靠记忆下结论。
+
+动作：
+
+1. 探明 Linux 上应用实际加载的 SQLite 库，做三组查询对照。
+2. 结果写进 BUILD_GUIDE 第 17 节，作为阶段 2 与阶段 5 的设计输入。
+
+验证：
+
+- `which sqlite3` 命中的是 Android SDK 里的 3.50.6，它编译时没开 FTS5，报 `no such module: fts5`。不能拿它当应用环境的证据。
+- 应用在 Linux 用系统库 `/usr/lib/x86_64-linux-gnu/libsqlite3.so.0`，版本 3.46.1。ctypes 读到 `sqlite3_libversion()` 也得 3.46.1。
+- 该库的编译选项含 `ENABLE_FTS3`、`ENABLE_FTS4`、`ENABLE_FTS5`。建 FTS5 虚表成功，`tokenize='trigram'` 与 `tokenize='unicode61'` 都成功。
+- 插入 `本地音乐播放器`、`My Favorite Song`、`cover.jpg` 后的命中行数：
+
+| 查询 | unicode61 | trigram | LIKE |
+| --- | --- | --- | --- |
+| 音乐 | 0 | 0 | 1 |
+| 播放器 | 0 | 1 | 1 |
+| 音乐播放 | 0 | 1 | 未测 |
+| avorit | 0 | 1 | 1 |
+| favorite | 1 | 1 | 未测 |
+| favor* | 1 | 1 | 未测 |
+
+- 复现方式：`python3` 建两张 FTS5 虚表，分别用 `unicode61` 与 `trigram`，插入同三行后逐条 `MATCH` 计数。python3 的 sqlite3 模块链接的就是系统库，版本号与 `sqlite3_libversion()` 一致。
+
+未完成事项：
+
+- Windows 的 winsqlite3.dll 与 Android 的系统 SQLite 是否带 FTS5 还没验。阶段 2 做运行时探测，失败就退回 `LIKE`。

@@ -65,7 +65,7 @@ flutter test
 | 阶段 | 目标 | 状态 |
 | --- | --- | --- |
 | 0 | 建仓与改名 | 已完成，提交 `7f155ab` |
-| 1 | 依赖合并 | 待开始 |
+| 1 | 依赖合并 | 已完成，提交 `c2ec53c` |
 | 2 | 数据层统一 | 待开始 |
 | 3 | 迁移服务 | 待开始 |
 | 4 | 图片栈迁入 | 待开始 |
@@ -100,7 +100,7 @@ flutter analyze --no-fatal-infos
 
 ### 阶段 2 数据层统一
 
-依据：BUILD_GUIDE 第 7 节。
+依据：BUILD_GUIDE 第 7 节与第 17 节。
 
 动作：
 
@@ -168,7 +168,7 @@ flutter analyze --no-fatal-infos
 
 ### 阶段 5 视频识别与外链
 
-依据：BUILD_GUIDE 第 9 节。
+依据：BUILD_GUIDE 第 9 节与第 17 节。
 
 动作：
 
@@ -305,6 +305,19 @@ aapt2 dump badging build/app/outputs/flutter-apk/app-debug.apk | grep -E '^packa
 
 一个阶段一个提交，不带无关改动。
 
+### 8.1 版本号规则
+
+`pubspec.yaml` 的版本号是三段式加构建号，构建号与 Android 的 versionCode 对齐。
+
+| 段 | 规则 |
+| --- | --- |
+| 主版本 | 首个可用版本前保持 0 |
+| 次版本 | 每完成一个阶段加 1 |
+| 修订号 | 阶段内的小修加 1 |
+| 构建号 | `+` 后跟阶段序号加 1 |
+
+阶段 0 记作 `0.1.0+1`，阶段 1 记作 `0.2.0+2`，阶段 9 收尾到 `1.0.0`。每阶段收工时改一次。版本号只在 `pubspec.yaml` 维护。
+
 交付报告按这个形状写：
 
 | 顺序 | 内容 |
@@ -344,4 +357,4 @@ python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
 
 `LICENSE` 是 MIT 原文，BUILD_GUIDE 第 15 节里那条 BSD 3-Clause 署名问题不存在。
 
-下一步是阶段 1 依赖合并。
+下一步是阶段 2 数据层统一。

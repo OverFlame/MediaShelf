@@ -1092,3 +1092,69 @@ AudioShelf 的老数据按原值导入。
 | lib/widgets/tag_panel.dart | 821 |
 | lib/widgets/tag_picker_dialog.dart | 137 |
 | 合计 | 10805 |
+
+## 17 媒体类型判定与查找（建议）
+
+本节补第 9.2 节的类型判定与第 7 节的查找设计。表内命中行数都是实测结果，复现方式见 PROJECTLOG.md。
+
+### 17.1 判定分两层
+
+第一层看扩展名，第二层看文件头魔数。v1 只做第一层。
+
+| 层 | 做法 | 代价 |
+| --- | --- | --- |
+| 扩展名 | 三张集合表加一个 `mediaTypeOfPath` | 零 IO |
+| 魔数 | 读前 16 字节比对签名 | 每文件一次 open |
+
+扩展名集合的唯一来源是 `lib/services/file_scanner.dart`。扫描、导入、拖放三处都调 `mediaTypeOfPath`，不要各写一份判断。`path.toLowerCase()` 要保留，Windows 上扩展名大小写不定。
+
+### 17.2 歧义与边界
+
+| 输入 | 判定 | 说明 |
+| --- | --- | --- |
+| `a.MP4` | video | 先转小写 |
+| `a.tar.gz` | null | 只取最后一段扩展名 |
+| `.mp3.txt` | null | 扩展名是 txt |
+| 无扩展名 | null | 不做魔数探测时返回 null |
+| `.ts` | video | 与 TypeScript 源文件重名，桌面端按视频处理 |
+
+### 17.3 分类存放
+
+单表 `media` 加 `media_type` 列，见第 7 节。查找按列走，不要用 `path LIKE '%.mp4'`，前缀通配符用不上索引。
+
+建议加索引：
+
+| 索引 | 列 | 用途 |
+| --- | --- | --- |
+| `idx_media_type` | `media_type` | 按类型分栏与计数 |
+| `idx_media_folder_type` | `folder_id, media_type` | 文件夹内按类型列 |
+| `idx_media_name_lower` | `name_lower` | 文件名前缀搜索 |
+
+`name_lower` 是冗余列，写入时存小写文件名。
+
+### 17.4 查找
+
+文件名前缀搜索用 `name_lower LIKE 'abc%'`，这种写法能走索引。`LIKE '%abc%'` 走不了，会全表扫。
+
+中文子串搜索要 FTS5。系统库 3.46.1 上三种方式的实测命中行数：
+
+| 查询 | unicode61 | trigram | LIKE |
+| --- | --- | --- | --- |
+| 音乐 | 0 | 0 | 1 |
+| 播放器 | 0 | 1 | 1 |
+| 音乐播放 | 0 | 1 | 未测 |
+| avorit | 0 | 1 | 1 |
+| favorite | 1 | 1 | 未测 |
+| favor* | 1 | 1 | 未测 |
+
+读法：unicode61 把连续汉字当成一个词，查询字符串比词短就不命中。trigram 支持中文子串，但查询短于三字同样不命中。`LIKE` 任何子串都能命中，代价是全表扫。
+
+结论：中文搜索用 `tokenize='trigram'`，长度不足三字的查询交给 `LIKE`。`name_lower` 上的索引负责前缀，FTS5 表只放文件名与标签。
+
+### 17.5 扫描一次遍历
+
+`FileScanner._scan` 现在只返回音频、字幕、封面三样。加图片与视频时建议把结果改成按类型分组的映射，同一棵树不要遍历三遍。封面图的文件名白名单（`cover`、`folder`、`front` 等）只在音频目录里生效。
+
+### 17.6 待验证
+
+Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版本随设备。建议启动时探测一次：建一张 FTS5 临时表，失败就退回 `LIKE`。
