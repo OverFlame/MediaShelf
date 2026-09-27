@@ -10,7 +10,7 @@ import '../utils/log_util.dart';
 ///
 /// 目录结构：
 /// ```
-/// <dataDir>/audioshelf.db
+/// <dataDir>/mediashelf.db
 /// <dataDir>/covers/
 /// <dataDir>/settings.json
 /// ```
@@ -19,7 +19,7 @@ class DataDirService {
 
   static final DataDirService instance = DataDirService._();
 
-  static const String _dbFileName = 'audioshelf.db';
+  static const String _dbFileName = 'mediashelf.db';
 
   String? _dataDir;
 

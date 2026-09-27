@@ -45,7 +45,7 @@ class DatabaseManager {
     }
 
     final dir = await DataDirService.instance.dataDir;
-    final dbPath = p.join(dir, 'audioshelf.db');
+    final dbPath = p.join(dir, 'mediashelf.db');
     logInfo('Database', 'DB path: $dbPath');
 
     _db = await openDatabase(

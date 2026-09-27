@@ -242,3 +242,39 @@
 未完成事项：
 
 - 阶段 2 的代码还没动，本轮只到指南与步骤文档。
+
+## 2026-09-27 阶段 2 数据层统一
+
+目标：把 tracks 与 images 合并成 media 单表。folders 与 works 加 library 列，标签解析器认识 kind 与 ext 规则标签。
+
+动作：
+
+| 处 | 改动 |
+| --- | --- |
+| lib/db/tables.dart | 重写成 v5：media 四值、ext 与 name_lower、六个索引、works.library、folders.library、folder_paths 默认递归 |
+| lib/db/media_dao.dart | 新建：MediaType、MediaItem、MediaDao，统一写入口 |
+| lib/db/track_dao.dart | 读走只读视图 tracks，写走 media，播放历史改 media_id |
+| lib/db/tag_dao.dart | 关联表改 media_tags 与 media_id，加 kind 与 ext 规则标签 |
+| lib/utils/filter_expression.dart | 改用 IN 与 NOT IN 收窄 |
+| lib/db/folder_dao.dart | create 与反查带 library 条件，默认 audio |
+| lib/db/work_dao.dart | Work 带 library，listAll 可按库过滤 |
+| lib/db/database.dart | 库文件名改 mediashelf.db |
+| pubspec.yaml | 版本改 0.3.0+3 |
+
+验证：
+
+- flutter analyze --no-fatal-infos：6 条 info，0 error，与阶段 0 基线逐条相同。
+- flutter test：75 用例全过，阶段 0 与阶段 1 的基线是 72。
+- 新用例断言 PRAGMA integrity_check 返回 ok。覆盖 media 四值、两个 CHECK、路径唯一与视图只读。
+- 另覆盖 folder_paths 默认递归、规则标签翻译与外键级联。
+- ste-lint-zh --shape：PROJECTLOG.md 2718 字 0/0/0，PROJECT_STEPS.md 1940 字 0/0/0，BUILD_GUIDE.md 7161 字 0/0/0。
+
+踩坑：
+
+- SQLite 不接受括号里的复合查询当集合运算操作数，`(SELECT ...) INTERSECT (SELECT ...)` 报 near "INTERSECT" 语法错。改成音频作用域加 IN 与 NOT IN。
+- 指南第 11 节的验收命令 `flutter test test/db` 指向不存在的路径，test 下是平铺文件。改成跑全量 `flutter test`。
+
+未完成事项：
+
+- 老库迁移在阶段 8，过渡视图 tracks 与 images 到阶段 6 结束前删除。
+- 三入口导入、卡片样式与全库类型视图从阶段 3 起做。

@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import '../utils/log_util.dart';
+import 'media_dao.dart';
 
 /// 音频曲目
 class TrackItem {
@@ -98,9 +99,14 @@ class TrackDao {
   final Database _db;
   TrackDao(this._db);
 
+  /// 写入走 media 表（视图 tracks 只读）；ext 与 name_lower 由 MediaDao 补全。
+  MediaDao get _mediaDao => MediaDao(_db);
+
+  Map<String, Object?> _mediaRow(TrackItem track) =>
+      {...track.toMap(), 'media_type': MediaType.audio.value};
+
   Future<int> insert(TrackItem track) async {
-    return _db.insert('tracks', track.toMap(),
-        conflictAlgorithm: ConflictAlgorithm.ignore);
+    return _mediaDao.insertRow(_mediaRow(track));
   }
 
   Future<TrackItem?> getById(int id) async {
@@ -117,19 +123,17 @@ class TrackDao {
 
   Future<int> update(TrackItem track) async {
     if (track.id == null) return 0;
-    return _db.update('tracks', track.toMap(),
-        where: 'id = ?', whereArgs: [track.id]);
+    return _mediaDao.updateRow(track.id!, _mediaRow(track),
+        type: MediaType.audio);
   }
 
   Future<void> setSubtitlePath(int id, String? path) async {
-    await _db.update('tracks', {'subtitle_path': path},
-        where: 'id = ?', whereArgs: [id]);
+    await _mediaDao.setSubtitlePath(id, path);
     logDebug('TrackDao', 'setSubtitlePath id=$id -> $path');
   }
 
   Future<void> setCoverPath(int id, String? path) async {
-    await _db.update('tracks', {'cover_path': path},
-        where: 'id = ?', whereArgs: [id]);
+    await _mediaDao.setCoverPath(id, path);
     logDebug('TrackDao', 'setCoverPath id=$id -> $path');
   }
 
@@ -267,27 +271,16 @@ class TrackDao {
   }
 
   Future<int> deleteByPaths(List<String> paths) async {
-    if (paths.isEmpty) return 0;
-    const batchSize = 500;
-    int deleted = 0;
-    for (int i = 0; i < paths.length; i += batchSize) {
-      final end =
-          i + batchSize > paths.length ? paths.length : i + batchSize;
-      final batch = paths.sublist(i, end);
-      final placeholders = batch.map((_) => '?').join(',');
-      deleted += await _db.delete('tracks',
-          where: 'path IN ($placeholders)', whereArgs: batch);
-    }
-    return deleted;
+    return _mediaDao.deleteByPaths(paths, type: MediaType.audio);
   }
 
   // ═══ 播放历史 ═══
 
   /// 记录一次播放（插入历史后裁剪，同一个事务）
-  Future<void> recordPlay(int trackId, int playedAt) async {
+  Future<void> recordPlay(int mediaId, int playedAt) async {
     await _db.transaction((txn) async {
       await txn.insert('play_history',
-          {'track_id': trackId, 'played_at': playedAt});
+          {'media_id': mediaId, 'played_at': playedAt});
       // 仅保留最近 200 条，避免无限增长
       await txn.rawDelete(
           'DELETE FROM play_history WHERE id NOT IN '
@@ -298,10 +291,11 @@ class TrackDao {
   /// 最近播放的曲目（按最后播放时间倒序，去重）
   Future<List<TrackItem>> recentPlayedTracks({int limit = 50}) async {
     final rows = await _db.rawQuery('''
-      SELECT t.*, MAX(h.played_at) AS last_played
+      SELECT m.*, MAX(h.played_at) AS last_played
       FROM play_history h
-      INNER JOIN tracks t ON t.id = h.track_id
-      GROUP BY h.track_id
+      INNER JOIN media m ON m.id = h.media_id
+      WHERE m.media_type = 'audio'
+      GROUP BY h.media_id
       ORDER BY last_played DESC
       LIMIT ?
     ''', [limit]);

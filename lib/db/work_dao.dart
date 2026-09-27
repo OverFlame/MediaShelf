@@ -1,10 +1,13 @@
 import 'package:sqflite/sqflite.dart';
 import '../utils/log_util.dart';
 
-/// 作品集（专辑）
+/// 作品集：音频库是专辑，视频库是剧集
 class Work {
   final int? id;
   final String name;
+
+  /// 库归属：audio / video（BUILD_GUIDE 第 18.2 节）
+  final String library;
   final String? coverPath;
   final int sortOrder;
   final int createdAt;
@@ -12,6 +15,7 @@ class Work {
   const Work({
     this.id,
     required this.name,
+    this.library = 'audio',
     this.coverPath,
     this.sortOrder = 0,
     required this.createdAt,
@@ -20,6 +24,7 @@ class Work {
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
         'name': name,
+        'library': library,
         'cover_path': coverPath,
         'sort_order': sortOrder,
         'created_at': createdAt,
@@ -28,6 +33,7 @@ class Work {
   factory Work.fromMap(Map<String, dynamic> map) => Work(
         id: map['id'] as int?,
         name: map['name'] as String,
+        library: (map['library'] as String?) ?? 'audio',
         coverPath: map['cover_path'] as String?,
         sortOrder: map['sort_order'] as int? ?? 0,
         createdAt: map['created_at'] as int,
@@ -38,24 +44,34 @@ class WorkDao {
   final Database _db;
   WorkDao(this._db);
 
-  Future<Work> create(String name, {String? coverPath}) async {
+  Future<Work> create(String name,
+      {String? coverPath, String library = 'audio'}) async {
+    final createdAt = DateTime.now().millisecondsSinceEpoch;
     final id = await _db.insert('works', {
       'name': name,
+      'library': library,
       'cover_path': coverPath,
       'sort_order': 0,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'created_at': createdAt,
     });
-    logInfo('WorkDao', 'Created work: id=$id name="$name"');
+    logInfo('WorkDao',
+        'Created work: id=$id name="$name" lib=$library');
     return Work(
         id: id,
         name: name,
+        library: library,
         coverPath: coverPath,
-        createdAt: DateTime.now().millisecondsSinceEpoch);
+        createdAt: createdAt);
   }
 
-  Future<List<Work>> listAll() async {
-    final rows =
-        await _db.query('works', orderBy: 'sort_order, created_at DESC');
+  /// 作品列表。给了 library 就只返回该库的作品。
+  Future<List<Work>> listAll({String? library}) async {
+    final rows = library == null
+        ? await _db.query('works', orderBy: 'sort_order, created_at DESC')
+        : await _db.query('works',
+            where: 'library = ?',
+            whereArgs: [library],
+            orderBy: 'sort_order, created_at DESC');
     return rows.map(Work.fromMap).toList();
   }
 

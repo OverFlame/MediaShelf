@@ -135,7 +135,7 @@ void main() {
   test('裁剪被拒绝时插入要一起回滚', () async {
     final id = await add('/m/a/1.mp3');
     for (int i = 0; i < 201; i++) {
-      await db.insert('play_history', {'track_id': id, 'played_at': 1000 + i});
+      await db.insert('play_history', {'media_id': id, 'played_at': 1000 + i});
     }
     // 让裁剪语句必然失败：旧实现先提交插入再执行裁剪，会多出一条历史
     await db.execute('CREATE TRIGGER no_prune BEFORE DELETE ON play_history '

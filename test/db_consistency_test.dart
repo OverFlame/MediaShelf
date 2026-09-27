@@ -129,7 +129,7 @@ void main() {
     await addTrack('/m/t/1.mp3');
     await addTrack('/m/t/2.mp3');
     final ok = await tags.insert(const Tag(name: '纯音乐'));
-    // 不存在于 tags 表，插入 track_tags 时触发外键失败。
+    // 不存在于 tags 表，插入 media_tags 时触发外键失败。
     const bogus = Tag(id: 999999, name: '不存在的标签');
 
     await expectLater(
@@ -137,7 +137,7 @@ void main() {
       throwsA(anything),
     );
 
-    expect(await db.query('track_tags'), isEmpty,
+    expect(await db.query('media_tags'), isEmpty,
         reason: '逐条 commit 的旧写法会留下 (track 1, 纯音乐) 这半条');
   });
 
@@ -147,10 +147,10 @@ void main() {
     final tag = await tags.insert(const Tag(name: '纯音乐'));
 
     await state.addTagsToTracks([1, 2], [tag]);
-    expect((await db.query('track_tags')).length, 2);
+    expect((await db.query('media_tags')).length, 2);
 
     await state.removeTagsFromTracks([1, 2], [tag]);
-    expect(await db.query('track_tags'), isEmpty);
+    expect(await db.query('media_tags'), isEmpty);
   });
 
   test('文件夹递归打标签走同一批事务方法，且写到子文件夹曲目', () async {
@@ -161,7 +161,7 @@ void main() {
 
     await state.addTagsToFolder(root.id!, [tag], recursive: true);
 
-    final rows = await db.query('track_tags');
+    final rows = await db.query('media_tags');
     expect(rows.length, 1);
     expect(rows.first['tag_id'], tag.id);
     expect((await db.query('folder_tags')).length, 1);
