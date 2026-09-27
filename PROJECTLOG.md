@@ -82,3 +82,23 @@
 - `LICENSE` 是 MIT 原文。BUILD_GUIDE 第 15 节提到的 BSD 3-Clause 署名问题在这份文件里不存在，待用户复核。
 - BUILD_GUIDE 第 13 节要求存储落 `<应用根>/data/`。当前 DataDirService 落在「应用支持目录/AudioShelf」，两者不一致，留到阶段 7 对齐。
 - 视频、迁移服务、图片栈等从 BUILD_GUIDE 第 11 节的阶段 2 起继续。
+
+## 2026-09-27 新增项目建议步骤参考
+
+目标：把「怎么动手」收成一份可照着执行的文档，与方案文档分开放。
+
+动作：
+
+1. 新建 `PROJECT_STEPS.md`，347 行。文档分十节，从开工前准备写到每阶段验收。
+2. 逐阶段的动作与验收命令抄自 BUILD_GUIDE 第 11 节，不另立标准。
+3. `README.md` 的「现状」段加一条链接指向 `PROJECT_STEPS.md`。
+
+验证：
+
+- 文档引用的既有路径逐条核对通过。`tool/migrate_check.dart` 与 `lib/widgets/video_grid.dart` 在文中标注为待新建。
+- 版本号对齐 BUILD_GUIDE 第 5.1 节。file_picker 取 12.1.2，sqflite_common_ffi 取 2.4.2+1。
+- ste-lint-zh 结果：`words= 1736 total= 0 per100c= 0.00 dash= 0 shape= 0`。
+
+未完成事项：
+
+- 阶段 1 到阶段 9 的状态列仍是「待开始」。每阶段做完回填。

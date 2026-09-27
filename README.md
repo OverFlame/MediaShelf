@@ -3,6 +3,8 @@
 本地音频播放器（Windows / Linux / Android），以「作品集（专辑）＋虚拟文件夹」方式管理本地音频，支持字幕模式、自定义封面与标签筛选。
 
 > **现状**：代码是 AudioShelf 骨架原样迁入，下面这份功能清单与实际一致。合并 PictureViewer2 的图片与视频栈的施工方案见 [BUILD_GUIDE.md](BUILD_GUIDE.md)，分阶段施工记录见 [PROJECTLOG.md](PROJECTLOG.md)。
+>
+> 动手步骤参考见 [PROJECT_STEPS.md](PROJECT_STEPS.md)。
 
 ## 功能
 

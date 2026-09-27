@@ -1,0 +1,347 @@
+# MediaShelf 项目建议步骤
+
+本文写动手步骤。方案依据看 [BUILD_GUIDE.md](BUILD_GUIDE.md)，已完成记录看 [PROJECTLOG.md](PROJECTLOG.md)。
+
+## 1 三份文档的分工
+
+| 文档 | 回答什么 | 更新方式 |
+| --- | --- | --- |
+| BUILD_GUIDE.md | 为什么这么做 | 方案变了才改 |
+| PROJECT_STEPS.md | 怎么动手，怎么验收 | 每阶段完成后回填状态 |
+| PROJECTLOG.md | 已经做了什么 | 只追加 |
+
+## 2 开工前的固定步骤
+
+### 2.1 导出环境
+
+每个新终端先跑这两行：
+
+```bash
+export PATH="$HOME/flutter/bin:$PATH" LD_LIBRARY_PATH="$HOME/.local/lib"
+export FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn PUB_HOSTED_URL=https://pub.flutter-io.cn
+```
+
+要碰 Android 再加一行：
+
+```bash
+export ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+```
+
+DSH 的终端跑 `bash -c`，不读 `~/.zshrc` 与 `~/.zshenv`。这两行要跟命令写在同一条里。
+
+### 2.2 一个批次只推一个阶段
+
+跨阶段混做，验收信号就说不清是哪一步带来的。
+
+### 2.3 先立基线
+
+```bash
+git status --short
+flutter analyze --no-fatal-infos
+flutter test
+```
+
+三条都干净再动手。基线不干净就先修基线，单独提交一次。
+
+### 2.4 先把验收命令写出来
+
+动手前把本阶段的验收命令写进 PROJECTLOG 草稿。写不出命令，说明这一步还没想清楚。
+
+## 3 收工步骤
+
+按顺序做，缺一步不算收工：
+
+| 步 | 动作 |
+| --- | --- |
+| 1 | 跑本阶段验收命令，留下原始输出 |
+| 2 | `flutter analyze --no-fatal-infos` 无 error，info 数不超过基线 |
+| 3 | `flutter test` 全过 |
+| 4 | 追加 PROJECTLOG 记录，写日期、目标、动作、验证 |
+| 5 | 中文正文过一遍 ste-lint-zh |
+| 6 | 写中文提交信息，然后提交 |
+
+## 4 阶段总览
+
+| 阶段 | 目标 | 状态 |
+| --- | --- | --- |
+| 0 | 建仓与改名 | 已完成，提交 `7f155ab` |
+| 1 | 依赖合并 | 待开始 |
+| 2 | 数据层统一 | 待开始 |
+| 3 | 迁移服务 | 待开始 |
+| 4 | 图片栈迁入 | 待开始 |
+| 5 | 视频识别与外链 | 待开始 |
+| 6 | 统一 AppState | 待开始 |
+| 7 | 设置、主题与页面 | 待开始 |
+| 8 | 打包与 CI | 待开始 |
+| 9 | Android 验收 | 延后 |
+
+## 5 逐阶段步骤
+
+### 阶段 1 依赖合并
+
+依据：BUILD_GUIDE 第 5 节。
+
+动作：
+
+1. 按第 5.1 节的版本表改 `pubspec.yaml`。
+2. 按第 5.2 节把 file_picker 升到 12.1.2。
+3. 按第 5.3 节处理 sqlite3 来源。
+
+验收：
+
+```bash
+flutter pub get
+grep -A3 '^  file_picker:' pubspec.lock
+grep -A3 '^  sqflite_common_ffi:' pubspec.lock
+flutter analyze --no-fatal-infos
+```
+
+通过标准：`file_picker` 为 12.1.2，`sqflite_common_ffi` 为 2.4.2+1，analyze 无 error。
+
+### 阶段 2 数据层统一
+
+依据：BUILD_GUIDE 第 7 节。
+
+动作：
+
+1. 写 `lib/db/tables.dart` 的 v5 内容，`Tables.version` 取 5。
+2. 新建 `lib/db/media_dao.dart`，`media` 单表带 `media_type`。
+3. 合并 `lib/db/tag_dao.dart` 与 `lib/db/folder_dao.dart`。
+4. 改 `lib/db/database.dart:48` 的库文件名与 PRAGMA 写法。
+
+验收：
+
+```bash
+flutter test test/db
+```
+
+通过标准：建库成功，`PRAGMA integrity_check` 返回 ok，老用例改到 `media` 后全过。
+
+风险：
+
+- WAL 语句必须用 `rawQuery`，见第 14 节。
+- FFI 初始化只在 Windows 与 Linux 做，要加平台守卫。
+- 外键开关放 `onConfigure`。
+
+### 阶段 3 迁移服务
+
+依据：BUILD_GUIDE 第 8 节。
+
+动作：
+
+1. 新建 `lib/services/migration_service.dart`，Dart 侧跨库只读 SELECT，事务写新库。
+2. 新建 `tool/migrate_check.dart`，做第 8.5 节的五类断言。
+3. PictureViewer2 的文件夹树挂到新建根「图片库」下，避开 `folders` 的唯一约束。
+
+验收：
+
+```bash
+dart run tool/migrate_check.dart --src-a <老库 A> --src-b <老库 B> --dst <新库>
+```
+
+通过标准：五类检查全过，见第 8.5 节。
+
+风险：
+
+- 老库不要就地升级。两边版本号都是 4，表结构不同。
+- 迁移前先读 `.datadir` 指针文件，两边数据根不一样。
+
+### 阶段 4 图片栈迁入
+
+依据：BUILD_GUIDE 第 10.1 节的模块映射。
+
+动作：
+
+1. 按第 10.1 节的表迁入图片相关模块。
+2. 保持 `lib/services/data_dir_service.dart` 仍用 AudioShelf 版为底。
+
+验收：
+
+```bash
+flutter test test/services test/utils
+flutter analyze --no-fatal-infos
+```
+
+通过标准：缩略图与 EXIF 用例通过。手动打开一张图片，缩略图与 EXIF 面板正常。
+
+风险：缩略图目录可能有几万个小文件，回收放后台，别阻塞启动。
+
+### 阶段 5 视频识别与外链
+
+依据：BUILD_GUIDE 第 9 节。
+
+动作：
+
+1. 在 `lib/services/file_scanner.dart` 加 `videoExtensions` 与 `mediaTypeOfPath`。
+2. 新建 `lib/services/video_launcher.dart`，`start` 可注入。
+3. 新建 `lib/widgets/video_grid.dart` 并接入卡片，缩略图用 `Icons.movie`。
+4. 新建 `test/services/video_launcher_test.dart`，注入假 `start`。
+
+验收：
+
+```bash
+flutter test test/services/video_launcher_test.dart
+```
+
+通过标准：假 runner 的断言全过。Windows 与 Linux 各手动拉起一次外部播放器。
+
+风险：Android 外链不能用 `file://` URI，见第 9.5 节。
+
+### 阶段 6 统一 AppState
+
+依据：BUILD_GUIDE 第 10 节与第 7.4 节。
+
+动作：
+
+1. 以 PictureViewer2 的 `lib/state/app_state.dart` 为底。
+2. 并入 AudioShelf 的作品集、字幕、播放队列、选择集。
+3. 删掉第 7.4 节的过渡视图。
+4. 改按 `tracks` 表名清理的那段删除逻辑。
+
+验收：
+
+```bash
+flutter test test/state test/widget
+```
+
+通过标准：`tag_filter` 用例通过。`app_smoke_test` 与 `narrow_window_test` 通过。
+
+### 阶段 7 设置、主题与页面
+
+依据：BUILD_GUIDE 第 12 节与第 13 节。
+
+动作：
+
+1. 合并 `lib/pages/settings_page.dart` 与 `lib/pages/home_page.dart`。
+2. 主题先用 `lib/theme/app_theme.dart`，Catppuccin 留作可选。
+3. 存储改落 `<应用根>/data/` 与 `<应用根>/logs/`，路径只从 `DataDirService` 解析。
+4. 支持 `APP_DATA_DIR` 与 `APP_LOG_DIR` 覆盖。
+
+验收：
+
+```bash
+flutter analyze --no-fatal-infos
+flutter test
+```
+
+通过标准：设置页能改主题与缓存上限。切换数据目录并重启后，新目录生效。
+
+风险：这一步会动数据目录名。开工前先问用户，见第 9 节。
+
+### 阶段 8 打包与 CI
+
+依据：BUILD_GUIDE 第 6.2、6.3、6.5 节。
+
+动作：
+
+1. 迁入 `scripts/build_linux.sh` 与 `scripts/build_windows_remote.sh`。
+2. 迁入 `.github/workflows/ci.yml`。
+
+验收：
+
+```bash
+bash scripts/build_linux.sh --mode release
+ls build/linux/x64/release/bundle/
+```
+
+通过标准：bundle 目录存在，可执行文件能启动。CI 在远端跑绿。
+
+风险：Linux 构建必须带 `NO_XIPH_LIBS=1`。
+
+### 阶段 9 Android 验收
+
+依据：BUILD_GUIDE 第 6.4 与第 9.5 节。
+
+动作：
+
+1. 补 Intent 与 FileProvider 分派。
+2. 验证「所有文件访问」权限下的扫描。
+3. 包名与 Kotlin 目录已在阶段 0 改完，不要重复改。
+
+验收：
+
+```bash
+flutter build apk --release
+```
+
+通过标准：实机能扫描一个目录，能拉起外部播放器。
+
+## 6 原生代码的额外验收
+
+`analysis_options.yaml` 排除了 android、linux、windows。改了这三个目录，analyze 与 test 都覆盖不到。
+
+改完就跑一次真构建。
+
+```bash
+NO_XIPH_LIBS=1 flutter build linux --release
+flutter build apk --debug
+```
+
+再做一次产物级核对。
+
+```bash
+aapt2 dump badging build/app/outputs/flutter-apk/app-debug.apk | grep -E '^package|application-label|launchable-activity'
+```
+
+阶段 0 踩过一条：第一轮全树搜旧名字时漏掉了 `windows/runner/Runner.rc`。原因是 grep 加了 include 白名单。全树搜旧名字不要加白名单。
+
+## 7 验收命令速查
+
+| 阶段 | 命令 | 通过标准 |
+| --- | --- | --- |
+| 1 | `flutter pub get` 加两条 grep | 版本号对得上 |
+| 2 | `flutter test test/db` | `integrity_check` 返回 ok |
+| 3 | `dart run tool/migrate_check.dart` | 五类检查全过 |
+| 4 | `flutter test test/services test/utils` | 缩略图与 EXIF 用例过 |
+| 5 | `flutter test test/services/video_launcher_test.dart` | 假 runner 断言过 |
+| 6 | `flutter test test/state test/widget` | 标签筛选与冒烟用例过 |
+| 7 | `flutter analyze` 加 `flutter test` | 设置生效 |
+| 8 | `bash scripts/build_linux.sh --mode release` | bundle 可启动 |
+| 9 | `flutter build apk --release` | 实机可用 |
+
+## 8 提交与报告口径
+
+提交信息用中文，写清动词与范围。示例：`chore: 阶段 0 建仓与改名（AudioShelf → MediaShelf）`。
+
+一个阶段一个提交，不带无关改动。
+
+交付报告按这个形状写：
+
+| 顺序 | 内容 |
+| --- | --- |
+| 1 | 第一行是读者的下一步动作 |
+| 2 | 改了什么，带 `file:line` |
+| 3 | 验证，写用例数与命令输出 |
+| 4 | 覆盖缺口，写没做到的事 |
+| 5 | KPI 方框 |
+| 6 | 结尾报 ste-lint 分数 |
+
+中文正文按 ASD-STE100 中文版写。检查命令：
+
+```bash
+python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
+```
+
+阶段 0 踩过一条：单条列表超过 5 项，ste-lint 判成 `action_list`。长清单改成表格。
+
+## 9 每阶段开工前要问用户的未决项
+
+| 阶段 | 要确认什么 |
+| --- | --- |
+| 7 | 数据目录是否统一到新名字 |
+| 7 | 设置是否改用 shared_preferences |
+| 7 | 主题用原创主题还是 Catppuccin |
+| 8 到 9 | 远端仓库所有者与 CI 平台 |
+| 9 | Android 何时开始验收 |
+
+用户给出 UI 布局前，BUILD_GUIDE 第 12 节是占位。
+
+## 10 现状与下一步
+
+已确认：项目名 MediaShelf，骨架 AudioShelf，单库加迁移脚本，Windows 与 Linux 优先，视频 v1 只拉外部播放器。
+
+远端是 `git@github.com:OverFlame/MediaShelf.git`。当前只做本地提交，不推送。
+
+`LICENSE` 是 MIT 原文，BUILD_GUIDE 第 15 节里那条 BSD 3-Clause 署名问题不存在。
+
+下一步是阶段 1 依赖合并。
