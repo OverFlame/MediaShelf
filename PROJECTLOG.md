@@ -194,3 +194,51 @@
 未完成事项：
 
 - `main` 是代建的。想自己重建就先 `git push origin --delete main`，再自建。
+
+## 2026-09-27 分类查找与库归属决策
+
+目标：回答「用标签做分类查找」的疑问，把决定固化成口径。
+
+背景：用户想复用 tag 机制做分类筛选，导入时自动打类别标签。用户要求先答疑问、先别动手，所以先只做勘察。
+
+勘察结论：
+
+- tags 表两边逐字段同构（MediaShelf/lib/db/tables.dart:65 对 PictureViewer2/lib/db/tables.dart:33），合并成 media_tags 时标签数据零成本迁移。
+- ImportService 完全不碰标签（lib/services/import_service.dart:32），自动打标是全新逻辑。
+- 字幕与封面只存列不存行（lib/db/tables.dart:56 与 :57），要打标签必须先升格成 media 行。
+- 音频导入遇无音频目录就整个返回（lib/services/import_service.dart:68），会连带丢掉同目录的图片。
+- getByPath 与 ensureByPath 按路径反查取 id 最小者，命中后改写 parent 与 work_id（lib/db/folder_dao.dart:195 与 :214）。不带库条件，两棵树会互相抢节点。唯一索引建在 (folder_id, path) 上（lib/db/tables.dart:37），允许同一路径挂到多个文件夹。
+
+用户决定：
+
+| 项 | 决定 |
+| --- | --- |
+| kind 与 ext 标签 | 规则标签，只放定义不写关联行 |
+| 字幕默认不显示 | 默认进 notTagIds，状态持久化 |
+| 库归属 | folders.library 列，以后可升 libraries 表 |
+| 同一目录多库并存 | 允许 |
+| 剧集树 | 一季一个文件夹，一集一个文件，总剧集文件夹可有可无 |
+| 字幕跨目录 | 默认同目录，允许手动指定，全库扫描由用户发起并确认结果 |
+| 全库类型视图 | 做 |
+| 封面候选 | 放宽到作品根下整棵子树 |
+| 视频剧集 | 复用 works 加 library 列 |
+
+动作：
+
+| 处 | 改动 |
+| --- | --- |
+| 第 7.1 节 | 决策补两处，media_type 改成四值含 subtitle |
+| 第 7.3 节 | DDL 加 ext、name_lower、folders.library、works.library，差异清单加六行 |
+| 第 8.3 节 | 改成 library 方案，作废「图片库」合成根 |
+| 第 11 节 | 阶段 2 动作补到 5 条，阶段 4、5、6 各补一句 |
+| 第 15 节 | 登记远端仓库已定 |
+| 第 18 节 | 新增，共七小节 |
+
+验证：
+
+- 13 处替换逐条断言命中一次。BUILD_GUIDE 从 1161 行到 1255 行。
+- ste-lint-zh --shape：BUILD_GUIDE.md 7161 字 0/0/0，PROJECT_STEPS.md 1940 字 0/0/0。
+
+未完成事项：
+
+- 阶段 2 的代码还没动，本轮只到指南与步骤文档。

@@ -100,28 +100,32 @@ flutter analyze --no-fatal-infos
 
 ### 阶段 2 数据层统一
 
-依据：BUILD_GUIDE 第 7 节与第 17 节。
+依据：BUILD_GUIDE 第 7 节、第 17 节与第 18 节。
 
 动作：
 
 1. 写 `lib/db/tables.dart` 的 v5 内容，`Tables.version` 取 5。
-2. 新建 `lib/db/media_dao.dart`，`media` 单表带 `media_type`。
-3. 合并 `lib/db/tag_dao.dart` 与 `lib/db/folder_dao.dart`。
-4. 改 `lib/db/database.dart:48` 的库文件名与 PRAGMA 写法。
+2. `media` 单表带 `media_type` 四值，另加 `ext` 与 `name_lower` 列及索引；`folders` 与 `works` 各加 `library` 列。
+3. 新建 `lib/db/media_dao.dart`。
+4. 合并 `lib/db/tag_dao.dart` 与 `lib/db/folder_dao.dart`，反查带库条件；标签表达式解析器识别 `kind` 与 `ext` 两个规则 namespace。
+5. 改 `lib/db/database.dart:48` 的库文件名与 PRAGMA 写法。
 
 验收：
 
 ```bash
 flutter test test/db
+flutter analyze --no-fatal-infos
 ```
 
-通过标准：建库成功，`PRAGMA integrity_check` 返回 ok，老用例改到 `media` 后全过。
+通过标准：建库成功，`PRAGMA integrity_check` 返回 ok，老用例改到 `media` 后全过，analyze 无 error。
 
 风险：
 
 - WAL 语句必须用 `rawQuery`，见第 14 节。
 - FFI 初始化只在 Windows 与 Linux 做，要加平台守卫。
 - 外键开关放 `onConfigure`。
+- 反查不带库条件时，两棵树的节点会互相抢，见 BUILD_GUIDE 第 18.2 节。
+- 字幕改成 media 行后，涉及 `tracks.subtitle_path` 的老用例要跟着改。
 
 ### 阶段 3 迁移服务
 

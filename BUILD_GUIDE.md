@@ -406,13 +406,16 @@ sqlite3 用 winsqlite3.dll，见第 5.3 节。
 
 ### 7.1 决策
 
-- 用单表 media 存音频、图片与视频。
+- 用单表 media 存音频、图片、视频与字幕。
 - 标签表 tags 与关联表 media_tags 通用。
+- folders 与 works 各加 library 列，取值 audio、image、video。
 - folders 保留 work_id 列，取值可空。
 - 不保留 tracks 表与 images 表。
 
 原因：标签、筛选、排序、文件夹树、选择集只写一套代码。
 分三张表会把 AppState 的双套逻辑变成三套。
+
+库归属、规则标签与导入入口的完整口径见第 18 节。
 
 ### 7.2 版本策略
 
@@ -428,6 +431,7 @@ migrations 只保留 5 之后的增量。
 CREATE TABLE works (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT    NOT NULL,
+  library     TEXT    NOT NULL CHECK (library IN ('audio', 'video')),
   cover_path  TEXT,
   sort_order  INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL
@@ -436,7 +440,9 @@ CREATE TABLE works (
 CREATE TABLE media (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   path          TEXT    NOT NULL UNIQUE,
-  media_type    TEXT    NOT NULL CHECK (media_type IN ('audio', 'image', 'video')),
+  media_type    TEXT    NOT NULL CHECK (media_type IN ('audio', 'image', 'video', 'subtitle')),
+  ext           TEXT    NOT NULL DEFAULT '',
+  name_lower    TEXT    NOT NULL DEFAULT '',
   filename      TEXT    NOT NULL,
   format        TEXT,
   file_size     INTEGER,
@@ -455,6 +461,8 @@ CREATE TABLE media (
   cover_path    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type);
+CREATE INDEX IF NOT EXISTS idx_media_ext ON media(ext);
+CREATE INDEX IF NOT EXISTS idx_media_name_lower ON media(name_lower);
 CREATE INDEX IF NOT EXISTS idx_media_hash ON media(hash);
 CREATE INDEX IF NOT EXISTS idx_media_added_at ON media(added_at DESC);
 CREATE INDEX IF NOT EXISTS idx_media_title ON media(title);
@@ -480,6 +488,7 @@ CREATE TABLE folders (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   name    TEXT    NOT NULL,
   parent  INTEGER REFERENCES folders(id),
+  library TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
   work_id INTEGER REFERENCES works(id) ON DELETE SET NULL,
   UNIQUE(name, parent)
 );
@@ -520,6 +529,12 @@ CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
 | folder_paths 默认值 | 取 1，与 PictureViewer2 一致 |
 | 唯一索引名 | 统一用 idx_folder_paths_unique |
 | tags 与 folder_tags | 与两边一致，不改 |
+| media_type 取值 | 四值，含 subtitle |
+| media 新增列 | ext 与 name_lower，各带索引 |
+| works.library | 新增，取值 audio 或 video |
+| folders.library | 新增，取值 audio、image 或 video |
+| 字幕 | 从 tracks.subtitle_path 的列改为 media 行 |
+| 查找口径 | 一律带 library 条件，见第 18 节 |
 
 ### 7.4 过渡视图（可选）
 
@@ -585,15 +600,16 @@ lib/db/media_dao.dart 定义 MediaType 与 MediaItem。
 
 ### 8.3 folders 的冲突处置
 
-folders 的 UNIQUE(name, parent) 会撞。
-处置：PictureViewer2 的整棵树挂到一个新建根下。
+用 library 列区分两棵树的归属，见第 18.2 节。
 
-- 新建一个根文件夹，名字取「图片库」，work_id 为空。
-- PictureViewer2 的顶层文件夹的 parent 改指向该根。
-- AudioShelf 的文件夹树按原结构导入。
+- AudioShelf 的整棵树写入时 library 取 audio。
+- PictureViewer2 的整棵树写入时 library 取 image，parent 保持原结构。
+- 两边根文件夹各有自己的库，不会进入对方根列表。
 - folder_paths 与 folder_tags 的 folder_id 按映射改写。
+- 同一路径在两边都出现时得到两个 folders 行，各行 library 不同。
 
-这样两边的路径映射与文件夹标签都能保住。
+这样两边的路径映射、文件夹标签与根列表都能保住。
+原方案「新建图片库合成根」在本节作废，原因是根列表要靠名字判身份。
 
 ### 8.4 冲突与失败处置
 
@@ -828,10 +844,11 @@ sqflite_common_ffi 为 2.4.2+1。
 
 动作：
 
-1. 写 lib/db/tables.dart 的 v5 内容。
-2. 新建 lib/db/media_dao.dart。
-3. 合并 lib/db/tag_dao.dart 与 lib/db/folder_dao.dart。
+1. 写 lib/db/tables.dart 的 v5 内容，含 media_type 四值、ext 与 name_lower 列、folders.library 与 works.library。
+2. 新建 lib/db/media_dao.dart，定义 MediaType 与 MediaItem。
+3. 合并 lib/db/tag_dao.dart 与 lib/db/folder_dao.dart，文件夹反查一律带 library 条件。
 4. 改 database.dart 的库文件名与 PRAGMA 写法。
+5. 标签表达式解析器识别 kind 与 ext 两个规则 namespace，并补 test/db 用例覆盖按库取根、按库反查与规则标签翻译。
 
 验收：
 
@@ -857,6 +874,7 @@ dart run tool/migrate_check.dart --src-a <老库 A> --src-b <老库 B> --dst <�
 ### 阶段 4 图片栈迁入
 
 动作：按第 10.1 节迁入图片相关模块。
+图片入口按第 18.6 节提供不依赖库树的全库图片视图。
 
 验收：
 
@@ -876,6 +894,7 @@ flutter analyze --no-fatal-infos
 2. 新建 video_launcher.dart。
 3. 新建 video_grid.dart 并接入卡片。
 4. 写 video_launcher_test.dart。
+剧集树按第 18.6 节的形状建，复用 works 加 library 列。
 
 验收：
 
@@ -893,6 +912,8 @@ Windows 与 Linux 各手动拉起一次外部播放器。
 1. 以 PictureViewer2/lib/state/app_state.dart 为底。
 2. 并入 AudioShelf 的作品集、字幕、播放队列、选择集。
 3. 删掉第 7.4 节的过渡视图。
+4. 库树查询带 library 条件，全库类型视图在三种模式里各有一个入口。
+5. 字幕标签默认进 notTagIds 并持久化到 shared_preferences。
 
 验收：
 
@@ -1006,7 +1027,7 @@ flutter build apk --release
 |---|---|---|
 | UI 布局 | 未给 | 布局与交互细节 |
 | 许可证 | 暂定 MIT | 是否保留 BSD 3-Clause 的署名 |
-| 远端仓库 | 未定 | 所有者与仓库名 |
+| 远端仓库 | git@github.com:OverFlame/MediaShelf.git | 推送口径已定：master 直推，main 由用户 PR |
 | 主题 | 暂用原创主题 | 还是 Catppuccin |
 | Android | 首版不验收 | 何时补 |
 | 数据目录 | 暂用 AudioShelf 的支持目录 | 是否统一到新目录名 |
@@ -1014,6 +1035,10 @@ flutter build apk --release
 
 folder_paths.recursive 的默认值已定，取 1。
 AudioShelf 的老数据按原值导入。
+
+分类、标签、库归属与导入入口的口径已在第 18 节定稿。
+字幕默认只做同目录匹配，全库扫描由用户发起并确认结果。
+封面候选放宽到作品根下整棵子树。
 
 ## 16 附录：文件行数对照
 
@@ -1158,3 +1183,72 @@ AudioShelf 的老数据按原值导入。
 ### 17.6 待验证
 
 Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版本随设备。建议启动时探测一次：建一张 FTS5 临时表，失败就退回 `LIKE`。
+
+## 18 库归属、规则标签与导入入口（定稿）
+
+本节记录与用户对齐的决定，日期 2026-09-27。
+本节取代第 8.3 节的「图片库」合成根方案。
+第 17 节讲类型判定、索引与查找，本节讲归属、标签与筛选。
+
+### 18.1 三层分工
+
+| 层 | 职责 |
+| --- | --- |
+| 扫描层 | 一次遍历，四种类型都写进 media 行 |
+| 组织层 | 三个导入入口各建一棵 folders.library 树 |
+| 展示层 | 库树浏览加全库类型视图 |
+
+理由：同一物理目录里装什么由用户决定。
+类型决定文件是什么，库树决定怎么分组。
+两层分开，音频文件夹里的图片才能在图片模式里看见。
+
+### 18.2 库归属
+
+| 约定 | 内容 |
+| --- | --- |
+| 新增列 | folders 与 works 各加 library，取值 audio、image、video，不允许为空 |
+| 写入方 | 导入入口，子节点从父节点继承 |
+| 查询条件 | 音频侧 `library = 'audio' AND work_id IS NULL AND parent IS NULL`，图片侧 `library = 'image' AND parent IS NULL`，视频侧 `library = 'video' AND parent IS NULL` |
+| 反查 | getByPath 与 ensureByPath 必须带库条件。两者现在按路径反查取 id 最小者，命中后还会改写 parent 与 work_id（lib/db/folder_dao.dart:195 与 :214）。不带库条件，后导入的一方会抢走前一方建的节点 |
+| 与作品集的关系 | 正交。work_id 只说属于哪个作品集或剧集 |
+| 根节点唯一性 | UNIQUE(name, parent) 对 NULL 不生效，仍由代码先查后插（PictureViewer2/lib/db/folder_dao.dart:52） |
+| 升级路径 | 每个库需要独立名字、图标与默认视图时，再升成 libraries 表加 folders.library_id |
+
+### 18.3 同一目录多库并存
+
+- 允许。同一目录从两个入口各导入一次，会得到两个 folders 行。
+- 两行的 library 不同，指向同一批物理文件。物理文件不会重复，media.path 有唯一约束。
+- 封面只是作品的展示属性，存在 works.cover_path。同一批图片在图片库里全部可见，音频库只显示封面那一张。
+- 封面候选放宽到作品根下整棵子树，不再限于根目录。
+- 选择规则保持确定。先取白名单命名的图片，再按路径字典序取第一张。都没有就用第一首音频的内嵌封面（lib/services/import_service.dart:191）。
+
+### 18.4 规则标签
+
+- kind 与 ext 两类标签只在 tags 表里放定义，不写 media_tags 与 folder_tags 的关联行。
+- 筛选时翻译成列条件：kind 音频翻译成 `media_type = 'audio'`，ext vtt 翻译成 `ext = 'vtt'`。标签表达式解析器要能识别这两个 namespace（lib/db/tag_dao.dart:271 的 _resolveTagRef）。
+- 计数不查 media_tags，改走 media 表的 GROUP BY。
+- 自动标签因此没有重建与失效问题。文件扩展名一变，标签跟着变。
+- 用户手动打的标签仍走 media_tags，与规则标签互不干扰。
+
+### 18.5 字幕
+
+- 字幕升格为 media 行，media_type 取 subtitle。
+- 默认只做同目录匹配：`a.mp4.srt` 优先，其次 `a.srt`（lib/services/file_scanner.dart:97）。
+- 允许用户手动指定某条字幕归属某个媒体。
+- 另提供「全库扫描」按钮，由用户发起，扫完弹出匹配结果供用户确认，不做静默绑定。
+- 字幕标签默认处于排除状态：初始筛选把字幕类标签放进 notTagIds（lib/db/tag_dao.dart:211 已支持），状态存 shared_preferences。用户取消反选后，字幕文件出现在文件树。
+
+### 18.6 三个导入入口
+
+- 图片入口的组织方式是图片文件夹树。音频入口沿用现有作品集与镜像逻辑，组织成专辑树。
+- 视频入口的组织方式是剧集树，形状为总剧集文件夹（可无）、一季一个文件夹、一集一个文件。
+- 视频剧集复用 works 表加 library 列，直接沿用 setWorkMany、未归类与 listRootsByWork 一整套。
+- 建树按入口类型判空，落库不判空。今天 `if (scanned.audioPaths.isEmpty) return;`（lib/services/import_service.dart:68）会连带丢掉图片，要拆成两层。
+- 全库类型视图：图片、音频、视频三种模式各提供一个不依赖库树的全部条目入口，按物理目录分组。这样从没走图片入口导入的图片也能看见。
+
+### 18.7 落地顺序
+
+阶段 2 建表与 DAO，含 library 列与规则标签解析。
+阶段 4 接入图片入口与全库图片视图。
+阶段 5 建剧集树与视频入口。
+阶段 6 统一 AppState，接库树筛选、字幕默认反选与三种类型的全库视图。
