@@ -1,0 +1,39 @@
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:mediashelf/utils/filter_expression.dart';
+
+void main() {
+  group('FilterExpressionParser', () {
+    test('解析单个标签', () {
+      final ast = FilterExpressionParser.parse('风景');
+      expect(ast, isA<TagRef>());
+    });
+
+    test('解析与/或/非', () {
+      final ast = FilterExpressionParser.parse('A&&B||!C');
+      expect(ast, isA<OrExpr>());
+    });
+
+    test('括号优先级', () {
+      final ast = FilterExpressionParser.parse('(A||B)&&!C');
+      expect(ast, isA<AndExpr>());
+    });
+
+    test('空表达式抛异常', () {
+      expect(() => FilterExpressionParser.parse(''),
+          throwsA(isA<FilterExpressionException>()));
+    });
+
+    test('未闭合括号抛异常', () {
+      expect(() => FilterExpressionParser.parse('(A'),
+          throwsA(isA<FilterExpressionException>()));
+    });
+
+    test('SQL 编译使用 track_tags', () {
+      final ast = FilterExpressionParser.parse('A&&B');
+      final sql = buildTrackIdSubquery(ast, (ref) => [1, 2]);
+      expect(sql, contains('track_id'));
+      expect(sql, contains('INTERSECT'));
+    });
+  });
+}
