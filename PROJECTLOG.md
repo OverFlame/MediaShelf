@@ -166,3 +166,31 @@
 未完成事项：
 
 - Windows 的 winsqlite3.dll 与 Android 的系统 SQLite 是否带 FTS5 还没验。阶段 2 做运行时探测，失败就退回 `LIKE`。
+
+## 2026-09-27 分支与推送口径
+
+目标：把远端分支结构与推送方式记下来，后续不用再试。
+
+动作：
+
+1. 建远端 `main`，指向阶段 0 提交 `8a4f6f4`，与当时的 `master` 同点。
+2. 推 `master` 到阶段 1 提交 `8e63c4f`。
+
+口径：
+
+| 分支 | 用途 |
+| --- | --- |
+| `master` | 日常开发提交，由我直接推 |
+| `main` | 由用户把 `master` PR 进来，我不直接推 |
+
+这条口径与 AudioShelf 一致。实测那边的 `origin/main` 领先 `origin/master` 五个提交，其中一个提交是 `Merge branch 'master' into main`。
+
+验证：
+
+- `git ls-remote --heads origin`：`main` = 8a4f6f4，`master` = 8e63c4f。
+- `git rev-list --left-right --count origin/master...master` = `0  0`。
+- 推送走 SSH 22 端口。实测 `github.com:443` 不通，本机没有可用代理。SSH 连接 rtt 221ms、delivery_rate 约 45 kbps。推送要放后台跑，不能按默认超时处理。
+
+未完成事项：
+
+- `main` 是代建的。想自己重建就先 `git push origin --delete main`，再自建。
