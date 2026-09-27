@@ -66,7 +66,7 @@ flutter test
 | --- | --- | --- |
 | 0 | 建仓与改名 | 已完成，提交 `7f155ab` |
 | 1 | 依赖合并 | 已完成，提交 `c2ec53c` |
-| 2 | 数据层统一 | 待开始 |
+| 2 | 数据层统一 | 已完成，提交 `5b36a64` |
 | 3 | 迁移服务 | 待开始 |
 | 4 | 图片栈迁入 | 待开始 |
 | 5 | 视频识别与外链 | 待开始 |
@@ -113,11 +113,18 @@ flutter analyze --no-fatal-infos
 验收：
 
 ```bash
-flutter test test/db
+flutter test
 flutter analyze --no-fatal-infos
 ```
 
 通过标准：建库成功，`PRAGMA integrity_check` 返回 ok，老用例改到 `media` 后全过，analyze 无 error。
+
+结果（2026-09-27）：
+
+- `flutter analyze --no-fatal-infos`：6 条 info，0 error，与阶段 0 基线逐条相同。
+- `flutter test`：75 用例全过，阶段 0 与阶段 1 的基线是 72。
+- 新用例里的 `PRAGMA integrity_check` 返回 ok。
+- `pubspec.yaml` 版本号改 `0.3.0+3`。
 
 风险：
 
@@ -357,8 +364,10 @@ python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
 
 已确认：项目名 MediaShelf，骨架 AudioShelf，单库加迁移脚本，Windows 与 Linux 优先，视频 v1 只拉外部播放器。
 
-远端是 `git@github.com:OverFlame/MediaShelf.git`。当前只做本地提交，不推送。
+远端是 `git@github.com:OverFlame/MediaShelf.git`。`master` 由我推，`main` 由用户把 `master` PR 进来。
+
+分类查找走规则标签加 `media` 列条件，库归属走 `folders.library` 与 `works.library`，口径见 BUILD_GUIDE 第 18 节。
 
 `LICENSE` 是 MIT 原文，BUILD_GUIDE 第 15 节里那条 BSD 3-Clause 署名问题不存在。
 
-下一步是阶段 2 数据层统一。
+下一步是阶段 3 迁移服务。

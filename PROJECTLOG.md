@@ -267,7 +267,7 @@
 - flutter test：75 用例全过，阶段 0 与阶段 1 的基线是 72。
 - 新用例断言 PRAGMA integrity_check 返回 ok。覆盖 media 四值、两个 CHECK、路径唯一与视图只读。
 - 另覆盖 folder_paths 默认递归、规则标签翻译与外键级联。
-- ste-lint-zh --shape：PROJECTLOG.md 2718 字 0/0/0，PROJECT_STEPS.md 1940 字 0/0/0，BUILD_GUIDE.md 7161 字 0/0/0。
+- ste-lint-zh --shape：PROJECTLOG.md 2718 字 0/0/0，PROJECT_STEPS.md 2013 字 0/0/0，BUILD_GUIDE.md 7161 字 0/0/0。
 
 踩坑：
 
