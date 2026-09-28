@@ -1077,3 +1077,57 @@
 - `find.text('修改时间')` 在窄屏详情里同时命中菜单项与详情信息，改用 `find.ancestor(of: find.text(...), matching: find.byType(CheckedPopupMenuItem<String>))`；`CheckedPopupMenuItem` 必须带类型参数，`byType` 比对运行时类型。
 - 用 200 宽窗口测 `tiny` 时，点「更多」的偏移打不到按钮，命中链顶端是关着的 Drawer 边缘拖拽层。改用 800 宽加详情面板制造 `tiny`。
 - 改 `pubspec.yaml` 的版本号时漏了 `lib/pages/about_page.dart` 的 `appVersion` 常量。全量测试在版本号改之前跑过，所以是提交后才发现的（`test/widget/settings_page_test.dart` 的「关于页写死的版本号与 pubspec.yaml 同步」把它拦住）。教训：版本号属于最后一步，改完要重跑全量测试再提交。
+
+## 2026-09-29 只读代码质量审查与缺陷修复（P1 全清，P2 批次 A）
+
+目标：先对 `1.4.0+21`（当时 HEAD `dd15076`）做只读代码质量审查，出有源码依据的报告；经用户确认后按报告逐条验证与修复。
+
+审查：
+
+| 项 | 内容 |
+| --- | --- |
+| 范围 | `lib/` 67 个文件 24101 行、`test/` 55 个文件 11434 行。通读加定向 grep，全程未改动文件 |
+| 结论 | 无 P0；P1 九条；P2 三十八条，按性能、数据一致性、重复与死代码、无障碍与国际化、工程与文档分五组 |
+| 报告 | 本次会话内的 `/tmp/mediashelf-review.md`（212 行，仓库外，不入库）。每条给出 file:line、后果、已排除的可能、未验证项 |
+| 写法 | 每条先写能复现的红测试，再改代码，再摘掉修复复跑一次确认用例真的红 |
+
+动作（已修的十八条）：
+
+| 编号 | 缺陷 | 修复 |
+| --- | --- | --- |
+| P1-1 | `logError(..., data)` 的 data 参数从未使用 | `lib/utils/log_util.dart` 重写，data 进正文并作 `dev.log` 的 error |
+| P1-4 | 从不写日志文件，界面却让用户去 logs 目录看 | 同上，`LogUtil.attachFileSink` 写 `logs/app-<日期>.log`，满 2MB 轮转 `.1` |
+| P1-2 | 三处「先删目标再改名」有丢文件窗口 | 新增 `lib/utils/file_io.dart` 的 `writeFileAtomic`，cover、settings、data_dir 三处改用 |
+| P2-8 | 批量删除分批各删各的，中途失败留下一半 | `lib/db/media_dao.dart` 的分批循环包进同一个事务 |
+| P2-19 | `MigrationService` 开已有库不跑 onUpgrade，库被盖上 v8 的章而结构停在 v7 | 抽出 `Tables.createAll` 与 `Tables.applyMigrations`，两处调用点共用 |
+| P1-7 | 深度删除不自增 `mediaRevision`，作品层磁贴残留 | `lib/state/app_state.dart` 的两处 prune 按删除条数自增 |
+| P2-21 | 缩略图布尔守卫吞掉重生成 | 新增 `lib/utils/latest_only_runner.dart`，卡片复用时旧图结果不再盖回来 |
+| P1-3 | 外链播放的成功是假成功 | `lib/services/video_launcher.dart` 给 Android 桥加超时；桌面路径读退出码，留 1.2 秒宽限期 |
+| P2-13 | 数据目录迁移漏搬 `playlist/` | `lib/services/data_dir_service.dart` 补一条 `_copyDirStrict` |
+| P1-6 | 迁移时两个库各自全读进内存逐字节比 | 改成 64KB 分块比较 |
+| P1-8 | 缩略图补齐队列用 `contains` 加 `removeAt(0)`，是 O(n²) | 换成 Set 去重加 `removeLast` |
+| P1-9 | 导入进度逐文件通知，整页重建 | 新增 `lib/utils/progress_throttle.dart`，按千分位整数每 1% 通知一次 |
+| P1-5 | 界面与 README 承诺拖拽导入，代码里没有这个能力 | 按「不做该功能」处置，删两处文案、README 说法与 `desktop_drop` 依赖 |
+| P2-14 | `p.basenameWithoutExtension` 只认当前平台分隔符 | 新增 `lib/services/media_rules.dart` 的 `stemOfPath`，字幕匹配与封面白名单改用 |
+| P2-12 | 手动封面文件被删后仍直接返回，卡片一直空着 | `effectiveCover` 先查存在性，不在了落回自动候选 |
+| P2-15 | 播放列表覆盖写与重名撞车 | 改原子写；只在替换真的改动了名字时补一段短哈希 |
+| P2-16 | 覆盖目标库前先把目标库删掉，而备份只盖源库 | `migration_service.dart` 删之前先备份目标库，报告里给出备份目录 |
+| P2-20 | 导入读文件大小或修改时间失败时静默按 0 入库 | 改 `logWarn`，带上路径与异常 |
+| P2-17 | 阅读进度服务带一秒节流窗口，却从没人收尾 | 换库实例时收掉旧服务；关库前 `disposeReadingService` 先落盘；`dispose` 改成同步失效、异步落盘 |
+
+验证：
+
+- `flutter analyze`：5 条既有 info，0 error 0 warning（`lib/services/import_service.dart:45-47`、`lib/widgets/cover_image.dart:34`）。
+- `flutter test`：505 用例全过（本轮起始基线 462）。
+- 变异验证逐条做过。例：把 `lib/db/media_dao.dart` 的分批事务摘掉，回滚用例报 `Expected: <600> Actual: <100>`；把 `lib/state/app_state.dart` 的 `unawaited(stale.dispose())` 摘掉，新用例报 `database_closed`。
+- 提交：`41da5a6` 迁移 onUpgrade、`fa6e340` 日志、`f3c74f4` 原子写与批量删除、`46d4b42` mediaRevision 与缩略图、`e67ca99` 外链播放与迁移流式、`39b4081` 拖拽文案、`91ea0fd` 路径分隔符、`79e116c` 批次 A。
+
+未完成事项：报告里的 P2 还剩 22（`lib/widgets/dialogs.dart:187-325` 旧 `showTagPickerDialog` 死代码约 139 行，另有 `lib/widgets/works_grid.dart:10-12` 与 `lib/widgets/folder_browser.dart:11` 的化石 `hide`）、23（`lib/widgets/color_picker_dialog.dart` 无调用者，约 360 行）、24 到 27（三份 `_PromptDialog`、四份目录选择、`folder_browser` 两个批量方法、`image_grid` 的网格与列表分支重复）、28（32 份逐字节相同的 `_FakePathProvider`，可抽 `test/support/test_env.dart`）、30（`lib/utils/sql_like.dart` 的 `escapeLike` 与两个 DAO 各自手写的共三份）、31（`AppColors.parseColor` 遇到 8 位 `#RRGGBBAA` 会把红通道与 alpha 对调，与 `lib/utils/color_util.dart` 的 `parseHexColor` 两套语义）、32（`lib/widgets/segment_panel.dart:106`、`lib/widgets/tag_panel.dart:753/754/893/894`、`lib/widgets/image_detail.dart:785` 的 `TextEditingController` 无配对 dispose）、33（全 `lib` 零 `Semantics`，7 个纯图标按钮无 tooltip，`MaterialApp` 无 `localizationsDelegates`）、36（`lib/pages/about_page.dart:28` 版本号硬编码）。
+
+踩坑：
+
+- `lib/db/tables.dart` 的 `import` 要放在库级文档注释之上。夹在注释与 `class Tables` 之间会新增一条 `dangling_library_doc_comments`。
+- `ProgressThrottle` 第一版用 double 比较步长，撞上 `0.21 - 0.2 = 0.00999…` 的浮点边界，改用千分位整数。
+- `ReadingProgressService.dispose` 原本等 `flush()` 完成才置 `_disposed`。调用方是 fire-and-forget 时，紧接着的一次 `record` 会穿过 `_ensureUsable()` 打到已关闭的连接上。
+
+下一步：继续修 P2 剩下的批次，先做「重复与死代码」与「无障碍与国际化」两组。
