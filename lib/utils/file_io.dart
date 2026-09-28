@@ -48,6 +48,30 @@ class AtomicFileWriter {
   }
 }
 
+/// 写 `<target>.tmp` 再改名覆盖 [target]：目标要么是完整旧内容，要么是完整新内容。
+///
+/// 别写成「先删目标、再改名」：删成功、改名之前进程被杀或断电，目标就没了
+/// （`.datadir` 指针消失会让应用回落默认数据目录，用户看到「库空了」，其实数据
+/// 还在自定义目录里）。同目录 rename 覆盖本身是原子的，Windows 上 Dart 走
+/// MoveFileEx 带 REPLACE_EXISTING，不需要那一删。
+///
+/// [write] 里请用 `flush: true`，否则改名成功而内容还在页缓存里。
+/// 与 [AtomicFileWriter] 的分工：那个负责排队与保留 `.bak`，这里是单次替换。
+Future<void> writeFileAtomic(
+    File target, Future<void> Function(File tmp) write) async {
+  final tmp = File('${target.path}.tmp');
+  await target.parent.create(recursive: true);
+  try {
+    await write(tmp);
+    await tmp.rename(target.path);
+  } catch (e) {
+    try {
+      if (await tmp.exists()) await tmp.delete();
+    } catch (_) {}
+    rethrow;
+  }
+}
+
 /// 复制文件并校验结果。
 ///
 /// 源与目标同一个位置时直接返回，不触碰文件：`File.copy` 在这种情况下

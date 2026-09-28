@@ -7,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 
 import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/db/folder_dao.dart';
+import 'package:mediashelf/db/media_dao.dart';
 import 'package:mediashelf/db/tag_dao.dart';
 import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
@@ -165,5 +166,71 @@ void main() {
     expect(rows.length, 1);
     expect(rows.first['tag_id'], tag.id);
     expect((await db.query('folder_tags')).length, 1);
+  });
+
+  group('批量删除的分批要在同一个事务里', () {
+    late MediaDao media;
+
+    setUp(() {
+      media = MediaDao(db);
+    });
+
+    /// 造 [count] 行图片媒体，路径为 /m/bulk/<i>.jpg。
+    Future<void> seedBulk(int count) async {
+      await media.insertRows([
+        for (var i = 0; i < count; i++)
+          <String, Object?>{
+            'path': '/m/bulk/$i.jpg',
+            'media_type': 'image',
+            'filename': '$i.jpg',
+            'added_at': 1,
+          },
+      ]);
+    }
+
+    List<String> bulkPaths(int count) =>
+        [for (var i = 0; i < count; i++) '/m/bulk/$i.jpg'];
+
+    test('600 行跨批次删除能删干净', () async {
+      await seedBulk(600);
+
+      final deleted = await media.deleteByPaths(bulkPaths(600));
+
+      expect(deleted, 600);
+      expect(await db.query('media'), isEmpty);
+    });
+
+    test('第二批删到一半出错时，第一批的删除跟着回滚', () async {
+      await seedBulk(600);
+      // 500 行一批：让第二批里的一行删不掉，触发整批回滚。
+      await db.execute('CREATE TRIGGER refuse_one BEFORE DELETE ON media '
+          "WHEN OLD.path = '/m/bulk/550.jpg' "
+          "BEGIN SELECT RAISE(ABORT, '不许删这条'); END;");
+
+      await expectLater(
+        media.deleteByPaths(bulkPaths(600)),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      expect((await db.query('media')).length, 600,
+          reason: '分批各删各的时，第一批已经真删了 500 行，库里只剩 100 行');
+    });
+
+    test('deleteByIds 同样整体回滚', () async {
+      await seedBulk(600);
+      final ids = (await db.query('media', columns: ['id'], orderBy: 'id'))
+          .map((r) => r['id']! as int)
+          .toList();
+      await db.execute('CREATE TRIGGER refuse_one BEFORE DELETE ON media '
+          "WHEN OLD.id = ${ids[550]} "
+          "BEGIN SELECT RAISE(ABORT, '不许删这条'); END;");
+
+      await expectLater(
+        media.deleteByIds(ids),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      expect((await db.query('media')).length, 600);
+    });
   });
 }

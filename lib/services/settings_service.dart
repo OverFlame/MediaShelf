@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../utils/file_io.dart';
 import '../utils/log_util.dart';
 import 'data_dir_service.dart';
 
@@ -46,14 +47,9 @@ class SettingsService {
 
   Future<void> _writeSettingsFile() async {
     final f = await _file();
-    await f.parent.create(recursive: true);
     // 先写临时文件，再改名。读者要么看到完整旧内容，要么看到完整新内容。
-    final tmp = File('${f.path}.tmp');
-    await tmp.writeAsString(jsonEncode(_data), flush: true);
-    if (f.existsSync()) {
-      await f.delete();
-    }
-    await tmp.rename(f.path);
+    await writeFileAtomic(
+        f, (tmp) => tmp.writeAsString(jsonEncode(_data), flush: true));
   }
 
   /// 清空内存状态并重置保存链，仅供测试。

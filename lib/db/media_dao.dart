@@ -224,13 +224,17 @@ class MediaDao {
     final typeSql = type == null ? '' : ' AND media_type = ?';
     final typeArg = type == null ? const <Object?>[] : <Object?>[type.value];
     var deleted = 0;
-    for (var i = 0; i < list.length; i += _batchSize) {
-      final batch = list.sublist(
-          i, i + _batchSize > list.length ? list.length : i + _batchSize);
-      final ph = List.filled(batch.length, '?').join(',');
-      deleted += await _db.delete('media',
-          where: 'path IN ($ph)$typeSql', whereArgs: [...batch, ...typeArg]);
-    }
+    // 分批是为了躲开 SQL 变量上限，但整批要在一个事务里：拆成多条独立
+    // DELETE 时第二条抛错，库里会留下删了一半的集合。
+    await _db.transaction((txn) async {
+      for (var i = 0; i < list.length; i += _batchSize) {
+        final batch = list.sublist(
+            i, i + _batchSize > list.length ? list.length : i + _batchSize);
+        final ph = List.filled(batch.length, '?').join(',');
+        deleted += await txn.delete('media',
+            where: 'path IN ($ph)$typeSql', whereArgs: [...batch, ...typeArg]);
+      }
+    });
     logInfo('MediaDao', 'deleteByPaths 删除 $deleted 行（type=${type?.value}）');
     return deleted;
   }
@@ -245,13 +249,16 @@ class MediaDao {
     final typeSql = type == null ? '' : ' AND media_type = ?';
     final typeArg = type == null ? const <Object?>[] : <Object?>[type.value];
     var deleted = 0;
-    for (var i = 0; i < list.length; i += _batchSize) {
-      final batch = list.sublist(
-          i, i + _batchSize > list.length ? list.length : i + _batchSize);
-      final ph = List.filled(batch.length, '?').join(',');
-      deleted += await _db.delete('media',
-          where: 'id IN ($ph)$typeSql', whereArgs: [...batch, ...typeArg]);
-    }
+    // 同 deleteByPaths：分批要在同一个事务里，避免删一半。
+    await _db.transaction((txn) async {
+      for (var i = 0; i < list.length; i += _batchSize) {
+        final batch = list.sublist(
+            i, i + _batchSize > list.length ? list.length : i + _batchSize);
+        final ph = List.filled(batch.length, '?').join(',');
+        deleted += await txn.delete('media',
+            where: 'id IN ($ph)$typeSql', whereArgs: [...batch, ...typeArg]);
+      }
+    });
     logInfo('MediaDao', 'deleteByIds 删除 $deleted 行（type=${type?.value}）');
     return deleted;
   }

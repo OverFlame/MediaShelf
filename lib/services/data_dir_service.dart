@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../utils/file_io.dart';
 import '../utils/log_util.dart';
 
 /// 数据目录服务：统一管理数据库 / 封面缓存 / 设置文件的根目录。
@@ -92,16 +93,11 @@ class DataDirService {
         p.join(oldDir, 'settings.json'), p.join(newD, 'settings.json'));
     await _copyDirStrict(p.join(oldDir, 'covers'), p.join(newD, 'covers'));
 
-    // 指针最后写，且先写临时文件再 rename，避免写一半留下坏指针。
+    // 指针最后写。这里绝不能「先删旧指针、再改名」：删完成功而改名之前被打断，
+    // 指针就没了，应用会回落默认目录并建一个空库，用户以为数据丢了。
     final def = await defaultDir();
-    await Directory(def).create(recursive: true);
-    final pointer = p.join(def, '.datadir');
-    final tmp = File('$pointer.tmp');
-    await tmp.writeAsString(newD, flush: true);
-    if (File(pointer).existsSync()) {
-      await File(pointer).delete();
-    }
-    await tmp.rename(pointer);
+    final pointer = File(p.join(def, '.datadir'));
+    await writeFileAtomic(pointer, (tmp) => tmp.writeAsString(newD, flush: true));
 
     _dataDir = newD;
     logInfo('DataDir', 'Migrated data dir: $oldDir -> $newD');
