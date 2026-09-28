@@ -711,3 +711,41 @@
 - 提交 `1cb94aa`。
 
 未完成事项：占位字幕当前只扫得到、还没入库，归属模型与入库随阶段 6 落地。
+
+## 2026-09-28 阶段 4-8 合并落地（图片栈、字幕归属、视频识别、统一界面与设置、打包脚本）
+
+动作：
+
+| 范围 | 落地内容 |
+| --- | --- |
+| 数据层 | tables 升到 v8。`media` 加 `subtitle_of`、`is_default_subtitle` 与索引；新增 `reading_progress` 表 |
+| 图片栈迁入 | 迁入 sql_like、path_util、file_io、color_util、image_cache_util、thumbnail_cache、exif_service 七个库与配套用例 |
+| 阅读器 | 新建 `image_viewer`、`image_detail`、`image_grid`、`folder_panel`、`crop_math`、`reading_progress_service`、`volume_cover_service`、`volume_panel`、`cover_crop_editor`、`volume_cover_dialog` |
+| 字幕 | 新建 `subtitle_service` 与 `subtitle_assign_dialog`。字幕按 `subtitle_of` 归属到音频，默认字幕三级顺序：上次选定、文件名匹配、语言优先级 |
+| 视频 | `media_rules` 加视频扩展名与 `mediaTypeOfPath`。卡片按库分派，双击走 `VideoLauncher` 外链 |
+| 统一界面 | 重写 `home_page`：音频、图片、视频三库切换，导航栏切换、面包屑、多选栏、标签筛选与高级筛选 |
+| 设置与主题 | 设置页支持主题三档、网格列数、视图模式、缓存上限、数据目录切换与迁移；新建关于页 |
+| 打包 | 重写 `scripts/build_linux.sh`、`scripts/build_android.sh`、`scripts/build_windows.bat`，新增 `scripts/build_windows.ps1` |
+| 文档 | 重写 README，补功能、构建、平台能力与数据存储四组表格 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 数据目录名 | 继续用 `AudioShelf`。改名会让用户既有库变孤儿，数据库文件本身叫 `mediashelf.db` |
+| 版本号 | 阶段 4 到 8 合并记为 `0.8.0+13`。关于页常量必须同步改 |
+| Android compileSdk | desktop_drop 的 android 模块写死 33，它依赖的 androidx 要求 34 以上。根 build.gradle.kts 在子项目评估完之后把 compileSdk 改成 36。AGP 9 只认 compileSdk 属性，也没有 compileSdkVersion 方法 |
+| 字幕默认排除 | 规则标签 kind:subtitle 首次启动进 NOT 集并落盘 settings.json，用户改过就不再套用默认值 |
+| 左栏布局 | 文件夹面板与标签面板的表头跟列表合并进同一个滚动视图，矮窗口不再顶出溢出条 |
+| 假时钟用例 | widget 用例里的真实文件与数据库 I/O 一律放 setUp 或 runAsync。底面板动画要用带时长的 pump 推进 |
+| 封面裁剪 | 坐标归一化到 0..1，整幅写成 NULL。取景靠 Positioned 反向偏移，不裁不变形 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error。
+- `flutter test`：405 用例全过。阶段 12 的基线是 146。
+- `scripts/build_linux.sh --mode release`：退出码 0，产物 `build/linux/x64/release/bundle/mediashelf`，系统 sqlite3 已复制进 bundle 的 lib 目录。
+- `scripts/build_android.sh --mode release`：退出码 0。产物 `build/app/outputs/flutter-apk/app-release.apk`（71173358 字节）。aapt2 核对：versionName 0.8.0、versionCode 13、compileSdk 36。
+- README 过 ste-lint-zh。
+
+未完成事项：Windows 侧构建与运行要用户在本机验证；界面只做过静态与假时钟用例，未跑真机交互。
