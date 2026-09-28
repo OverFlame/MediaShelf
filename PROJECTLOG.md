@@ -568,3 +568,39 @@
 - 提交 `a7ce52d`。
 
 未完成事项：Windows 与 Android 真机验收未做。功能 3 与功能 2 未开始。
+
+## 2026-09-28 阶段 11 外链播放列表
+
+目标：把剧集与卷交给系统默认播放器，用 m3u8 播放列表承载多文件。
+
+动作：
+
+| 文件 | 改动 |
+| --- | --- |
+| `lib/services/playlist_writer.dart` | 新建。写 UTF-8 的 m3u8，落数据目录 `playlist/` |
+| `lib/services/video_launcher.dart` | 新建。按平台分派 `cmd /c start` 与 `xdg-open` |
+| `lib/db/media_dao.dart` | 加 `queryByDirs`，按目录前缀分批取媒体行 |
+| `lib/state/app_state.dart` | 加 `playFolderExternal`、`playWorkExternal` 与路径收集 |
+| `lib/widgets/launch_result_snack.dart` | 新建。把启动结果转成提示条 |
+| `lib/widgets/folder_browser.dart`、`lib/widgets/works_grid.dart` | 菜单加「用外部播放器播放」 |
+| `test/services/playlist_writer_test.dart` | 新建。4 条用例 |
+| `test/services/video_launcher_test.dart` | 新建。5 条用例 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 平台分派写法 | 放纯函数 `VideoLauncher.commandFor`。用例不用起进程就能断言命令 |
+| 打开失败 | 返回 `failed`，提示条指向 logs 目录，不抛异常 |
+| 目录取行 | 整棵文件夹树 BFS 收路径，再按 `path LIKE` 前缀取行，不按 `folder_id` 关联 |
+| 条目顺序 | 按 `filename` 排序，与界面显示一致 |
+| 视频优先 | 目录内有视频时只写视频，否则写目录内全部媒体 |
+| 引擎范围 | 外链播放不碰应用内音频引擎，与 v1 视频范围一致 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：6 条 info，0 error，与阶段 0 基线逐条相同。
+- `flutter test`：111 用例全过，阶段 10 的基线是 102。
+- 提交 `7dc6c75`，`pubspec.yaml` 版本号改 `0.6.0+11`。
+
+未完成事项：Windows 真机未验。三项待实测：PotPlayer 与 VLC 传多文件的参数；含空格路径给 `start` 加引号；VLC 的 `--playlist-enqueue`。Android 走 Intent 加 FileProvider，v1 不做。
