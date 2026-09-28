@@ -603,11 +603,16 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
   }
 
   Future<void> _delete(AppState appState) async {
+    final count = await appState.countMediaUnderFolder(widget.folder.id!);
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('删除文件夹「${widget.folder.name}」？'),
-        content: const Text('仅删除虚拟文件夹记录，不会删除磁盘上的图片。'),
+        content: Text('将从软件里移除这个文件夹、它的子文件夹，以及其中的 '
+            '$count 条媒体记录（音频、图片、视频、字幕都算）。\n\n'
+            '磁盘上的文件不会被删除，之后可以重新导入。\n'
+            '如果这条目录也登记在别的库（比如专辑目录里的图片），那边的记录会一起移除。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -621,7 +626,7 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
       ),
     );
     if (confirmed == true) {
-      await appState.deleteFolder(widget.folder.id!);
+      await appState.deleteFolderDeep(widget.folder.id!);
     }
   }
 

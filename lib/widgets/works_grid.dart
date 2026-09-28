@@ -210,11 +210,15 @@ class _WorkCard extends StatelessWidget {
         await showImportCoverDialog(context, work.id!);
         break;
       case 'delete':
+        final count = await appState.countMediaUnderWork(work.id!);
+        if (!context.mounted) return;
         final ok = await confirmDialog(context,
             title: '删除作品「${work.name}」？',
-            content: '仅删除作品分组，文件夹与磁盘文件保留（文件夹变为未归类）。');
+            content: '将从软件里移除这个作品、它下面的文件夹，以及其中的 '
+                '$count 条媒体记录（音频、图片、视频、字幕都算）。\n'
+                '磁盘文件不会被删除，之后可以重新导入。');
         if (ok == true) {
-          await appState.deleteWork(work.id!);
+          await appState.deleteWorkDeep(work.id!);
         }
         break;
     }

@@ -749,3 +749,33 @@
 - README 过 ste-lint-zh。
 
 未完成事项：Windows 侧构建与运行要用户在本机验证；界面只做过静态与假时钟用例，未跑真机交互。
+
+## 2026-09-28 删除语义改为深度删除（`0.8.1+14`）
+
+用户反馈：删除文件夹后内容变成未归类。期望是从软件数据里移除，磁盘文件不动，删除前有提醒。
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| 数据层 | `FolderDao.deleteMany(ids)`。一个事务里按深度从深到浅删整棵子树的文件夹行，顺带给集合外的子级置空 parent |
+| 状态层 | `AppState` 新增 `deleteFolderDeep`、`deleteWorkDeep`、`countMediaUnderFolder`、`countMediaUnderWork`。内部用 `_expandFoldersDeep`、`_pruneMediaLeftBehind`、`_dropViewerItemsFor` |
+| 界面 | 文件夹面板、音频文件夹树、作品卡片三处删除改走深度删除。对话框显示将移除的媒体条数 |
+| 版本 | `pubspec.yaml` 升到 `0.8.1+14`，关于页常量同步 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 旧的浅删保留 | `deleteFolder` 与 `deleteWork` 不动。`test/db_consistency_test.dart` 仍锁浅删语义（子文件夹上移，只清音频孤儿） |
+| 跨库吸收 | 删除目录时，如果同一目录也挂在别的库，那边文件夹记录一并移除。否则树里会留下指向空目录的节点 |
+| 别处仍覆盖的记录保留 | 清媒体前先看幸存文件夹的路径。还有别处覆盖，就不删。这跟搜索可见性一致 |
+| 条数提醒 | 删除前查一次条数写进对话框，删除函数返回实删行数 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error。
+- `flutter test`：408 用例全过（新增 3 条 `test/state/app_state_delete_test.dart`，阶段 12 基线 146）。
+- 新增用例断言三件事：磁盘文件保留，跨库记录移除，删除作品后不留未归类。
+
+未完成事项：Windows 与 Android 未跑真机；对话框只做静态核对。

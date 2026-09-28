@@ -458,4 +458,6 @@ python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
 
 阶段 4 到阶段 8 已完成，提交 `1317c9e`。CI 按用户要求并入阶段 9。
 
+删除文件夹与删除作品改成深度删除，`0.8.1+14`。软件内的文件夹、子文件夹与其中媒体记录一起移除，磁盘文件不动。
+
 下一步：用户在 Windows 本机拉取后跑 `scripts\build_windows.ps1`，验证构建与外链播放。之后进阶段 9。

@@ -279,7 +279,7 @@ class _FolderTile extends StatelessWidget {
                 PopupMenuDivider(),
                 PopupMenuItem(
                     value: 'delete',
-                    child: Text('删除（虚拟）', style: TextStyle(fontSize: 13, color: AppColors.danger))),
+                    child: Text('删除', style: TextStyle(fontSize: 13, color: AppColors.danger))),
               ],
             ),
           ],
@@ -322,12 +322,16 @@ class _FolderTile extends StatelessWidget {
         await appState.addTagsToFolder(folder.id!, tags, recursive: recursive);
         break;
       case 'delete':
+        final count = await appState.countMediaUnderFolder(folder.id!);
+        if (!context.mounted) return;
         final ok = await confirmDialog(context,
             title: '删除文件夹「${folder.name}」？',
-            content: '磁盘文件保留，但其中的曲目会从曲库移除'
-                '（别的文件夹仍覆盖到的曲目保留）。');
+            content: '将从软件里移除这个文件夹、它的子文件夹，以及其中的 '
+                '$count 条媒体记录（音频、图片、视频、字幕都算；'
+                '别的文件夹仍覆盖到的记录保留）。\n'
+                '磁盘文件不会被删除，之后可以重新导入。');
         if (ok == true) {
-          await appState.deleteFolder(folder.id!);
+          await appState.deleteFolderDeep(folder.id!);
         }
         break;
     }

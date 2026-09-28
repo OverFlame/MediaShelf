@@ -912,6 +912,160 @@ class AppState extends ChangeNotifier {
     return deleted;
   }
 
+  /// 深度删除文件夹：连子文件夹与其中所有媒体记录一起从软件里移除。
+  ///
+  /// 与 [deleteFolder] 的区别是这个方法把「目录里的东西」也一起清掉；两者都只动
+  /// 数据库，不碰磁盘文件，用户之后重新导入就能拿回来。返回移除的媒体行数。
+  Future<int> deleteFolderDeep(int id) async {
+    final ids = await _expandFoldersDeep(<int>{id});
+    final deleted = await _deleteFoldersDeep(ids);
+    _folderVersion++;
+    if (_currentFolderId != null && ids.contains(_currentFolderId)) {
+      _currentFolderId = null;
+      _currentFolder = null;
+      _currentFolderPath = null;
+    }
+    await refresh();
+    return deleted;
+  }
+
+  /// 深度删除作品：作品、它下面的文件夹与其中的媒体记录一起移除。
+  ///
+  /// 与 [deleteWork] 的区别是不再留下「未归类」的文件夹树。
+  Future<int> deleteWorkDeep(int workId) async {
+    final owned = await _folderDao.listByWork(workId);
+    final ids = await _expandFoldersDeep(
+        owned.map((f) => f.id).whereType<int>().toSet());
+    final deleted = await _deleteFoldersDeep(ids);
+    // 文件夹已删，这里只剩摘掉已不存在的归属并删除作品行。
+    await _workDao.delete(workId);
+    _folderVersion++;
+    if (_currentWork?.id == workId) {
+      await goHome();
+    } else {
+      await refresh();
+    }
+    return deleted;
+  }
+
+  /// 深度删除某文件夹会移除多少条媒体记录（删除前用来提示用户）。
+  Future<int> countMediaUnderFolder(int folderId) async {
+    final ids = await _expandFoldersDeep(<int>{folderId});
+    return _countMediaInFolders(ids);
+  }
+
+  /// 深度删除某作品会移除多少条媒体记录（删除前用来提示用户）。
+  Future<int> countMediaUnderWork(int workId) async {
+    final owned = await _folderDao.listByWork(workId);
+    final ids = await _expandFoldersDeep(
+        owned.map((f) => f.id).whereType<int>().toSet());
+    return _countMediaInFolders(ids);
+  }
+
+  /// 把一批文件夹扩成闭包：先补后代，再吸收「路径落在被删目录里」的其它文件夹。
+  ///
+  /// 后一步是为了跨库：同一条物理目录常同时登记在音频树与图片树（专辑目录里的
+  /// 封面、扫描件）。只删音频那一份会让图片侧的文件夹留在树里，指向已经不在库中
+  /// 的文件。吸收是迭代的——新吸进来的文件夹可能又带进别的库。
+  Future<Set<int>> _expandFoldersDeep(Set<int> seed) async {
+    final ids = <int>{};
+    for (final id in seed) {
+      ids.addAll(await _folderDao.collectDescendants(id));
+    }
+    final removed = await _pathsOfFolders(ids);
+    var grew = true;
+    while (grew) {
+      grew = false;
+      final all = await _folderDao.getAllPaths();
+      for (final entry in all.entries) {
+        if (ids.contains(entry.key)) continue;
+        final inside = entry.value.any(
+            (fp) => removed.any((r) => fp.path == r || p.isWithin(r, fp.path)));
+        if (!inside) continue;
+        ids.addAll(await _folderDao.collectDescendants(entry.key));
+        removed.addAll(entry.value.map((fp) => fp.path));
+        grew = true;
+      }
+    }
+    return ids;
+  }
+
+  Future<Set<String>> _pathsOfFolders(Set<int> ids) async {
+    final out = <String>{};
+    for (final id in ids) {
+      out.addAll((await _folderDao.getPaths(id)).map((fp) => fp.path));
+    }
+    return out;
+  }
+
+  /// 深度删除的执行体：先删文件夹行，再清掉因此失联的媒体行。
+  Future<int> _deleteFoldersDeep(Set<int> ids) async {
+    if (ids.isEmpty) return 0;
+    final removed = await _pathsOfFolders(ids);
+    await _folderDao.deleteMany(ids);
+    return _pruneMediaLeftBehind(removed.toList());
+  }
+
+  /// 清掉落在 [removedPaths] 下、又不再被任何文件夹覆盖的媒体行（全部类型）。
+  ///
+  /// [deleteFolder] 用的 [_pruneTracksLeftBehind] 只管音频，这里的「深度删除」
+  /// 要连图片、视频、字幕记录一起清，否则树里没入口、网格里却还看得见。
+  Future<int> _pruneMediaLeftBehind(List<String> removedPaths) async {
+    if (removedPaths.isEmpty) return 0;
+    final alive = <String>[];
+    for (final list in (await _folderDao.getAllPaths()).values) {
+      for (final fp in list) {
+        alive.add(fp.path);
+      }
+    }
+    final under = await _mediaDao.queryByDirs(removedPaths);
+    final victims = <String>[];
+    for (final m in under) {
+      if (alive.any((a) => p.isWithin(a, m.path))) continue;
+      victims.add(m.path);
+    }
+    if (victims.isEmpty) return 0;
+    final deleted = await _mediaDao.deleteByPaths(victims);
+    _trackTags.clear();
+    _dropViewerItemsFor(victims);
+    logInfo('AppState',
+        '深度删除后清理媒体 ${victims.length} 条（实删 $deleted 行）');
+    return deleted;
+  }
+
+  Future<int> _countMediaInFolders(Set<int> ids) async {
+    if (ids.isEmpty) return 0;
+    final removed = await _pathsOfFolders(ids);
+    if (removed.isEmpty) return 0;
+    final alive = <String>[];
+    for (final entry in (await _folderDao.getAllPaths()).entries) {
+      if (ids.contains(entry.key)) continue;
+      for (final fp in entry.value) {
+        alive.add(fp.path);
+      }
+    }
+    final under = await _mediaDao.queryByDirs(removed.toList());
+    return under.where((m) => !alive.any((a) => p.isWithin(a, m.path))).length;
+  }
+
+  /// 查看器里正在看的图被删掉时收起来，避免翻到一条已不存在的记录。
+  void _dropViewerItemsFor(List<String> removedPaths) {
+    if (_viewerImages.isEmpty) return;
+    final victims = removedPaths.toSet();
+    final keep =
+        _viewerImages.where((m) => !victims.contains(m.path)).toList();
+    if (keep.length == _viewerImages.length) return;
+    _viewerImages = keep;
+    if (_viewerImages.isEmpty) {
+      _viewerIndex = 0;
+      _showViewer = false;
+      _readingVolumeId = null;
+    } else if (_viewerIndex >= _viewerImages.length) {
+      _viewerIndex = _viewerImages.length - 1;
+    }
+    notifyListeners();
+  }
+
   /// 把文件夹（及其后代）移动到另一作品
   Future<void> moveFolderToWork(int folderId, int? workId) async {
     final ids = await _folderDao.collectDescendants(folderId);

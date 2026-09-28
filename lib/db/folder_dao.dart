@@ -174,6 +174,49 @@ class FolderDao {
     });
   }
 
+  /// 一次删掉整棵子树的文件夹行（CASCADE 清 folder_paths 等关联）。
+  ///
+  /// [ids] 必须自己闭合：要么是单一文件夹，要么调用方已补齐全部后代。
+  /// folders.parent 是自引用外键且不带 ON DELETE，所以按深度从深到浅逐行删，
+  /// 否则父行先走会让还没删的子行悬空，外键校验直接报错。
+  Future<int> deleteMany(Iterable<int> ids) async {
+    final list = ids.toSet().toList();
+    if (list.isEmpty) return 0;
+    return _db.transaction((txn) async {
+      final ph = List.filled(list.length, '?').join(',');
+      // 集合外的子级上移为根级。正常调用不会出现（[ids] 闭合），保险用。
+      await txn.rawUpdate(
+          'UPDATE folders SET parent = NULL WHERE parent IN ($ph) '
+          'AND id NOT IN ($ph)',
+          [...list, ...list]);
+      final rows = await txn.query('folders',
+          columns: ['id', 'parent'], where: 'id IN ($ph)', whereArgs: list);
+      final parentOf = <int, int?>{
+        for (final r in rows) r['id'] as int: r['parent'] as int?,
+      };
+      int depthOf(int id) {
+        var depth = 0;
+        var cur = parentOf[id];
+        final seen = <int>{};
+        while (cur != null && seen.add(cur)) {
+          depth++;
+          cur = parentOf[cur];
+        }
+        return depth;
+      }
+
+      final ordered = parentOf.keys.toList()
+        ..sort((a, b) => depthOf(b).compareTo(depthOf(a)));
+      var deleted = 0;
+      for (final id in ordered) {
+        deleted += await txn.delete('folders', where: 'id = ?', whereArgs: [id]);
+      }
+      logInfo('FolderDao',
+          'Deleted ${list.length} folder(s) in subtree (affected $deleted row(s))');
+      return deleted;
+    });
+  }
+
   /// 一次事务里给多个文件夹改归属，供「整棵子树换作品」使用。
   Future<void> setWorkMany(Iterable<int> ids, int? workId) async {
     final list = ids.toList();
