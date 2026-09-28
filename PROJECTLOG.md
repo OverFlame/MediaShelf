@@ -306,7 +306,7 @@
 验证：
 
 - 本轮只改文档。`flutter analyze --no-fatal-infos` 仍是 6 条 info、0 error，`flutter test` 仍是 75 用例全过。
-- ste-lint-zh --shape：BUILD_GUIDE.md 7829 字 0/0/0，PROJECT_STEPS.md 2048 字 0/0/0，PROJECTLOG.md 3534 字 0/0/0。
+- ste-lint-zh --shape：BUILD_GUIDE.md 7829 字 0/0/0，PROJECT_STEPS.md 2048 字 0/0/0，PROJECTLOG.md 3127 字 0/0/0。
 
 未完成事项：`folders.cover_path` 的 v6 增量、卷封面 DAO 与手动指定、系列导入入口。另有特典自动标签与卷内图片区。等用户放行后开工。
 
@@ -347,4 +347,31 @@
 - ste-lint-zh --shape：BUILD_GUIDE.md 8399 字 0/0/0，PROJECT_STEPS.md 2076 字 0/0/0，PROJECTLOG.md 3534 字 0/0/0。
 
 未完成事项：以上四条决定的代码实现，等用户放行。
+
+## 2026-09-27 封面裁剪与图片侧自定义封面（决策）
+
+需求：用户要求封面支持自定义裁剪显示范围。图片侧同样支持自定义封面。本轮只改文档。
+
+决定：
+
+| 议题 | 决定 |
+| --- | --- |
+| 裁剪存储 | `works` 与 `folders` 各加 `cover_crop` 列，存归一化的左、上、右、下四个数 |
+| 显示算法 | 按目标区宽高比把裁剪框扩成同比例，中心不变，超出原图向内收 |
+| 原图 | 永不改动，裁剪只影响渲染 |
+| 图片侧 | 系列封面落 `works.cover_path`，卷封面落 `folders.cover_path`，与音频共用一套方法 |
+| 交互 | 封面菜单加自定义裁剪与恢复默认；网格按卡片比例裁，详情页看全图 |
+
+落点：存储与算法在阶段 4，交互与显示在阶段 6。文案落在 BUILD_GUIDE 第 21 节，并同步第 19.2 与 20.5 节的指向。
+
+验证：
+
+- 本轮只改文档。`flutter analyze --no-fatal-infos` 仍是 6 条 info、0 error，`flutter test` 仍是 75 用例全过。
+- ste-lint-zh --shape：BUILD_GUIDE.md 8793 字 0/0/0，PROJECT_STEPS.md 2085 字 0/0/0，PROJECTLOG.md 3854 字 0/0/0。
+
+踩坑：
+
+- 同步 lint 数字时用了全局正则，把两条历史条目的数字一起改了。改用行内唯一锚点重做。
+
+未完成事项：`cover_crop` 列、裁剪算法与用例、封面菜单交互，等用户放行。
 
