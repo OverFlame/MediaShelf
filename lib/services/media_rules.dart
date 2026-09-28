@@ -109,6 +109,18 @@ String baseNameOfPath(String path) {
   return slash < 0 ? path : path.substring(slash + 1);
 }
 
+/// 取文件名主干：文件名去掉最后一个扩展名，两种分隔符都认。
+///
+/// 不要用 `p.basenameWithoutExtension` 代替：它只认**当前平台**的分隔符，
+/// 而库里的路径字符串是在哪台机器上建的库就带哪台机器的分隔符。Windows 上
+/// 建的库搬到 Linux 后，`D:\Music\a.mp3.srt` 的主干会被算成整条路径，
+/// 字幕匹配档位、封面白名单这些判定会集体失效。
+String stemOfPath(String path) {
+  final name = baseNameOfPath(path);
+  final dot = name.lastIndexOf('.');
+  return dot <= 0 ? name : name.substring(0, dot);
+}
+
 /// 自然排序键：把文件名主干里的连续数字补到四位，扩展名原样小写跟在后面。
 ///
 /// `第1话.mp3` 存成 `第0001话.mp3`，`第10话.mp3` 存成 `第0010话.mp3`，

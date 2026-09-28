@@ -2,10 +2,10 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
-import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../utils/crop_math.dart';
+import 'media_rules.dart';
 
 /// 卷封面的来源，[priority] 越小越优先（BUILD_GUIDE 第 19.2 节）。
 enum VolumeCoverSource {
@@ -96,8 +96,8 @@ class VolumeCoverService {
 
   /// 路径是否是白名单封面图（只看名字与扩展名，不碰磁盘）
   static bool isWhitelistCoverPath(String path) {
-    final name = p.basenameWithoutExtension(path).toLowerCase();
-    final ext = p.extension(path).toLowerCase();
+    final name = stemOfPath(path).toLowerCase();
+    final ext = extOfPath(path);
     return coverFileNames.contains(name) && coverExtensions.contains(ext);
   }
 

@@ -116,6 +116,17 @@ void main() {
       expect(VolumeCoverService.isWhitelistCoverPath('/x/cover.jpg.txt'), isFalse);
       expect(VolumeCoverService.isWhitelistCoverPath('/x/cover'), isFalse);
     });
+
+    test('认另一种分隔符的路径', () {
+      // 目录名与分隔符不该影响白名单判定：Windows 上建的库搬到 Linux 后，
+      // 路径里是反斜杠，p.basenameWithoutExtension 会把整条路径当成文件名。
+      expect(VolumeCoverService.isWhitelistCoverPath(r'D:\Music\cover.jpg'),
+          isTrue);
+      expect(VolumeCoverService.isWhitelistCoverPath(r'D:\Music\COVER.PNG'),
+          isTrue);
+      expect(VolumeCoverService.isWhitelistCoverPath(r'D:\Music\a.jpg'),
+          isFalse);
+    });
   });
 
   group('候选四级优先级', () {
