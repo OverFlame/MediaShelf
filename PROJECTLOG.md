@@ -671,3 +671,43 @@
 - 提交 `91269be`。
 
 未完成事项：窄屏下「选区」与队列按钮收进溢出菜单的形态未覆盖。
+
+## 2026-09-28 阶段 4 数据层与字幕
+
+目标：升 v7 数据层，补自然排序与字幕识别。
+
+动作：
+
+| 文件 | 改动 |
+| --- | --- |
+| `lib/db/tables.dart` | 版本升到 7。works 的 library 加认 image，加 cover_crop。media 加 sort_key。folders 加 cover_path、cover_crop、reading_direction、reading_fit。新增 reading_spreads |
+| `lib/services/media_rules.dart` | 加 `baseNameOfPath`、`naturalSortKey`、`sortKeyOfPath` |
+| `lib/db/media_dao.dart` | 加 `sortKey` 字段与 `compareNatural`。查询默认按自然序 |
+| `lib/services/subtitle_parser.dart` | 结果改 `SubtitleDocument`。加 UTF-8、GBK、latin1 的探测链。LRC 的 `[offset:]` 生效，纯文本歌词不再整篇丢 |
+| `lib/services/file_scanner.dart` | 字幕匹配改多值，按四档优先级排队。语言标记认 zh-CN、简日、CHS&JPN |
+| `lib/services/import_service.dart` | 先取优先级最高的一条字幕，多字幕归属留阶段 6 |
+| `lib/state/app_state.dart` | `getSubtitleLines` 换成 `subtitleFor`，返回 `SubtitleDocument` |
+| `lib/pages/subtitle_page.dart` | 占位格式显示提示。无时间标签的歌词整篇静态显示 |
+| 迁入 7 库 + 6 测试 | sql_like、path_util、file_io、color_util、image_cache_util、thumbnail_cache、exif_service |
+| `pubspec.yaml` / `THIRD_PARTY_NOTICES.md` | 加 `fast_gbk ^1.0.0`。通知文件补五项依赖与署名表 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 版本号口径 | folders.cover_path 原定 v6，阶段 12 已把 v6 用给 media_segments。阶段 4 走 v7，字幕归属列留给阶段 6 的 v8 |
+| 重建父表 | SQLite 的 DROP TABLE 会先做一次隐式 DELETE，触发 folders.work_id 的 ON DELETE SET NULL。迁移里先备份 work_id，重建 works 后回填 |
+| defer_foreign_keys | 挡不住上面的 SET NULL，这条语句已删掉 |
+| 自然排序 | 主干补零到四位，扩展名原样跟后面。第一版把扩展名里的数字也补零，`第10话.mp3` 变成 `第0010话.mp0003` |
+| 语言后缀 | 用 `-` 与 `&` 切段。地区词只接在中文系语言词后面。连写汉字按字符判定 |
+| 占位格式 | `.ass`、`.ssa`、`.ttml`、`.dfxp`、`.smi`、`.sami` 算字幕文件，但不参与匹配，解析结果带提示 |
+| latin1 兜底 | GBK 用 `allowMalformed: true`，畸形字节出替换符且不抛异常。latin1 这一步当前触发不到，保留是为了对齐指南的三级链 |
+| 迁入文本的风格 | 迁入文件里的 8 个破折号字符保持原样。它们属于迁入文本，中文文档检查器不扫 Dart 代码 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error。字幕解析器重写后，原来的 `unintended_html_in_doc_comment` 消失。
+- `flutter test`：231 用例全过。阶段 12 的基线是 146，迁入的 6 个测试文件贡献 64 条，本轮新增与改写 21 条。
+- 提交 `1cb94aa`。
+
+未完成事项：占位字幕当前只扫得到、还没入库，归属模型与入库随阶段 6 落地。
