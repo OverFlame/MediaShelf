@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import 'db/database.dart';
@@ -23,6 +24,10 @@ Future<void> main() async {
 
   try {
     await DataDirService.instance.init();
+    // 界面提示「详情见 logs 目录」，启动时就把文件 sink 挂上，
+    // 否则用户按提示去找，目录永远是空的。
+    LogUtil.attachFileSink(
+        p.join(await DataDirService.instance.dataDir, 'logs'));
     await SettingsService.instance.init();
     await DatabaseManager.instance.init();
 
@@ -79,7 +84,9 @@ class _ErrorApp extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: SelectableText(
-              '启动失败：\n\n$message',
+              '启动失败：\n\n$message\n\n'
+              '详情见应用数据目录下的 logs/ 文件夹'
+              '（启动失败发生在数据目录就绪之前时，只有控制台输出）。',
               style: const TextStyle(fontSize: 14),
             ),
           ),
