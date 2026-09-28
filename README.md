@@ -66,7 +66,7 @@
 | 音频 | [flutter_soloud](https://pub.dev/packages/flutter_soloud)。SoLoud 内核源码随包编译，mp3 / wav 解码加 miniaudio 输出，三端统一，无 GitHub 二进制下载 |
 | 元数据 | [audio_metadata_reader](https://pub.dev/packages/audio_metadata_reader)。读取标签与内嵌封面 |
 | 图片 | `image` 负责缩略图与裁剪，`exif` 读取照片方向 |
-| 其他 | `crypto` 算指纹，`desktop_drop` 支持拖入导入，`fast_gbk` 解码 GBK 字幕 |
+| 其他 | `crypto` 算指纹，`fast_gbk` 解码 GBK 字幕 |
 
 ## 目录结构
 

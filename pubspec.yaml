@@ -60,7 +60,6 @@ dependencies:
   # 图片与视频栈，随 PictureViewer2 并入（BUILD_GUIDE 第 5.1 节）
   crypto: ^3.0.7
   image: ^4.9.1
-  desktop_drop: ^0.4.4
   exif: ^3.3.0
 
   # 中文字幕解码：GBK/GB18030 的纯 Dart 实现（BUILD_GUIDE 第 23.2 节）

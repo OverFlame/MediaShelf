@@ -339,7 +339,7 @@ class _ImageGridState extends State<ImageGrid> {
           Text(_isVideo ? '这里还没有视频' : '这里还没有内容',
               style:  TextStyle(color: AppColors.textSecondaryOf(context), fontSize: 15, fontWeight: FontWeight.w500)),
           const SizedBox(height: 8),
-          Text(_isVideo ? '添加文件夹或拖拽视频开始导入' : '添加文件夹或拖拽图片开始导入',
+          Text(_isVideo ? '点下面的按钮添加视频文件夹' : '点下面的按钮添加图片文件夹',
               style:  TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
           const SizedBox(height: 20),
           OutlinedButton.icon(

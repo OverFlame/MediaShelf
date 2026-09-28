@@ -407,9 +407,7 @@ class _FolderPanelState extends State<FolderPanel> {
                Icon(Icons.folder_open, size: 48, color: AppColors.mutedOf(context)),
               const SizedBox(height: 12),
               Text(
-                _isVideo
-                    ? '拖拽文件夹/视频到主区域 |\n点击按钮浏览 | 输入路径添加'
-                    : '拖拽文件夹/图片到主区域 |\n点击按钮浏览 | 输入路径添加',
+                '点击按钮浏览 | 输入路径添加',
                 textAlign: TextAlign.center,
                 style:  TextStyle(
                   color: AppColors.textSecondaryOf(context),

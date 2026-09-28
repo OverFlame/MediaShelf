@@ -198,7 +198,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('这里还没有内容'), findsOneWidget);
-    expect(find.text('添加文件夹或拖拽图片开始导入'), findsOneWidget);
+    expect(find.text('点下面的按钮添加图片文件夹'), findsOneWidget);
   });
 
   Future<void> pumpGridWithTheme(WidgetTester tester, ThemeData theme) {
