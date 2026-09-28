@@ -5,16 +5,17 @@
 class Tables {
   Tables._();
 
-  static const int version = 6;
+  static const int version = 7;
 
   static const List<String> createStatements = [
-    // 作品集：音频侧是专辑，视频侧是剧集
+    // 作品集：音频侧是系列，视频侧是剧集，图片侧是漫画系列
     '''
     CREATE TABLE works (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT    NOT NULL,
-      library     TEXT    NOT NULL CHECK (library IN ('audio', 'video')),
+      library     TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
       cover_path  TEXT,
+      cover_crop  TEXT,
       sort_order  INTEGER NOT NULL DEFAULT 0,
       created_at  INTEGER NOT NULL
     )
@@ -43,7 +44,9 @@ class Tables {
       note          TEXT,
       alias         TEXT,
       subtitle_path TEXT,
-      cover_path    TEXT
+      cover_path    TEXT,
+      -- 自然排序键：文件名里的连续数字补零，见 BUILD_GUIDE 第 20.2 节
+      sort_key      TEXT
     )
     ''',
     'CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type)',
@@ -52,17 +55,26 @@ class Tables {
     'CREATE INDEX IF NOT EXISTS idx_media_hash ON media(hash)',
     'CREATE INDEX IF NOT EXISTS idx_media_added_at ON media(added_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_media_title ON media(title)',
+    'CREATE INDEX IF NOT EXISTS idx_media_sort_key ON media(sort_key)',
 
-    // 虚拟文件夹（镜像磁盘目录树）
+    // 虚拟文件夹（镜像磁盘目录树）。卷封面、裁剪与阅读方向都记在这一行。
     '''
     CREATE TABLE folders (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      name    TEXT    NOT NULL,
-      parent  INTEGER REFERENCES folders(id),
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      name              TEXT    NOT NULL,
+      parent            INTEGER REFERENCES folders(id),
       -- 库归属：音频、图片、视频各一棵树，见 BUILD_GUIDE 第 18.2 节
-      library TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
+      library           TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
       -- 作品被删时自动摘掉归属，避免留下指向已删作品的悬空引用
-      work_id INTEGER REFERENCES works(id) ON DELETE SET NULL,
+      work_id           INTEGER REFERENCES works(id) ON DELETE SET NULL,
+      -- 卷封面与裁剪，见 BUILD_GUIDE 第 19.2 与 21 节
+      cover_path        TEXT,
+      cover_crop        TEXT,
+      -- 阅读模式，见 BUILD_GUIDE 第 22.2 与 22.3 节
+      reading_direction TEXT    NOT NULL DEFAULT 'rtl'
+                                CHECK (reading_direction IN ('rtl', 'ltr')),
+      reading_fit       TEXT    NOT NULL DEFAULT 'page'
+                                CHECK (reading_fit IN ('page', 'height', 'width')),
       UNIQUE(name, parent)
     )
     ''',
@@ -136,6 +148,16 @@ class Tables {
     ''',
     'CREATE INDEX IF NOT EXISTS idx_media_segments_media ON media_segments(media_id)',
 
+    // 并排页对：v1 只建表，不写入，见 BUILD_GUIDE 第 22.5 节
+    '''
+    CREATE TABLE reading_spreads (
+      volume_id     INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+      left_media_id INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
+      right_media_id INTEGER NOT NULL REFERENCES media(id)  ON DELETE CASCADE,
+      PRIMARY KEY (volume_id, left_media_id)
+    )
+    ''',
+
     // 过渡视图：只读，阶段 6 结束前删掉（BUILD_GUIDE 第 7.4 节）。
     // 老查询按 tracks / images 读，写入一律走 MediaDao。
     'CREATE VIEW IF NOT EXISTS tracks AS '
@@ -163,6 +185,55 @@ class Tables {
       ''',
       'CREATE INDEX IF NOT EXISTS idx_media_segments_media '
           'ON media_segments(media_id)',
+    ],
+
+    // v7：图片栈与阅读模式的结构（BUILD_GUIDE 第 19.2、20.1、20.2、21.2、22 节）
+    7: [
+      // works 要把 library 的枚举值扩到 image。SQLite 改不了 CHECK，只能重建表；
+      // 而 DROP TABLE 会先做一次隐式 DELETE，folders.work_id 上的
+      // ON DELETE SET NULL 会顺手把归属清成 NULL。所以先备份归属，重建完写回去。
+      'CREATE TABLE folders_work_backup AS SELECT id, work_id FROM folders',
+      '''
+      CREATE TABLE works_new (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT    NOT NULL,
+        library     TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
+        cover_path  TEXT,
+        cover_crop  TEXT,
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        created_at  INTEGER NOT NULL
+      )
+      ''',
+      'INSERT INTO works_new '
+          '(id, name, library, cover_path, sort_order, created_at) '
+          'SELECT id, name, library, cover_path, sort_order, created_at FROM works',
+      'DROP TABLE works',
+      'ALTER TABLE works_new RENAME TO works',
+      'UPDATE folders SET work_id = '
+          '(SELECT b.work_id FROM folders_work_backup b WHERE b.id = folders.id)',
+      'DROP TABLE folders_work_backup',
+
+      // media 加自然排序键
+      'ALTER TABLE media ADD COLUMN sort_key TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_media_sort_key ON media(sort_key)',
+
+      // folders 加卷封面、裁剪与阅读模式四列
+      'ALTER TABLE folders ADD COLUMN cover_path TEXT',
+      'ALTER TABLE folders ADD COLUMN cover_crop TEXT',
+      "ALTER TABLE folders ADD COLUMN reading_direction TEXT NOT NULL "
+          "DEFAULT 'rtl' CHECK (reading_direction IN ('rtl', 'ltr'))",
+      "ALTER TABLE folders ADD COLUMN reading_fit TEXT NOT NULL "
+          "DEFAULT 'page' CHECK (reading_fit IN ('page', 'height', 'width'))",
+
+      // 并排页对
+      '''
+      CREATE TABLE reading_spreads (
+        volume_id      INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+        left_media_id  INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
+        right_media_id INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
+        PRIMARY KEY (volume_id, left_media_id)
+      )
+      ''',
     ],
   };
 }

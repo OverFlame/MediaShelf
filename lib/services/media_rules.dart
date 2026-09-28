@@ -46,8 +46,26 @@ const videoExtensions = {
   '.3gp',
 };
 
-/// 现在能解析的字幕格式
+/// 现在能解析的字幕格式，也是匹配规则使用的集合
 const subtitleExtensions = {'.vtt', '.srt', '.lrc'};
+
+/// 认得出、但还没有解析器的字幕格式（BUILD_GUIDE 第 23.3 节）
+///
+/// 扫描与入库要收下这些文件，界面按 `parsed: false` 标成「暂不支持解析」。
+const placeholderSubtitleExtensions = {
+  '.ass',
+  '.ssa',
+  '.ttml',
+  '.dfxp',
+  '.smi',
+  '.sami',
+};
+
+/// 识别用的全部字幕扩展名：可解析的加占位格式
+const knownSubtitleExtensions = {
+  ...subtitleExtensions,
+  ...placeholderSubtitleExtensions,
+};
 
 bool isAudioFile(String path) => _hasAny(path, audioExtensions);
 
@@ -55,7 +73,11 @@ bool isImageFile(String path) => _hasAny(path, imageExtensions);
 
 bool isVideoFile(String path) => _hasAny(path, videoExtensions);
 
-bool isSubtitleFile(String path) => _hasAny(path, subtitleExtensions);
+/// 认得出是字幕（含占位格式），扫描用这个。
+bool isSubtitleFile(String path) => _hasAny(path, knownSubtitleExtensions);
+
+/// 有解析器的字幕格式，匹配与解析用这个。
+bool isParsableSubtitleFile(String path) => _hasAny(path, subtitleExtensions);
 
 /// 按扩展名判定媒体类型，返回 `audio` / `image` / `video`，认不出返回 null。
 ///
@@ -80,6 +102,57 @@ String extOfPath(String path) {
 
 /// 归一化路径，供 `media.name_lower` 模糊匹配用。
 String nameLowerOfPath(String path) => path.toLowerCase();
+
+/// 取路径里的文件名部分（最后一段），两种分隔符都认。
+String baseNameOfPath(String path) {
+  final slash = path.lastIndexOf(RegExp(r'[\\/]'));
+  return slash < 0 ? path : path.substring(slash + 1);
+}
+
+/// 自然排序键：把文件名主干里的连续数字补到四位，扩展名原样小写跟在后面。
+///
+/// `第1话.mp3` 存成 `第0001话.mp3`，`第10话.mp3` 存成 `第0010话.mp3`，
+/// 这样按字符比较就能得到数值顺序（BUILD_GUIDE 第 20.2 节）。
+/// 扩展名里的数字不补零，免得 `.mp3` 变成 `.mp0003`。
+/// 超过四位的数字组原样保留，不截断。
+String naturalSortKey(String name) {
+  final slash = name.lastIndexOf(RegExp(r'[\\/]'));
+  final dot = name.lastIndexOf('.');
+  final hasExt = dot > slash + 1 && dot > 0;
+  final stem = hasExt ? name.substring(0, dot) : name;
+  final ext = hasExt ? name.substring(dot).toLowerCase() : '';
+  return '${_padDigits(stem)}$ext';
+}
+
+/// 把字符串里的连续数字组补到四位。
+String _padDigits(String input) {
+  final out = StringBuffer();
+  var i = 0;
+  while (i < input.length) {
+    final code = input.codeUnitAt(i);
+    if (code >= 0x30 && code <= 0x39) {
+      var j = i;
+      while (j < input.length) {
+        final c = input.codeUnitAt(j);
+        if (c < 0x30 || c > 0x39) break;
+        j++;
+      }
+      final digits = input.substring(i, j);
+      if (digits.length < 4) {
+        out.write('0' * (4 - digits.length));
+      }
+      out.write(digits);
+      i = j;
+    } else {
+      out.writeCharCode(code);
+      i++;
+    }
+  }
+  return out.toString();
+}
+
+/// 路径对应的自然排序键，落 `media.sort_key` 用。
+String sortKeyOfPath(String path) => naturalSortKey(baseNameOfPath(path));
 
 bool _hasAny(String path, Set<String> exts) {
   final lower = path.toLowerCase();

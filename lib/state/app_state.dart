@@ -141,7 +141,7 @@ class AppState extends ChangeNotifier {
   bool get sortDescending => _sortDescending;
 
   // ── 字幕缓存 ──
-  final Map<String, List<LyricLine>> _subtitleCache = {};
+  final Map<String, SubtitleDocument> _subtitleCache = {};
 
   // ═══════════════ DAO 便捷访问 ═══════════════
 
@@ -1187,9 +1187,13 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 字幕 / 封面 ═══════════════
 
-  List<LyricLine> getSubtitleLines(TrackItem track) {
+  /// 读一首曲目的字幕，结果按曲目路径缓存（BUILD_GUIDE 第 23.3 节）。
+  ///
+  /// 返回 [SubtitleDocument]：界面据 [SubtitleDocument.parsed] 判断格式是否
+  /// 可解析，据 [SubtitleDocument.hasTiming] 判断要不要做逐行同步。
+  SubtitleDocument subtitleFor(TrackItem track) {
     final p = track.subtitlePath;
-    if (p == null || p.isEmpty) return const [];
+    if (p == null || p.isEmpty) return SubtitleDocument.empty;
     return _subtitleCache.putIfAbsent(
         track.path, () => SubtitleParser.parseFile(p));
   }

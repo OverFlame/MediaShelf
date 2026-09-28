@@ -42,10 +42,14 @@ class _SubtitlePageState extends State<SubtitlePage> {
     final appState = context.watch<AppState>();
     final track = player.currentTrack;
 
-    final lines = track == null ? const <LyricLine>[] : appState.getSubtitleLines(track);
+    final doc = track == null
+        ? SubtitleDocument.empty
+        : appState.subtitleFor(track);
+    final lines = doc.lines;
     final cover = track == null ? null : appState.coverForTrack(track);
 
-    final currentIndex = _currentIndex(lines, player.position);
+    // 无时间标签的歌词（纯文本 LRC）不做逐行同步，整篇静态显示。
+    final currentIndex = doc.hasTiming ? _currentIndex(lines, player.position) : -1;
 
     // 自动滚动到当前行
     if (currentIndex != _lastIndex && currentIndex >= 0 && !_userScrolling) {
@@ -68,7 +72,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       _viewportHeight = constraints.maxHeight;
-                      return _lyricsView(lines, currentIndex, player);
+                      return _lyricsView(doc, currentIndex, player);
                     },
                   ),
                 ),
@@ -145,11 +149,51 @@ class _SubtitlePageState extends State<SubtitlePage> {
   }
 
   Widget _lyricsView(
-      List<LyricLine> lines, int currentIndex, PlayerController player) {
-    if (lines.isEmpty) {
-      return const Center(
-        child: Text('无字幕',
-            style: TextStyle(color: Colors.white54, fontSize: 14)),
+      SubtitleDocument doc, int currentIndex, PlayerController player) {
+    // 占位格式（.ass/.ssa/.ttml 等）：解析器只回了提示文案。
+    if (!doc.parsed) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Text(
+            doc.note ?? '该格式暂不支持解析',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white54, fontSize: 14),
+          ),
+        ),
+      );
+    }
+
+    if (doc.lines.isEmpty) {
+      return Center(
+        child: Text(doc.note ?? '无字幕',
+            style: const TextStyle(color: Colors.white54, fontSize: 14)),
+      );
+    }
+
+    // 无时间标签的歌词整篇静态显示：不逐行高亮，点击也不跳转。
+    if (!doc.hasTiming) {
+      return Column(
+        children: [
+          _hint(doc.note ?? '该歌词无时间标签'),
+          Expanded(
+            child: ListView.builder(
+              controller: _scroll,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              itemCount: doc.lines.length,
+              itemBuilder: (context, i) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Text(
+                  doc.lines[i].text,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.white70, fontSize: 16, height: 1.4),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
 
@@ -169,9 +213,9 @@ class _SubtitlePageState extends State<SubtitlePage> {
         controller: _scroll,
         itemExtent: _itemExtent,
         padding: EdgeInsets.symmetric(vertical: _viewportHeight / 2 - _itemExtent / 2),
-        itemCount: lines.length,
+        itemCount: doc.lines.length,
         itemBuilder: (context, i) {
-          final line = lines[i];
+          final line = doc.lines[i];
           final active = i == currentIndex;
           return GestureDetector(
             onTap: () => player.seek(Duration(milliseconds: line.startMs)),
@@ -193,6 +237,20 @@ class _SubtitlePageState extends State<SubtitlePage> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  /// 顶部一条提示（例如「该歌词无时间标签」）。
+  Widget _hint(String text) {
+    return Container(
+      width: double.infinity,
+      color: Colors.white10,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
       ),
     );
   }

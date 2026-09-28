@@ -50,6 +50,8 @@ class MediaItem {
   final String? alias;
   final String? subtitlePath;
   final String? coverPath;
+  /// 自然排序键，见 lib/services/media_rules.dart 的 sortKeyOfPath。
+  final String? sortKey;
 
   const MediaItem({
     this.id,
@@ -73,6 +75,7 @@ class MediaItem {
     this.alias,
     this.subtitlePath,
     this.coverPath,
+    this.sortKey,
   });
 
   Map<String, dynamic> toMap() => {
@@ -97,6 +100,7 @@ class MediaItem {
         'alias': alias,
         'subtitle_path': subtitlePath,
         'cover_path': coverPath,
+        'sort_key': sortKey,
       };
 
   factory MediaItem.fromMap(Map<String, dynamic> map) => MediaItem(
@@ -122,6 +126,7 @@ class MediaItem {
         alias: map['alias'] as String?,
         subtitlePath: map['subtitle_path'] as String?,
         coverPath: map['cover_path'] as String?,
+        sortKey: map['sort_key'] as String?,
       );
 }
 
@@ -143,15 +148,23 @@ class MediaDao {
   /// 供大小写不敏感查找的列值，统一小写。查询侧也要先 toLowerCase 再回填。
   static String nameLowerOf(String path) => nameLowerOfPath(path);
 
-  /// 补全 ext 与 name_lower 再落库，避免调用点漏填。
+  /// 补全 ext、name_lower 与 sort_key 再落库，避免调用点漏填。
   static Map<String, Object?> rowWithDerived(Map<String, Object?> row) {
     final path = (row['path'] as String?) ?? '';
     return {
       ...row,
       'ext': row['ext'] ?? extOf(path),
       'name_lower': row['name_lower'] ?? nameLowerOf(path),
+      'sort_key': row['sort_key'] ?? sortKeyOfPath(path),
     };
   }
+
+  /// 默认排序：自然排序键优先，为空时回落文件名，两者都不区分大小写。
+  ///
+  /// 第 10 页排在第 2 页后面靠这一条（BUILD_GUIDE 第 20.2 节）。
+  static const String naturalOrderBy =
+      "(CASE WHEN sort_key IS NULL OR sort_key = '' THEN filename "
+      "ELSE sort_key END) COLLATE NOCASE, filename COLLATE NOCASE";
 
   // ═══ 写 ═══
 
@@ -225,7 +238,7 @@ class MediaDao {
   }
 
   Future<List<MediaItem>> queryAll(
-      {MediaType? type, String orderBy = 'filename'}) async {
+      {MediaType? type, String orderBy = naturalOrderBy}) async {
     final args = <Object?>[];
     final where = _typeWhere(type, args);
     final rows = await _db.query('media',
@@ -240,7 +253,7 @@ class MediaDao {
   /// 目录数可能上千，占位符在 SQLite 里有上限，所以分批查，再按 id 去重。
   /// 跨越批次时按文件名排序，保证行序稳定。
   Future<List<MediaItem>> queryByDirs(List<String> dirPaths,
-      {MediaType? type, String orderBy = 'filename'}) async {
+      {MediaType? type, String orderBy = naturalOrderBy}) async {
     if (dirPaths.isEmpty) return [];
     final out = <MediaItem>[];
     final seen = <int>{};
@@ -260,9 +273,21 @@ class MediaDao {
         if (item.id == null || seen.add(item.id!)) out.add(item);
       }
     }
-    out.sort((a, b) => a.filename.toLowerCase().compareTo(
-        b.filename.toLowerCase()));
+    out.sort(compareNatural);
     return out;
+  }
+
+  /// 跨批次合并后的自然顺序比较：先比 sort_key，再比文件名，都不区分大小写。
+  static int compareNatural(MediaItem a, MediaItem b) {
+    final ka = (a.sortKey == null || a.sortKey!.isEmpty)
+        ? a.filename
+        : a.sortKey!;
+    final kb = (b.sortKey == null || b.sortKey!.isEmpty)
+        ? b.filename
+        : b.sortKey!;
+    final byKey = ka.toLowerCase().compareTo(kb.toLowerCase());
+    if (byKey != 0) return byKey;
+    return a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
   }
 
   static String _escapeLike(String raw) => raw

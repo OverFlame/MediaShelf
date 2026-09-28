@@ -63,6 +63,9 @@ dependencies:
   desktop_drop: ^0.4.4
   exif: ^3.3.0
 
+  # 中文字幕解码：GBK/GB18030 的纯 Dart 实现（BUILD_GUIDE 第 23.2 节）
+  fast_gbk: ^1.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

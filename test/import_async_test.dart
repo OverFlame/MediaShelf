@@ -88,8 +88,8 @@ void main() {
     expect(FileScanner.debugScannedOnCallerIsolate, isFalse,
         reason: '遍历要跑在单独 isolate 上');
     expect(scan.audioPaths.map(p.basename).toList(), ['a.mp3', 'c.mp3']);
-    final subtitle = scan.subtitleByAudio[p.join(dir.path, 'a.mp3')];
-    expect(subtitle == null ? null : p.basename(subtitle), 'a.vtt');
+    final subtitles = scan.subtitleByAudio[p.join(dir.path, 'a.mp3')];
+    expect(subtitles?.map(p.basename).toList(), ['a.vtt']);
   });
 
   test('导入整条路径都不占用调用方 isolate，封面照样落库', () async {
