@@ -43,10 +43,69 @@ void main() {
       entries: [PlaylistEntry(path: '/m/a.mp4', title: 'a')],
     );
 
-    expect(file, endsWith(p.join('playlist', '剧集_第1季_.m3u8')));
+    expect(file, contains(p.join('playlist', '剧集_第1季_')));
+    expect(file, endsWith('.m3u8'));
     final written = File(file);
     expect(written.existsSync(), isTrue);
     expect(await written.readAsString(), contains('/m/a.mp4'));
+  });
+
+  test('非法字符归一后不同名字不能落到同一个文件', () async {
+    final tmp = await Directory.systemTemp.createTemp('mediashelf_playlist');
+    addTearDown(() => tmp.delete(recursive: true));
+    final writer = PlaylistWriter(outputDir: p.join(tmp.path, 'playlist'));
+
+    // 两个标题只差一个非法字符：_safeName 会把它们都换成下划线，
+    // 名字重了就会互相覆盖，用户以为导出了两份，实际只剩一份。
+    final a = await writer.write(
+      name: '第1话/上',
+      entries: [PlaylistEntry(path: '/m/a.mp4')],
+    );
+    final b = await writer.write(
+      name: '第1话:上',
+      entries: [PlaylistEntry(path: '/m/b.mp4')],
+    );
+
+    expect(a, isNot(b));
+    expect(await File(a).readAsString(), contains('/m/a.mp4'));
+    expect(await File(b).readAsString(), contains('/m/b.mp4'));
+  });
+
+  test('同一个名字重复导出还是同一个文件', () async {
+    final tmp = await Directory.systemTemp.createTemp('mediashelf_playlist');
+    addTearDown(() => tmp.delete(recursive: true));
+    final writer = PlaylistWriter(outputDir: p.join(tmp.path, 'playlist'));
+
+    final first = await writer.write(
+      name: '第1话/上',
+      entries: [PlaylistEntry(path: '/m/a.mp4')],
+    );
+    final second = await writer.write(
+      name: '第1话/上',
+      entries: [PlaylistEntry(path: '/m/c.mp4')],
+    );
+
+    expect(second, first);
+    final text = await File(second).readAsString();
+    expect(text, contains('/m/c.mp4'));
+    expect(text, isNot(contains('/m/a.mp4')));
+  });
+
+  test('写完不留临时文件', () async {
+    final tmp = await Directory.systemTemp.createTemp('mediashelf_playlist');
+    addTearDown(() => tmp.delete(recursive: true));
+    final dir = p.join(tmp.path, 'playlist');
+    final writer = PlaylistWriter(outputDir: dir);
+
+    await writer.write(
+      name: '归档',
+      entries: [PlaylistEntry(path: '/m/a.mp4')],
+    );
+
+    final names =
+        Directory(dir).listSync().map((e) => p.basename(e.path)).toList();
+    expect(names.where((n) => n.endsWith('.tmp')), isEmpty);
+    expect(names.single, '归档.m3u8');
   });
 
   test('名字为空时用 playlist 兜底', () async {

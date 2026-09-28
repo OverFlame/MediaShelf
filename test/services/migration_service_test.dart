@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:mediashelf/db/tables.dart';
@@ -226,6 +227,31 @@ void main() {
     } finally {
       await db.close();
     }
+  });
+
+  test('覆盖目标库之前先把它备份下来', () async {
+    await buildBoth();
+    await service().run(srcAudioDb: srcA, srcImageDb: srcB, dstDb: dst);
+    final before = await File(dst).readAsBytes();
+
+    final report = await service(overwrite: true)
+        .run(srcAudioDb: srcA, srcImageDb: srcB, dstDb: dst);
+
+    expect(report.notes.any((n) => n.contains('目标库已备份到')), isTrue,
+        reason: 'overwrite 会把目标库整个删掉，删之前必须留一份');
+    final backupDirs = Directory(dir.path)
+        .listSync()
+        .whereType<Directory>()
+        .where((d) => p.basename(d.path).startsWith('migration-backup-'))
+        .toList();
+    expect(backupDirs, isNotEmpty);
+    final copies = backupDirs
+        .expand((d) => d.listSync())
+        .whereType<File>()
+        .where((f) => p.basename(f.path) == p.basename(dst))
+        .toList();
+    expect(copies, isNotEmpty);
+    expect(await copies.last.readAsBytes(), before);
   });
 
   test('目标库已有数据时中止，传 overwrite 才覆盖', () async {

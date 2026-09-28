@@ -101,12 +101,17 @@ class ImportService {
           int sizeBytes = 0;
           try {
             sizeBytes = await file.length();
-          } catch (_) {}
+          } catch (error) {
+            // 文件被删或权限不足：大小与时间会以 0 入库，至少留一条线索。
+            logWarn('Import', '读不到文件大小，将按 0 入库：$path', error);
+          }
           int mtime = 0;
           try {
             // 用异步版：同步版在主 isolate 上做一次文件 IO（报告第 25 项）。
             mtime = (await file.lastModified()).millisecondsSinceEpoch;
-          } catch (_) {}
+          } catch (error) {
+            logWarn('Import', '读不到修改时间，将按 0 入库：$path', error);
+          }
 
           final ext = p.extension(path).toLowerCase();
           final filename = p.basename(path);

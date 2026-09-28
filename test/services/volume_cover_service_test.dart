@@ -314,6 +314,18 @@ void main() {
       expect(await service.currentCover(volume), isNull);
     });
 
+    test('手动封面的文件没了就退回自动候选', () async {
+      final manual = img('picked.jpg');
+      await service.setCover(volume, manual);
+      expect(await service.effectiveCover(volume), manual);
+
+      // 用户把文件删了或搬走了，库里的路径还在
+      existing.remove(manual);
+
+      expect(await service.currentCover(volume), manual);
+      expect(p.basename((await service.effectiveCover(volume))!), 'cover.jpg');
+    });
+
     test('effectiveCover 不写库', () async {
       await service.effectiveCover(volume);
       expect(await service.currentCover(volume), isNull);

@@ -1792,10 +1792,24 @@ class AppState extends ChangeNotifier {
   ReadingProgressService get readingService {
     final db = DatabaseManager.instance.db;
     if (_readingService == null || !identical(_readingServiceDb, db)) {
+      // 换库实例说明旧连接已经关掉或正在关：旧服务里攒着的进度要趁早落盘，
+      // 否则节流窗口里那一页会打到已关闭的连接上，异常只留一条日志。
+      final stale = _readingService;
+      if (stale != null) unawaited(stale.dispose());
       _readingService = ReadingProgressService(db);
       _readingServiceDb = db;
     }
     return _readingService!;
+  }
+
+  /// 关库、退出前把阅读进度落盘。服务自己带节流窗口，不落盘就会丢一页。
+  ///
+  /// 之后再用 [readingService] 会新建实例（老实例已 dispose）。
+  Future<void> disposeReadingService() async {
+    final service = _readingService;
+    _readingService = null;
+    _readingServiceDb = null;
+    await service?.dispose();
   }
 
   Future<ReadingProgress?> readingProgressOf(int volumeId) =>
@@ -2724,6 +2738,9 @@ class AppState extends ChangeNotifier {
       // 关库前先前进一代：在途的 refresh 拿到结果后发现代际不匹配会主动丢弃，
       // 不会去写已经关掉的连接。
       _refreshGeneration++;
+      // 关库前先把阅读进度落盘：服务带一秒节流窗口，攒着的那一页在
+      // close() 之后就写不进去了。
+      await disposeReadingService();
       await DatabaseManager.instance.close();
       final newD = await DataDirService.instance.migrateTo(newDir);
       // 日志跟着数据目录走，否则迁移后还往旧目录写。
