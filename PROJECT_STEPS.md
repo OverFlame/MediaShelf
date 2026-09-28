@@ -74,7 +74,7 @@ flutter test
 | 7 | 设置、主题与页面 | 待开始 |
 | 8 | 打包与 CI | 待开始 |
 | 9 | Android 验收 | 延后 |
-| 10 | 播放模式补全 | 待开始，插在阶段 4 前，见第 24.1 节 |
+| 10 | 播放模式补全 | 已完成，提交 `a7ce52d` |
 | 11 | 外链播放列表 | 待开始，插在阶段 4 前，见第 24.2 节 |
 | 12 | 收藏选段 | 待开始，插在阶段 4 前，见第 24.3 节 |
 
@@ -179,6 +179,13 @@ flutter analyze --no-fatal-infos
 ```
 
 通过标准：洗牌不重复、队列删除与重排、速度边界、模式回读四组用例通过。
+
+结果（2026-09-28）：
+
+- `flutter analyze --no-fatal-infos`：6 条 info，0 error。
+- `flutter test`：102 用例全过，阶段 3 的基线是 84。
+- 提交 `a7ce52d`，`pubspec.yaml` 版本号改 `0.5.0+10`。
+- 踩坑两条：`RepeatMode` 与 Flutter 同名枚举冲突，要 `hide`；`ReorderableListView.onReorder` 已废弃，改用 `onReorderItem`。
 
 ### 阶段 11 外链播放列表
 

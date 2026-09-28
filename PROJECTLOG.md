@@ -531,3 +531,40 @@
 - ste-lint-zh --shape：三份文档 0/0/0。
 
 未完成事项：功能 4 后端未定案。PotPlayer 与 VLC 的多文件参数待真机实测。功能 1、3、2 的代码未动。
+
+## 2026-09-28 阶段 10 播放模式补全
+
+目标：补齐播放模式、队列编辑与播放速度，设置随重启回读。
+
+动作：
+
+| 文件 | 改动 |
+| --- | --- |
+| `lib/state/player_controller.dart` | 洗牌改成整轮排列，加队列编辑、速度控制与三个模式回调 |
+| `lib/services/settings_service.dart` | 加 `repeat_mode_name`、`shuffle`、`play_speed` 三键 |
+| `lib/state/app_state.dart` | 接三个持久化回调，加连播入口 `playFolderAll` 与 `playWorkAll` |
+| `lib/widgets/queue_panel.dart` | 新建，底部弹层支持拖动排序、点按跳转与移除 |
+| `lib/widgets/player_bar.dart` | 加速度按钮、速率对话框与队列按钮 |
+| `lib/widgets/folder_browser.dart`、`lib/widgets/works_grid.dart` | 菜单加「播放全部」 |
+| `test/state/player_controller_test.dart` | 新建，17 条用例 |
+| `test/settings_service_test.dart` | 加 1 条播放设置回读用例 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 洗牌算法 | 洗成整轮排列。旧实现每次随机取一首，会连续重复同一首 |
+| 队列重排口径 | 用移除之后的下标，与 `ReorderableListView.onReorderItem` 对齐 |
+| 引擎未初始化 | `_loadAndPlay` 直接返回。队列逻辑因此能脱开原生库跑用例 |
+| 回读不写回 | `loadSettings` 里加 `_loadingSettings` 闸门，避免回读触发保存 |
+| 枚举重名 | `RepeatMode` 与 Flutter 同名枚举冲突，material 导入加 `hide RepeatMode` |
+| 功能 4 | 只留接口。用户说了再做，且不分发 |
+| 版本号 | 阶段 3 漏改版本号，本轮补到 `0.5.0+10` |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：6 条 info，0 error，与阶段 0 基线逐条相同。
+- `flutter test`：102 用例全过，阶段 3 的基线是 84。
+- 提交 `a7ce52d`。
+
+未完成事项：Windows 与 Android 真机验收未做。功能 3 与功能 2 未开始。
