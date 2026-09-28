@@ -411,3 +411,40 @@
 - ste-lint-zh --shape：BUILD_GUIDE.md 9822 字 0/0/0，PROJECT_STEPS.md 2157 字 0/0/0，PROJECTLOG.md 4227 字 0/0/0。
 
 未完成事项：阅读器改造、v6 增量、阅读进度与入口都未实现，等用户放行代码。
+
+## 2026-09-27 字幕格式与编码（决策）
+
+需求：用户问字幕是否支持 LRC 等常见格式，要求复查对常见格式的支持度。
+
+发现：
+
+| 项 | 事实 |
+| --- | --- |
+| 白名单 | 只认 `.vtt` `.srt` `.lrc`，见 `lib/services/file_scanner.dart:12` |
+| 解析分派 | 只有三个分支，其余静默返回空，见 `lib/services/subtitle_parser.dart:43` |
+| GBK 乱码 | 探针实测 UTF-8 解码抛 `FormatException`，退 latin1 后中文成乱码 |
+| `[offset:±ms]` | 探针实测正则零命中，整体校准没有生效 |
+| 纯文本 LRC | 探针实测零行命中，界面只显示「无字幕」 |
+| 语言后缀 | `a.chs.srt` 匹配不到 `a.mp4`，见 `lib/services/file_scanner.dart:97` |
+| ASS 与 SSA | 不在白名单也不在解析分派，动漫字幕主要格式落空 |
+| BOM | 探针确认 Dart 的 UTF-8 解码器自己剥离，无需处理 |
+
+决定：
+
+| 议题 | 决定 |
+| --- | --- |
+| 编码 | 加 `fast_gbk` 依赖，探测链 UTF-8 到 GBK 到 latin1 |
+| 格式 | ASS 与 SSA、TTML 与 DFXP、SMI 与 SAMI 只准备接口，解析留空 |
+| LRC | `[offset:±ms]` 生效，纯文本歌词兜底 |
+| 匹配 | 补语言后缀、大小写不敏感、一个媒体挂多条字幕 |
+
+口径：占位格式进 `knownSubtitleExtensions` 但不进 `subtitleExtensions`。文件能扫到并入库，界面标注「该格式暂不支持解析」，与 HEIC 的不可预览口径一致。
+
+落点：解析与匹配在阶段 4，归属模型与界面在阶段 6。文案落在 BUILD_GUIDE 第 23 节，并同步第 18.5 与 18.7 节。
+
+验证：
+
+- 本轮只改文档，代码零改动。
+- ste-lint-zh --shape：BUILD_GUIDE.md 10671 字 0/0/0，PROJECT_STEPS.md 2224 字 0/0/0，PROJECTLOG.md 4631 字 0/0/0。
+
+未完成事项：fast_gbk 依赖、注册表、编码链、LRC 增强、匹配规则与两列归属模型都未实现，等用户放行代码。

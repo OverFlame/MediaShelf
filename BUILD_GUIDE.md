@@ -1232,7 +1232,7 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 
 ### 18.5 字幕
 
-- 字幕升格为 media 行，media_type 取 subtitle。
+- 字幕升格为 media 行，media_type 取 subtitle。格式、编码与匹配规则见第 23 节。
 - 默认只做同目录匹配：`a.mp4.srt` 优先，其次 `a.srt`（lib/services/file_scanner.dart:97）。
 - 允许用户手动指定某条字幕归属某个媒体。
 - 另提供「全库扫描」按钮，由用户发起，扫完弹出匹配结果供用户确认，不做静默绑定。
@@ -1249,7 +1249,7 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 ### 18.7 落地顺序
 
 阶段 2 建表与 DAO，含 library 列与规则标签解析。
-阶段 4 接入图片入口与全库图片视图。
+阶段 4 接入图片入口与全库图片视图，含字幕解析与匹配能力。
 阶段 5 建剧集树与视频入口。
 阶段 4 还含系列与卷的建表增量与导入入口，见第 19 节。
 阶段 6 统一 AppState，接库树筛选、字幕默认反选与三种类型的全库视图。
@@ -1558,3 +1558,100 @@ CREATE TABLE reading_progress (
 - 按用户决定，文件照常入库并显示条目，界面标注「不可预览」。
 - 落地做法：显示处捕获解码失败，落到占位卡并给出格式提示。阅读器遇到该类页可跳过。
 - 建议加运行时探针。用 `instantiateImageCodec` 试解一张样本，成功才启用预览，避免硬编码平台名单。
+
+## 23 字幕格式与编码（定稿）
+
+2026-09-27 定稿。第 18.5 节定了字幕的归属与反选，本节定格式、编码与匹配。
+
+### 23.1 今天的支持度
+
+| 环节 | 现状 | 位置 |
+| --- | --- | --- |
+| 扫描白名单 | 只认 `.vtt` `.srt` `.lrc` | `lib/services/file_scanner.dart:12`、`:19` |
+| 匹配规则 | 同目录两级，`a.mp3.srt` 优先，其次 `a.srt` | `lib/services/file_scanner.dart:97` |
+| 解析分派 | `switch (ext)` 只这三分支，其余返回空 | `lib/services/subtitle_parser.dart:43` |
+| 编码 | 先 UTF-8，失败退 latin1 | `lib/services/subtitle_parser.dart:31` |
+| 时间戳 | 三种形态加逗号小数点 | `lib/services/subtitle_parser.dart:174` |
+| 清洗 | 去尖括号标签、花括号标签与 HTML 实体 | `lib/services/subtitle_parser.dart:200` |
+| 展示 | 独立页按播放位置高亮滚动，空则显示「无字幕」 | `lib/pages/subtitle_page.dart:45`、`:261` |
+
+实测结论：VTT 与 SRT 可用，LRC 基本可用。ASS 与 SSA 完全不支持，动漫外挂字幕的主要格式落空。
+
+### 23.2 编码
+
+按用户决定引入 [fast_gbk](https://pub.dev/packages/fast_gbk)（BSD-3-Clause，1.0.0，纯 Dart）。
+
+| 项 | 做法 |
+| --- | --- |
+| 依赖 | 加在阶段 4，写 `fast_gbk: ^1.0.0` |
+| 探测链 | UTF-8，失败后按 GBK 解，再失败退 latin1 |
+| 畸形字节 | `GbkCodec(allowMalformed: true)`，输出替换符，不抛异常 |
+| GB18030 四字节 | 罕见字不支持，按畸形字节处理 |
+| 署名 | 补进 `THIRD_PARTY_NOTICES.md` |
+| BOM | 不用处理。实测 Dart 的 UTF-8 解码器自己剥掉 |
+| 今天的缺陷 | GBK 字节走 UTF-8 抛 `FormatException`，退到 latin1 后中文变成乱码 |
+
+### 23.3 解析器注册表
+
+解析接口按扩展名注册，格式扩展只需补一个解码函数。
+
+```dart
+typedef SubtitleDecoder = SubtitleDocument Function(String content);
+
+class SubtitleDocument {
+  final List<LyricLine> lines;
+  final bool hasTiming;
+  final bool parsed;
+  final String? note;
+}
+```
+
+| 项 | 做法 |
+| --- | --- |
+| 已实现解码器 | `.vtt`、`.srt`、`.lrc` |
+| 占位解码器 | `.ass`、`.ssa`、`.ttml`、`.dfxp`、`.smi`、`.sami`，返回 `parsed: false` 与提示文案 |
+| 白名单分组 | `subtitleExtensions` 放可解析格式用于匹配，`knownSubtitleExtensions` 另含占位格式用于扫描与入库 |
+| 界面区分 | 按 `parsed` 判定，占位格式显示条目并标注「该格式暂不支持解析」 |
+| 范围 | 本轮只准备接口，六种格式的解析留到有需求时补 |
+
+### 23.4 LRC 增强
+
+- 元数据行里的 `[offset:±ms]` 生效，整体平移所有时间戳，允许负数。
+- 无时间标签的纯文本歌词不再整篇丢弃。`hasTiming` 取 false，界面整篇静态显示并提示「该歌词无时间标签」。
+- 不做 A2 逐字扩展，也不放开三位分钟。
+
+### 23.5 匹配规则
+
+- 语言后缀参与匹配：`a.<lang>.<ext>` 与 `a.<lang>-<region>.<ext>`。
+- 语言名表放 `lib/services/file_scanner.dart`，含 zh、chs、cht、chi、eng、jpn、jp、kor、sc、tc、简、繁、日、英。
+- 组合形式一并认，例如 `zh-CN`、`简日`、`CHS&JPN`。
+- 比较统一转小写，大小写不敏感。
+- 一个媒体允许挂多条字幕。`ScanResult.subtitleByAudio` 从 `Map<String, String>` 改成 `Map<String, List<String>>`，见 `lib/services/file_scanner.dart:27`。
+
+### 23.6 归属模型
+
+阶段 6 落 `media` 表两列。
+
+```sql
+subtitle_of INTEGER REFERENCES media(id) ON DELETE SET NULL
+is_default_subtitle INTEGER NOT NULL DEFAULT 0
+```
+
+- 一个媒体行挂多条字幕行，`is_default_subtitle` 标出默认项。
+- 加索引 `idx_media_subtitle_of`。
+- 默认项选择顺序：用户上次选定，其次文件名完全匹配，再次语言优先级。
+- `media.subtitle_path` 列在新模型下废弃。迁移期与新列并存，阶段 6 之后再删。
+
+### 23.7 落点
+
+| 阶段 | 做什么 |
+| --- | --- |
+| 阶段 4 | 加 fast_gbk 依赖、编码探测链、解析器注册表、白名单分组 |
+| 阶段 4 | LRC 两项增强、匹配规则三项、`ScanResult` 改多值 |
+| 阶段 6 | `media` 两列与索引、默认项选择、多字幕切换、默认反选、手动指定与全库扫描弹窗 |
+
+### 23.8 后置与不做
+
+后置：字幕时间轴手动微调、A2 逐字高亮、三位分钟、自动获取字幕。
+
+不做：SUB 与 IDX 位图字幕解析。位图字幕需要配 idx 索引与位图坐标，与文本字幕不是一条路。只识别扩展名并提示。
