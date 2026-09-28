@@ -73,7 +73,7 @@ flutter test
 | 6 | 统一 AppState | 已完成，提交 `1317c9e`（含阅读进度与字幕归属） |
 | 7 | 设置、主题与页面 | 已完成，提交 `1317c9e` |
 | 8 | 打包与 CI | 已完成，提交 `1317c9e`（CI 按用户要求并入阶段 9） |
-| 9 | Android 验收 | 延后 |
+| 9 | Android 验收 | 已完成，提交见下（CI 与 Android 外链分派） |
 | 10 | 播放模式补全 | 已完成，提交 `a7ce52d` |
 | 11 | 外链播放列表 | 已完成，提交 `7dc6c75` |
 | 12 | 收藏选段 | 已完成，提交 `95f2150`；插在阶段 4 前，见第 24.3 节 |
@@ -354,6 +354,7 @@ ls build/linux/x64/release/bundle/
 1. 补 Intent 与 FileProvider 分派。
 2. 验证「所有文件访问」权限下的扫描。
 3. 包名与 Kotlin 目录已在阶段 0 改完，不要重复改。
+4. 建 CI，见 BUILD_GUIDE 第 6.5 节。
 
 验收：
 
@@ -362,6 +363,21 @@ flutter build apk --release
 ```
 
 通过标准：实机能扫描一个目录，能拉起外部播放器。
+
+已落地的部分：
+
+| 项 | 落点 |
+| --- | --- |
+| 外链分派 | `android/app/src/main/kotlin/com/mediashelf/mediashelf/MainActivity.kt` 的 `openVideo` 与 `openWithSystemPlayer()` |
+| URI | FileProvider 生成 `content://`，只授一次读权限，不用 `file://` |
+| 共享目录 | `android/app/src/main/res/xml/file_paths.xml`（external / external-files / files / cache） |
+| 包可见性 | manifest 的 `queries` 声明 `ACTION_VIEW` 配 `video/*` 与 `application/x-mpegurl` |
+| Dart 侧 | `lib/services/video_launcher.dart`：`detectOs()` 认 Android，`open()` 走通道 `mediashelf/playback` 的 `openVideo` |
+| MIME | `VideoLauncher.mimeByExtension` 按扩展名给，认不出给 `video/*` |
+| CI | `.github/workflows/ci.yml`，固定 Flutter 3.47.5，先装 `libsqlite3-dev` |
+
+待设备确认：本机 `adb devices` 为空，没有 Android 真机与模拟器。
+「实机能扫描一个目录、能拉起外部播放器」这条只能由用户在设备上核对。
 
 ## 6 原生代码的额外验收
 
@@ -464,4 +480,7 @@ python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
 
 视频库标签入口补齐，`0.8.3+16`。视频卡片菜单能直接打标签，标签筛选与高级筛选对视频同样生效。
 
-下一步：用户在 Windows 本机拉取后跑 `scripts\build_windows.ps1`，验证构建与外链播放。之后进阶段 9。
+阶段 9 完成 Android 外链分派与 CI，`1.0.0+17`。全部阶段到此收工。
+
+剩下两项只能在设备上确认。Windows 侧跑 `scripts\build_windows.ps1`，核对构建与外链播放。
+Android 侧在真机上核对扫描与外部播放器（本机没有设备）。

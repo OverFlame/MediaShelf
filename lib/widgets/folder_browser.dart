@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../utils/format.dart';
 import 'dialogs.dart';
 import 'launch_result_snack.dart';
+import 'scan_access_snack.dart';
 import 'subtitle_assign_dialog.dart';
 
 /// 中间栏：作品/文件夹浏览（面包屑 + 子文件夹 + 曲目列表）
@@ -149,6 +150,7 @@ class FolderBrowser extends StatelessWidget {
   Future<void> _addFolderToWork(BuildContext context, AppState appState) async {
     final work = appState.currentWork;
     if (work == null) return;
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final path = await pickDirectoryPath(title: '选择要加入「${work.name}」的文件夹');
     if (path == null) return;
     await appState.importDirectoryIntoWork(path, work.id!);

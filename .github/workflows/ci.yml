@@ -1,0 +1,40 @@
+name: CI
+
+# 只跑「能不能发现回归」这件事：静态分析 + 全量测试。
+# 打包与发布不在 CI 里（脚本依赖各自的桌面与 Android 工具链，见 scripts/）。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pubspec.yaml 的 hooks 里 sqlite3 在 Linux 上用系统库（source: system），
+      # 没有 libsqlite3 时 flutter test 连不上数据库。
+      - name: 安装 sqlite3 系统库
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      # 仓库现有 5 条 info（import_service 的 prefer_initializing_formals 3 条、
+      # cover_image 的 unnecessary_underscores 2 条）。
+      # 这个版本的 flutter analyze 把 info 也算失败，所以显式放开：warning / error 仍然拦。
+      - name: 静态分析
+        run: flutter analyze --no-fatal-infos
+
+      - name: 全量测试
+        run: flutter test

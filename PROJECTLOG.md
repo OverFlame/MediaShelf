@@ -846,3 +846,43 @@
 未完成事项：Windows 与 Android 未跑真机。
 
 踩坑：视频磁贴挂着双击手势。测试里单击菜单按钮要等双击判定超时，单靠 `pumpAndSettle` 不会推进那段计时。
+
+## 2026-09-28 阶段 9 Android 外链分派与 CI（`1.0.0+17`）
+
+用户说「完成所有阶段」。此前唯一的未完成项是阶段 9 Android 验收。本轮补齐外链分派与 CI。
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| 原生分派 | `MainActivity.kt` 加 `openVideo` 方法，走 `openWithSystemPlayer()` |
+| URI | `FileProvider.getUriForFile` 生成 `content://`，带 `FLAG_GRANT_READ_URI_PERMISSION` |
+| 共享目录 | 新建 `android/app/src/main/res/xml/file_paths.xml`，列 external / external-files / files / cache |
+| 包可见性 | manifest 的 `queries` 加两条 `ACTION_VIEW`：`video/*` 与 `application/x-mpegurl` |
+| Dart 侧 | `VideoLauncher` 认 Android，`open()` 走通道 `mediashelf/playback` 的 `openVideo` |
+| MIME | `VideoLauncher.mimeByExtension` 按扩展名给，认不出给 `video/*` |
+| 授权前置 | `MediaBridge.ensureScanAccess()` 与 `ensureScanAccessOrPrompt()`，接上六个导入入口 |
+| CI | 新建 `.github/workflows/ci.yml`，迁自 PictureViewer2 |
+| 版本 | `pubspec.yaml` 升到 `1.0.0+17`，关于页常量同步 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 通道复用 | 外链走已有的 `mediashelf/playback`，MainActivity 已经在处理这个通道，不新开 |
+| 不用 file:// | Android 7 起 `file://` 会抛 `FileUriExposedException`，一律用 FileProvider |
+| 先查有没有播放器 | `queryIntentActivities` 为空就直接返回 false，Dart 侧报 failed，界面提示比空跳转清楚 |
+| 授权核对放界面层 | `AppState` 不 import `MediaBridge`（反向依赖会成环），所以核对做成共享助手，由各导入入口调用 |
+| CI 固定版本 | 与本地一致，固定 Flutter 3.47.5。放开的只是 info，warning 与 error 仍然拦 |
+| 版本收尾到 1.0.0 | 阶段 0 的记录写明阶段 9 收尾到 `1.0.0`，构建号顺延到 17 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error。
+- `flutter test`：422 用例全过。新增 `test/widget/scan_access_snack_test.dart` 3 例与 `test/media_bridge_test.dart` 3 例、`test/services/video_launcher_test.dart` 4 例。
+- `flutter build apk --release`：退出码 0。aapt2 核对清单：`versionName 1.0.0`、`versionCode 17`、authority `com.mediashelf.mediashelf.fileprovider`、queries 里两条 VIEW。
+- CI 的 YAML 能解析，步骤与本地跑过的命令一致。
+
+未完成事项：本机 `adb devices` 为空。阶段 9 的通过标准「实机能扫描一个目录，能拉起外部播放器」只能在设备上核对。CI 也没有远端运行记录（本机没装 gh，Actions 要等推送后才有结果）。
+
+踩坑：`edit` 工具连续两次把相邻两行合成一行（删掉了尾随换行）。改 Kotlin 与 Dart 的长方法时改用 Python 脚本替换并断言出现次数。

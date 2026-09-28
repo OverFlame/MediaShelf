@@ -13,6 +13,7 @@ import '../utils/log_util.dart';
 import 'move_folder_dialog.dart';
 import 'tag_picker_dialog.dart';
 import 'volume_panel.dart';
+import 'scan_access_snack.dart';
 
 /// 图片库虚拟文件夹在 `folders.library` 里的库名。
 const String kImageLibrary = 'image';
@@ -403,9 +404,10 @@ class _FolderPanelState extends State<FolderPanel> {
     await appState.refresh();
   }
 
-  void _addFromPath(AppState appState) {
+  Future<void> _addFromPath(AppState appState) async {
     final text = _pathController.text.trim();
     if (text.isEmpty) return;
+    if (!await ensureScanAccessOrPrompt(context)) return;
     _pathController.clear();
     _pathFocus.unfocus();
     // 输入的是文件时，导入它所在的目录（AppState 只按目录导入）
@@ -414,6 +416,7 @@ class _FolderPanelState extends State<FolderPanel> {
   }
 
   Future<void> _pickFolder(AppState appState) async {
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
       dialogTitle: _isVideo ? '选择包含视频的文件夹' : '选择包含图片的文件夹',
     );
@@ -423,6 +426,7 @@ class _FolderPanelState extends State<FolderPanel> {
   }
 
   Future<void> _pickFiles(AppState appState) async {
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: _allowedExtensions,

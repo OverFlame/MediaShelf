@@ -13,6 +13,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/log_util.dart';
 import 'launch_result_snack.dart';
+import 'scan_access_snack.dart';
 import 'tag_picker_dialog.dart';
 
 /// 中间栏：资源管理器式浏览（子文件夹 + 直接媒体），支持网格/列表视图与多选。
@@ -281,6 +282,7 @@ class _ImageGridState extends State<ImageGrid> {
   }
 
   Future<void> _pickFolder(BuildContext context, AppState appState) async {
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
       dialogTitle: _isVideo ? '选择包含视频的文件夹' : '选择包含图片的文件夹',
     );

@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import 'cover_image.dart';
 import 'dialogs.dart';
 import 'launch_result_snack.dart';
+import 'scan_access_snack.dart';
 
 /// 主页作品集网格。
 ///
@@ -105,6 +106,7 @@ class WorksGrid extends StatelessWidget {
     if (_isAudio) return;
     final lib = _lib;
     final appState = context.read<AppState>();
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
       dialogTitle: _isImage ? '选择包含图片的文件夹' : '选择包含视频的文件夹',
     );

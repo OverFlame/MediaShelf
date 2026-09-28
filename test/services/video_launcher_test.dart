@@ -1,7 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:mediashelf/services/media_rules.dart';
 import 'package:mediashelf/services/video_launcher.dart';
 
 /// 只用来占位，测试不读它的任何成员
@@ -64,7 +66,69 @@ void main() {
     expect(await launcher.open('/m/a.m3u8'), LaunchResult.failed);
   });
 
-  test('detectOs 只认 Windows 与 Linux', () {
-    expect(VideoLauncher.detectOs(), anyOf('windows', 'linux', 'other'));
+  test('detectOs 只认 Windows、Linux 与 Android', () {
+    expect(VideoLauncher.detectOs(),
+        anyOf('windows', 'linux', 'android', 'other'));
+  });
+
+  test('MIME 表覆盖全部视频扩展名，认不出时给 video/*', () {
+    for (final ext in videoExtensions) {
+      expect(VideoLauncher.mimeByExtension[ext], isNotNull,
+          reason: '$ext 没有对应的 MIME');
+    }
+    expect(VideoLauncher.mimeTypeFor('/m/片子.MP4'), 'video/mp4');
+    expect(VideoLauncher.mimeTypeFor('/m/播放 列表.m3u8'), 'application/x-mpegurl');
+    expect(VideoLauncher.mimeTypeFor('/m/没有扩展名'), 'video/*');
+    expect(VideoLauncher.mimeTypeFor('/m/奇怪.xyz'), 'video/*');
+  });
+
+  test('Android 把路径与 MIME 交给 Intent 桥，成功返回 ok', () async {
+    final calls = <(String, String)>[];
+    final launcher = VideoLauncher(
+      os: 'android',
+      openWithSystem: (path, mime) async {
+        calls.add((path, mime));
+        return true;
+      },
+    );
+
+    expect(await launcher.open('/storage/emulated/0/Movies/a.mkv'),
+        LaunchResult.ok);
+    expect(calls, [('/storage/emulated/0/Movies/a.mkv', 'video/x-matroska')]);
+  });
+
+  test('Android 没有应用接手或抛异常都返回 failed', () async {
+    final noApp = VideoLauncher(os: 'android', openWithSystem: (p, m) async => false);
+    expect(await noApp.open('/m/a.mp4'), LaunchResult.failed);
+
+    final boom = VideoLauncher(
+      os: 'android',
+      openWithSystem: (p, m) async => throw MissingPluginException('no impl'),
+    );
+    expect(await boom.open('/m/a.mp4'), LaunchResult.failed);
+  });
+
+  test('Android 默认实现走 mediashelf/playback 的 openVideo', () async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    final calls = <MethodCall>[];
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      VideoLauncher.channel,
+      (call) async {
+        calls.add(call);
+        return true;
+      },
+    );
+    addTearDown(() => binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(VideoLauncher.channel, null));
+
+    final launcher = VideoLauncher(os: 'android');
+    expect(await launcher.open('/storage/emulated/0/Movies/a.webm'),
+        LaunchResult.ok);
+    expect(calls, hasLength(1));
+    expect(calls.single.method, 'openVideo');
+    expect(calls.single.arguments, <String, Object>{
+      'path': '/storage/emulated/0/Movies/a.webm',
+      'mimeType': 'video/webm',
+    });
   });
 }

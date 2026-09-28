@@ -2,7 +2,7 @@
 
 本地媒体管理器，支持 Windows / Linux / Android 三端。以「作品集（专辑）＋虚拟文件夹」方式管理本地音频、图片与视频。音频可播放并配字幕，图片可浏览、阅读、裁剪封面，视频交给外部播放器。
 
-> **现状**：三库（音频 / 图片 / 视频）统一主界面、图片阅读器、卷封面裁剪、收藏选段与外链播放均已落地。测试 412 例通过，`flutter analyze` 0 error。
+> **现状**：三库（音频 / 图片 / 视频）统一主界面、图片阅读器、卷封面裁剪、收藏选段与外链播放均已落地。测试 422 例通过，`flutter analyze` 0 error。
 >
 > 施工方案见 [BUILD_GUIDE.md](BUILD_GUIDE.md)。逐阶段记录见 [PROJECTLOG.md](PROJECTLOG.md)。动手步骤见 [PROJECT_STEPS.md](PROJECT_STEPS.md)。
 
@@ -155,9 +155,9 @@ flutter pub get && flutter build apk --release
 | 后台播放通知栏 | 无 | 无 | 支持 |
 | 图片库、查看器、卷阅读、卷封面裁剪 | ✅ | ✅ | ✅ |
 | 视频识别与作品管理 | ✅ | ✅ | ✅ |
-| 视频外部播放 | ✅ `cmd /c start` | ✅ `xdg-open` | 未实现，见下方说明 |
+| 视频外部播放 | ✅ `cmd /c start` | ✅ `xdg-open` | ✅ `Intent.ACTION_VIEW` + FileProvider |
 
-Android 的视频外链播放属 v1 之外。方案为 Intent 配 FileProvider，见 BUILD_GUIDE 第 9.5 节。
+Android 端由 `MainActivity` 用 `Intent.ACTION_VIEW` 拉起系统播放器。URI 一律由 FileProvider 生成，不用 `file://`。共享目录见 `android/app/src/main/res/xml/file_paths.xml`。设备上需要装一个能放视频的应用。
 
 ## Android 文件访问与后台播放
 
@@ -176,6 +176,15 @@ Android 端内置前台服务（`PlaybackService.kt`）、MediaSession 与 Media
 - 播放时自动启动前台服务。锁屏与后台继续播放。通知栏显示封面、标题、艺术家，以及上一首 / 播放暂停 / 下一首 / 停止四个按钮。
 - 通知按钮通过 MethodChannel（`mediashelf/playback`）回传 Dart 侧，控制 flutter_soloud。
 - 首次启动会请求通知权限（Android 13 以上）。
+
+### 视频外链播放
+
+视频不在应用内解码，交给系统播放器。
+
+- 卡片菜单与作品菜单都有「用外部播放器播放」。程序按作品的文件夹生成一份 `m3u8` 播放列表，再把它交给系统。
+- MIME 由扩展名给出，认不出时给 `video/*`。对照表在 `lib/services/video_launcher.dart`。
+- 文件经 FileProvider 的 `content://` URI 授权给播放器，只授一次读权限。
+- manifest 的 `queries` 声明了 `ACTION_VIEW` 与视频 MIME。Android 11 起没有这段声明就查不到播放器。
 
 ## 数据存储
 
@@ -202,6 +211,7 @@ Android 端内置前台服务（`PlaybackService.kt`）、MediaSession 与 Media
 
 - `master`：开发分支。日常提交的推送目标，`git push` 默认推它。
 - `main`：稳定分支。**仅由维护者通过 PR 从 master 合并**，不接受直接推送。
+- CI：`.github/workflows/ci.yml`。push 与 PR 都跑，固定 Flutter 3.47.5，先装 `libsqlite3-dev`，再跑 `flutter analyze --no-fatal-infos` 与 `flutter test`。
 
 开发历程、技术决策与跨平台踩坑记录见 [PROJECTLOG.md](PROJECTLOG.md)。
 

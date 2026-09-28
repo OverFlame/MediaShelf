@@ -83,6 +83,17 @@ class MediaBridge {
     await _invoke('requestAllFilesAccess');
   }
 
+  /// 导入前核对「所有文件访问」。桌面端恒为 true，不动通道。
+  ///
+  /// 未授权时跳到系统设置页并返回 false：授权要用户在系统界面里完成，
+  /// 这里等不到结果，界面负责提示「授权后重试」。
+  Future<bool> ensureScanAccess() async {
+    if (!isAndroid) return true;
+    if (await hasAllFilesAccess()) return true;
+    await requestAllFilesAccess();
+    return await hasAllFilesAccess();
+  }
+
   /// 确保通知权限（Android 13+）
   Future<void> ensureNotificationPermission() async {
     if (!isAndroid) return;

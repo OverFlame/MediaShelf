@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../db/tag_dao.dart';
-import '../services/media_bridge.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'dialogs.dart';
+import 'scan_access_snack.dart';
 
 /// 左侧面板：导入 + 作品集 + 标签（对标 PictureViewer 的标签面板）
 class TagPanel extends StatefulWidget {
@@ -139,7 +139,7 @@ class _TagPanelState extends State<TagPanel> {
   }
 
   Future<void> _addFromPath(AppState appState) async {
-    if (!await _ensureAllFilesAccess()) return;
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final text = _pathController.text.trim();
     if (text.isEmpty) return;
     _pathController.clear();
@@ -148,26 +148,12 @@ class _TagPanelState extends State<TagPanel> {
   }
 
   Future<void> _pickFolder(AppState appState) async {
-    if (!await _ensureAllFilesAccess()) return;
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await pickDirectoryPath(title: '选择包含音频的文件夹');
     if (result != null) {
       await appState.importDirectory(result);
       _showImportError(appState);
     }
-  }
-
-  Future<bool> _ensureAllFilesAccess() async {
-    final bridge = MediaBridge.instance;
-    if (!bridge.isAndroid) return true;
-    if (await bridge.hasAllFilesAccess()) return true;
-    await bridge.requestAllFilesAccess();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('请在系统设置中授予「所有文件访问」权限后重试')),
-      );
-    }
-    return false;
   }
 
   // ── 作品集 ──
