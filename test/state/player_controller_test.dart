@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mediashelf/db/track_dao.dart';
+import 'package:mediashelf/services/segment_service.dart';
 import 'package:mediashelf/state/player_controller.dart';
 
 TrackItem item(int i) => TrackItem(
@@ -245,6 +246,71 @@ void main() {
       expect(modes, [RepeatMode.one]);
       expect(shuffles, [true]);
       expect(speeds, [1.5]);
+    });
+  });
+
+  group('收藏选段（第 24.3 节）', () {
+    MediaSegment seg(int mediaId, int start, int end) => MediaSegment(
+          mediaId: mediaId,
+          startMs: start,
+          endMs: end,
+          createdAt: 0,
+        );
+
+    test('开启选区循环后记住这一段', () async {
+      final player = PlayerController();
+      player.debugSeedQueue(List.generate(3, item));
+
+      expect(player.segmentLoopEnabled, isFalse);
+      await player.setLoopSegment(seg(0, 1000, 3000));
+
+      expect(player.segmentLoopEnabled, isTrue);
+      expect(player.loopSegment!.startMs, 1000);
+      expect(player.loopSegment!.endMs, 3000);
+    });
+
+    test('同一区间不重复通知，关闭后清空', () async {
+      final player = PlayerController();
+      player.debugSeedQueue(List.generate(3, item));
+      var changes = 0;
+      player.addListener(() => changes++);
+
+      await player.setLoopSegment(seg(0, 1000, 3000));
+      expect(changes, 1);
+      await player.setLoopSegment(seg(0, 1000, 3000));
+      expect(changes, 1, reason: '同一区间早退，不再通知');
+
+      await player.setLoopSegment(null);
+      expect(player.loopSegment, isNull);
+      expect(changes, 2);
+      await player.setLoopSegment(null);
+      expect(changes, 2, reason: '本来就关着，不再通知');
+    });
+
+    test('换区间会更新选区', () async {
+      final player = PlayerController();
+      player.debugSeedQueue(List.generate(2, item));
+      await player.setLoopSegment(seg(0, 0, 1000));
+      await player.setLoopSegment(seg(0, 2000, 4000));
+      expect(player.loopSegment!.startMs, 2000);
+      expect(player.loopSegment!.endMs, 4000);
+    });
+
+    test('停止播放会清掉选区', () async {
+      final player = PlayerController();
+      player.debugSeedQueue(List.generate(2, item));
+      await player.setLoopSegment(seg(0, 500, 1500));
+      await player.stop();
+      expect(player.loopSegment, isNull);
+      expect(player.segmentLoopEnabled, isFalse);
+    });
+
+    test('未初始化时开关选区不触碰原生引擎', () async {
+      final player = PlayerController();
+      await player.setLoopSegment(seg(0, 0, 1000));
+      await player.setLoopSegment(null);
+      expect(player.initialized, isFalse);
+      expect(player.loopSegment, isNull);
     });
   });
 }

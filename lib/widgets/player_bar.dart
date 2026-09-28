@@ -8,6 +8,7 @@ import '../utils/format.dart';
 import '../pages/subtitle_page.dart';
 import 'cover_image.dart';
 import 'queue_panel.dart';
+import 'segment_panel.dart';
 
 /// 底部播放栏
 class PlayerBar extends StatelessWidget {
@@ -181,6 +182,22 @@ class PlayerBar extends StatelessWidget {
                           size: 18, color: AppColors.mutedLightOf(context)),
                       tooltip: '播放队列',
                       onPressed: () => QueuePanel.show(context),
+                    ),
+                    TextButton(
+                      key: const ValueKey('player-segment-button'),
+                      onPressed: () => SegmentPanel.show(context),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(40, 32),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                      ),
+                      child: Text(
+                        '选区',
+                        style: TextStyle(
+                            color: player.segmentLoopEnabled
+                                ? AppColors.accent
+                                : AppColors.mutedLightOf(context),
+                            fontSize: 12),
+                      ),
                     ),
                   ],
                   IconButton(

@@ -5,7 +5,7 @@
 class Tables {
   Tables._();
 
-  static const int version = 5;
+  static const int version = 6;
 
   static const List<String> createStatements = [
     // 作品集：音频侧是专辑，视频侧是剧集
@@ -123,6 +123,19 @@ class Tables {
     'CREATE INDEX IF NOT EXISTS idx_play_history_media ON play_history(media_id)',
     'CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at)',
 
+    // 收藏选段：一轨可存多段，见 BUILD_GUIDE 第 24.3 节
+    '''
+    CREATE TABLE media_segments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id   INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+      start_ms   INTEGER NOT NULL,
+      end_ms     INTEGER NOT NULL,
+      name       TEXT,
+      created_at INTEGER NOT NULL
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS idx_media_segments_media ON media_segments(media_id)',
+
     // 过渡视图：只读，阶段 6 结束前删掉（BUILD_GUIDE 第 7.4 节）。
     // 老查询按 tracks / images 读，写入一律走 MediaDao。
     'CREATE VIEW IF NOT EXISTS tracks AS '
@@ -135,5 +148,21 @@ class Tables {
   ///
   /// v5 是合并后的第一版结构，没有可复用的老增量：老库（v2 到 v4）
   /// 只走 lib/services/migration_service.dart 的跨库导入。
-  static const Map<int, List<String>> migrations = {};
+  static const Map<int, List<String>> migrations = {
+    // v6：收藏选段（BUILD_GUIDE 第 24.3 节）
+    6: [
+      '''
+      CREATE TABLE media_segments (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_id   INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+        start_ms   INTEGER NOT NULL,
+        end_ms     INTEGER NOT NULL,
+        name       TEXT,
+        created_at INTEGER NOT NULL
+      )
+      ''',
+      'CREATE INDEX IF NOT EXISTS idx_media_segments_media '
+          'ON media_segments(media_id)',
+    ],
+  };
 }

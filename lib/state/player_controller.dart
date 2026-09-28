@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../db/track_dao.dart';
+import '../services/segment_service.dart';
 import '../utils/log_util.dart';
 
 enum RepeatMode { off, all, one }
@@ -32,6 +33,9 @@ class PlayerController extends ChangeNotifier {
   double _volume = 1.0;
   double _speed = 1.0;
 
+  /// 正在循环的收藏选段。为空表示没开选区循环（BUILD_GUIDE 第 24.3 节）。
+  MediaSegment? _loopSegment;
+
   /// 洗牌顺序：队列下标的一个排列。播放按 _order 走，一轮内不重复。
   List<int> _order = [];
   int _orderPos = -1;
@@ -44,6 +48,13 @@ class PlayerController extends ChangeNotifier {
   bool get shuffle => _shuffle;
   double get volume => _volume;
   double get speed => _speed;
+
+  /// 当前循环的选段，未开启时为 null
+  MediaSegment? get loopSegment => _loopSegment;
+
+  /// 是否开着选段循环
+  bool get segmentLoopEnabled => _loopSegment != null;
+
   bool get hasTrack => _index >= 0 && _index < _queue.length;
   TrackItem? get currentTrack =>
       hasTrack ? _queue[_index] : null;
@@ -160,11 +171,26 @@ class PlayerController extends ChangeNotifier {
 
     _source = newSource;
     _duration = _engine.getLength(newSource);
-    _handle = _engine.play(newSource, volume: _volume);
+    // 换了曲目就丢掉上一首的选区，避免循环范围串到新曲目
+    if (_loopSegment != null && _loopSegment!.mediaId != track.id) {
+      _loopSegment = null;
+    }
+    final segment = _loopSegment;
+    _handle = segment == null
+        ? _engine.play(newSource, volume: _volume)
+        : _engine.play(
+            newSource,
+            volume: _volume,
+            looping: true,
+            loopingStartAt: Duration(milliseconds: segment.startMs),
+            loopingEndAt: Duration(milliseconds: segment.endMs),
+          );
     _applySpeed();
     _listenEnd();
     _playing = true;
-    _position = Duration.zero;
+    _position = segment == null
+        ? Duration.zero
+        : Duration(milliseconds: segment.startMs);
     logInfo('Player', '播放: ${track.path}');
     onTrackStarted?.call(track);
     notifyListeners();
@@ -182,6 +208,22 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> _onEnded() async {
+    final seg = _loopSegment;
+    if (seg != null && _source != null) {
+      // 选区循环：引擎按边界自己回绕，这里兜住句柄失效的情况
+      _handle = _engine.play(
+        _source!,
+        volume: _volume,
+        looping: true,
+        loopingStartAt: Duration(milliseconds: seg.startMs),
+        loopingEndAt: Duration(milliseconds: seg.endMs),
+      );
+      _applySpeed();
+      _position = Duration(milliseconds: seg.startMs);
+      _playing = true;
+      notifyListeners();
+      return;
+    }
     if (_repeat == RepeatMode.one && _source != null) {
       // 单曲循环：重新播放同一 source
       _handle = _engine.play(_source!, volume: _volume);
@@ -375,6 +417,52 @@ class PlayerController extends ChangeNotifier {
     }
   }
 
+  // ── 收藏选段（BUILD_GUIDE 第 24.3 节） ──
+
+  /// 开启或关闭选段循环，[seg] 为 null 时关闭
+  Future<void> setLoopSegment(MediaSegment? seg) async {
+    if (seg == null) {
+      if (_loopSegment == null) return;
+      _loopSegment = null;
+      _applyLoopPoints();
+      notifyListeners();
+      return;
+    }
+    final cur = _loopSegment;
+    if (cur != null &&
+        cur.mediaId == seg.mediaId &&
+        cur.startMs == seg.startMs &&
+        cur.endMs == seg.endMs) {
+      return;
+    }
+    _loopSegment = seg;
+    _applyLoopPoints();
+    // 选区已生效时跳到段首，避免停在段外
+    if (_handle != null) await seek(Duration(milliseconds: seg.startMs));
+    notifyListeners();
+  }
+
+  /// 把选段循环应用到正在播放的句柄。未初始化时直接返回，用例不碰原生库。
+  void _applyLoopPoints() {
+    final h = _handle;
+    if (!_initialized || h == null) return;
+    final seg = _loopSegment;
+    try {
+      if (seg == null) {
+        _engine.setLooping(h, false);
+        _engine.setLoopEndPoint(h, null);
+        return;
+      }
+      // 先放开终点，避免起点越过旧终点时校验失败
+      _engine.setLooping(h, true);
+      _engine.setLoopEndPoint(h, null);
+      _engine.setLoopPoint(h, Duration(milliseconds: seg.startMs));
+      _engine.setLoopEndPoint(h, Duration(milliseconds: seg.endMs));
+    } catch (e) {
+      logWarn('Player', '设置选段循环失败: $e');
+    }
+  }
+
   Future<void> setVolume(double v) async {
     _volume = v.clamp(0.0, 1.0);
     final h = _handle;
@@ -455,9 +543,11 @@ class PlayerController extends ChangeNotifier {
 
   /// 直接把队列放进控制器，不触碰原生引擎。仅供用例。
   @visibleForTesting
-  void debugSeedQueue(List<TrackItem> tracks, {int startIndex = 0}) {
+  void debugSeedQueue(List<TrackItem> tracks,
+      {int startIndex = 0, Duration? duration}) {
     _queue = List.from(tracks);
     _index = _queue.isEmpty ? -1 : startIndex.clamp(0, _queue.length - 1);
+    if (duration != null) _duration = duration;
     if (_shuffle) _rebuildOrder();
   }
 
@@ -469,6 +559,7 @@ class PlayerController extends ChangeNotifier {
     _duration = Duration.zero;
     _index = -1;
     _queue = [];
+    _loopSegment = null;
     notifyListeners();
   }
 

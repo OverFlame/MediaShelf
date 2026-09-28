@@ -17,6 +17,7 @@ import '../services/data_dir_service.dart';
 import '../services/file_scanner.dart';
 import '../services/import_service.dart';
 import '../services/playlist_writer.dart';
+import '../services/segment_service.dart';
 import '../services/settings_service.dart';
 import '../services/subtitle_parser.dart';
 import '../services/video_launcher.dart';
@@ -124,6 +125,10 @@ class AppState extends ChangeNotifier {
   int _coverCacheLimitMB = 512;
   int get coverCacheLimitMB => _coverCacheLimitMB;
 
+  // ── 当前曲目的收藏选段（BUILD_GUIDE 第 24.3 节）──
+  List<MediaSegment> _segments = [];
+  List<MediaSegment> get segments => List.unmodifiable(_segments);
+
   // ── 设置 ──
   ThemeMode _themeMode = ThemeMode.dark;
   ThemeMode get themeMode => _themeMode;
@@ -142,6 +147,8 @@ class AppState extends ChangeNotifier {
   TrackDao get _trackDao => TrackDao(DatabaseManager.instance.db);
   TagDao get _tagDao => TagDao(DatabaseManager.instance.db);
   MediaDao get _mediaDao => MediaDao(DatabaseManager.instance.db);
+  SegmentService get _segmentService =>
+      SegmentService(DatabaseManager.instance.db);
 
   AppState({required this.player});
 
@@ -1092,6 +1099,82 @@ class AppState extends ChangeNotifier {
     return VideoLauncher().open(file);
   }
 
+  // ═══════════════ 收藏选段（BUILD_GUIDE 第 24.3 节）═══════════════
+
+  /// 载入当前曲目的选段。没有曲目时清空列表。
+  Future<void> reloadSegments() async {
+    final id = player.currentTrack?.id;
+    if (id == null) {
+      _assignSegments(const []);
+      return;
+    }
+    await _reloadSegments(id);
+  }
+
+  Future<void> _reloadSegments(int mediaId) async {
+    _assignSegments(await _segmentService.listByMedia(mediaId));
+  }
+
+  /// 列表真的变了才通知：切歌时顺带载入选段，不该多出无谓的重建。
+  void _assignSegments(List<MediaSegment> list) {
+    if (_sameSegments(_segments, list)) return;
+    _segments = list;
+    notifyListeners();
+  }
+
+  static bool _sameSegments(List<MediaSegment> a, List<MediaSegment> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// 保存一段选区。起止按当前曲目时长收口。
+  Future<MediaSegment?> addSegment({
+    required int startMs,
+    required int endMs,
+    String? name,
+  }) async {
+    final id = player.currentTrack?.id;
+    if (id == null) return null;
+    final seg = await _segmentService.add(
+      mediaId: id,
+      startMs: startMs,
+      endMs: endMs,
+      durationMs: player.duration.inMilliseconds,
+      name: name,
+    );
+    await _reloadSegments(id);
+    return seg;
+  }
+
+  Future<void> renameSegment(MediaSegment seg, String? name) async {
+    final id = seg.id;
+    if (id == null) return;
+    await _segmentService.rename(id, name);
+    await reloadSegments();
+  }
+
+  /// 删除一段。删掉的正是当前循环段时同时关掉选区循环。
+  Future<void> deleteSegment(MediaSegment seg) async {
+    final id = seg.id;
+    if (id == null) return;
+    final looping = player.loopSegment;
+    if (looping != null && looping.id == id) {
+      await player.setLoopSegment(null);
+    }
+    await _segmentService.remove(id);
+    await reloadSegments();
+  }
+
+  /// 开启或关闭选段循环。[seg] 为 null 时关闭。
+  Future<void> loopSegment(MediaSegment? seg) => player.setLoopSegment(seg);
+
+  /// 跳到段首播放
+  Future<void> jumpToSegment(MediaSegment seg) =>
+      player.seek(Duration(milliseconds: seg.startMs));
+
   Future<void> playTrackAt(int index) async {
     if (index < 0 || index >= _tracks.length) return;
     _rememberQueueCover();
@@ -1224,6 +1307,7 @@ class AppState extends ChangeNotifier {
   void _onTrackStarted(TrackItem track) {
     final id = track.id;
     if (id == null) return;
+    unawaited(_reloadSegments(id));
     final gen = ++_recentLoadGeneration;
     unawaited(_trackDao
         .recordPlay(id, DateTime.now().millisecondsSinceEpoch)
