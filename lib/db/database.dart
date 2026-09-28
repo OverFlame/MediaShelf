@@ -57,19 +57,11 @@ class DatabaseManager {
       },
       onCreate: (db, version) async {
         logInfo('Database', 'Creating tables (v$version)');
-        for (final sql in Tables.createStatements) {
-          await db.execute(sql);
-        }
+        await Tables.createAll(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         logInfo('Database', 'Migrating v$oldVersion -> v$newVersion');
-        for (int v = oldVersion + 1; v <= newVersion; v++) {
-          final migrations = Tables.migrations[v];
-          if (migrations == null) continue;
-          for (final sql in migrations) {
-            await db.execute(sql);
-          }
-        }
+        await Tables.applyMigrations(db, oldVersion, newVersion);
       },
     );
 

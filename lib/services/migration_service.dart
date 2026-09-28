@@ -116,16 +116,17 @@ class MigrationService {
       await factory.deleteDatabase(dstDb);
     }
 
+    // 目标库可能是应用已经在用的旧版库（BUILD_GUIDE 8.5 的续跑场景），
+    // 所以这里必须和应用主库一样接上 onCreate/onUpgrade：只给 version 的话，
+    // sqflite 会把 user_version 直接抬成 v8，结构却留在旧版。
     final dst = await factory.openDatabase(
       dstDb,
       options: OpenDatabaseOptions(
         version: Tables.version,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys=ON'),
-        onCreate: (db, version) async {
-          for (final sql in Tables.createStatements) {
-            await db.execute(sql);
-          }
-        },
+        onCreate: (db, version) => Tables.createAll(db),
+        onUpgrade: (db, oldVersion, newVersion) =>
+            Tables.applyMigrations(db, oldVersion, newVersion),
       ),
     );
 

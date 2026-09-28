@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:mediashelf/db/tables.dart';
 import 'package:mediashelf/services/migration_service.dart';
 
 import 'migration_fixtures.dart';
@@ -272,4 +273,83 @@ void main() {
     expect(File(srcA).existsSync(), isTrue);
     expect(File(srcB).existsSync(), isTrue);
   });
+
+  /// 造一个 v7 结构的目标库：先按当前建表语句建满，再拆掉 v8 补的两列与
+  /// reading_progress，最后把 user_version 退回 7。
+  Future<void> buildV7Dst() async {
+    final db = await databaseFactoryFfi.openDatabase(
+      dst,
+      options: OpenDatabaseOptions(
+        version: Tables.version,
+        onCreate: (db, version) async {
+          for (final sql in Tables.createStatements) {
+            await db.execute(sql);
+          }
+        },
+      ),
+    );
+    await db.execute('DROP INDEX IF EXISTS idx_media_subtitle_of');
+    await db.execute('ALTER TABLE media DROP COLUMN subtitle_of');
+    await db.execute('ALTER TABLE media DROP COLUMN is_default_subtitle');
+    await db.execute('DROP TABLE IF EXISTS reading_progress');
+    expect(await _userVersion(db), Tables.version,
+        reason: '建出来时是当前版本号，下面才退到 7 造旧结构');
+    await db.execute('PRAGMA user_version = 7');
+    await db.close();
+  }
+
+  test('目标库已是 v7 结构时：迁移要把它补到 v8，不能只把版本号抬上去', () async {
+    await buildBoth();
+    await buildV7Dst();
+
+    await service().run(srcAudioDb: srcA, srcImageDb: srcB, dstDb: dst);
+
+    final db = await openDst();
+    try {
+      expect(await _userVersion(db), Tables.version);
+      final columns = await _columns(db, 'media');
+      expect(columns, containsAll(<String>['subtitle_of', 'is_default_subtitle']),
+          reason: '迁移服务自己开的库也要跑 v8 的 ALTER TABLE，'
+              '否则库被盖上 v8 的章、结构却停在 v7，应用再打开时不会补');
+      expect(await _tableNames(db), contains('reading_progress'));
+    } finally {
+      await db.close();
+    }
+  });
+
+  test('老库迁移过来的字幕与阅读进度相关表可用（v8 结构完整）', () async {
+    await buildBoth();
+    await buildV7Dst();
+
+    await service().run(srcAudioDb: srcA, srcImageDb: srcB, dstDb: dst);
+
+    final db = await openDst();
+    try {
+      // 结构齐了才能查：缺列时这两条都会抛 no such column。
+      expect(await db.rawQuery('SELECT COUNT(*) c FROM reading_progress'),
+          hasLength(1));
+      expect(
+          await db.rawQuery(
+              'SELECT id FROM media WHERE is_default_subtitle = 0 LIMIT 1'),
+          isNotNull);
+    } finally {
+      await db.close();
+    }
+  });
+}
+
+Future<int> _userVersion(Database db) async {
+  final rows = await db.rawQuery('PRAGMA user_version');
+  return (rows.first.values.first as int?) ?? -1;
+}
+
+Future<List<String>> _columns(Database db, String table) async {
+  final rows = await db.rawQuery('PRAGMA table_info($table)');
+  return rows.map((r) => r['name'] as String).toList();
+}
+
+Future<List<String>> _tableNames(Database db) async {
+  final rows = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+  return rows.map((r) => r['name'] as String).toList();
 }

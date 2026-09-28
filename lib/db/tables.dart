@@ -1,3 +1,5 @@
+import 'package:sqflite_common/sqlite_api.dart';
+
 /// 数据库 DDL 建表语句 & 迁移
 ///
 /// v5 起音频、图片、视频与字幕共用一张 media 表，见 BUILD_GUIDE 第 7.3 节。
@@ -272,4 +274,28 @@ class Tables {
       ''',
     ],
   };
+
+  /// 建全表：开库时 onCreate 用。
+  static Future<void> createAll(DatabaseExecutor db) async {
+    for (final sql in createStatements) {
+      await db.execute(sql);
+    }
+  }
+
+  /// 逐版本补 SQL 迁移：开库时 onUpgrade 用。
+  ///
+  /// [DatabaseManager]（应用主库）与 [MigrationService]（迁移工具自己开的库）
+  /// 共用同一份。两边都必须接上 onUpgrade：sqflite 在 onUpgrade 为空时不会
+  /// 报错，它会直接把 user_version 抬到新版，于是库被盖上 v8 的章、结构却停在
+  /// v7，应用下次打开时以为已经升过，v8 的列与表永远不会补。
+  static Future<void> applyMigrations(
+      DatabaseExecutor db, int oldVersion, int newVersion) async {
+    for (int v = oldVersion + 1; v <= newVersion; v++) {
+      final statements = migrations[v];
+      if (statements == null) continue;
+      for (final sql in statements) {
+        await db.execute(sql);
+      }
+    }
+  }
 }
