@@ -24,9 +24,9 @@ class AboutPage extends StatelessWidget {
   /// 本仓库没有引入 package_info_plus（不加依赖），也没有把 pubspec.yaml 打进
   /// 资源，运行时读不到它，所以这里写死常量。改 pubspec.yaml 的 version 时，
   /// 必须同步改这一行。
-  /// pubspec.yaml:19 → `version: 1.0.0+17`
-  static const String appVersion = '1.0.0';
-  static const String appBuildNumber = '17';
+  /// pubspec.yaml:19 → `version: 1.1.0+18`
+  static const String appVersion = '1.1.0';
+  static const String appBuildNumber = '18';
 
   /// 第三方开源声明文件名（仓库根目录，不随应用包分发）。
   static const String noticesFileName = 'THIRD_PARTY_NOTICES.md';

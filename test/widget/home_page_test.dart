@@ -375,4 +375,59 @@ void main() {
     expect(picker.directoryCalls, 1, reason: '应该真的走到目录选择入口');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('图片库多选：长按进多选，全选后批量移除记录', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(app.visualSelectionMode, isFalse);
+    expect(find.byKey(const ValueKey('selection-select-all')), findsNothing,
+        reason: '没有选中项时不显示选择条');
+
+    // 长按磁贴进多选
+    await tester.longPress(tile(imageIds.first));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.visualSelectionMode, isTrue);
+    expect(app.selectedIds, contains(imageIds.first));
+
+    // 多选模式下单击是勾选，不打开查看器
+    await tester.tap(tile(imageIds[1]));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.showViewer, isFalse);
+    expect(app.selectedIds, containsAll(imageIds));
+
+    // 作品层 AppState 的 images 是空的（媒体行由 ImageGrid 自己查），
+    // 「全选」要靠界面登记的可见项，不能把已选清空。
+    expect(app.images, isEmpty);
+    await tester.tap(find.byKey(const ValueKey('selection-select-all')));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(app.selectedIds, containsAll(imageIds));
+
+    await tester.tap(find.byKey(const ValueKey('selection-delete')));
+    await settleIo(tester);
+    expect(find.textContaining('从软件里移除选中的 2 项'), findsOneWidget);
+    expect(find.textContaining('磁盘上的文件不会被删除'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(TextButton, '移除'));
+    await settleIo(tester);
+
+    for (final id in imageIds) {
+      expect(tile(id), findsNothing, reason: '移除后网格里不该留着磁贴');
+    }
+    expect(app.visualSelectionMode, isFalse, reason: '删空后退出多选');
+    final left = await tester
+        .runAsync(() => MediaDao(db).queryByDirs([albumDir.path]));
+    expect(left, isEmpty, reason: '库里只剩空结果');
+    for (final name in ['a.png', 'b.png']) {
+      expect(File(p.join(albumDir.path, name)).existsSync(), isTrue,
+          reason: '移除记录不动磁盘文件');
+    }
+  });
 }

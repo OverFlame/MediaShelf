@@ -43,6 +43,7 @@ class _ImageGridState extends State<ImageGrid> {
 
   /// 已加载数据的归属签名（`<库>:<作品id>`）；作品或库一变就重新查
   String? _loadedKey;
+  int _loadedRevision = -1;
 
   bool get _isVideo => widget.library == 'video';
 
@@ -105,6 +106,8 @@ class _ImageGridState extends State<ImageGrid> {
   }
 
   /// 根据修饰键决定选择行为：Shift=区间、Ctrl=切换、否则单选
+  ///
+  /// 多选模式下没有修饰键的单击也当作勾选，长按磁贴会先进多选模式。
   void _handleImageTap(AppState appState, int id) {
     final keys = HardwareKeyboard.instance.logicalKeysPressed;
     final shift = keys.contains(LogicalKeyboardKey.shiftLeft) ||
@@ -114,6 +117,8 @@ class _ImageGridState extends State<ImageGrid> {
     if (shift) {
       appState.rangeSelect(id);
     } else if (ctrl) {
+      appState.toggleSelect(id);
+    } else if (appState.visualSelectionMode) {
       appState.toggleSelect(id);
     } else {
       appState.selectImage(id);
@@ -133,8 +138,10 @@ class _ImageGridState extends State<ImageGrid> {
     final key = work == null || atFolderLevel || searching
         ? null
         : '${widget.library}:${work.id}';
-    if (key != _loadedKey) {
+    final revision = appState.mediaRevision;
+    if (key != _loadedKey || revision != _loadedRevision) {
       _loadedKey = key;
+      _loadedRevision = revision;
       _workItems = null;
       if (key != null) {
         final workId = work!.id!;
@@ -147,6 +154,13 @@ class _ImageGridState extends State<ImageGrid> {
     final images = atFolderLevel || searching
         ? appState.images
         : (_workItems ?? const <MediaItem>[]);
+    // 作品层这里自己查媒体行，AppState 那一层只有文件夹：把当前真正画出来的
+    // 媒体 id 登记回去，「全选」「Shift 区间选」才有据可依。
+    final visibleIds =
+        images.map((i) => i.id).whereType<int>().toList(growable: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) appState.reportVisibleMediaIds(visibleIds);
+    });
     final loading = appState.loading || (key != null && _workItems == null);
 
     if (!loading && folders.isEmpty && images.isEmpty) {
@@ -194,6 +208,7 @@ class _ImageGridState extends State<ImageGrid> {
             compact: true,
             onTap: () => _handleImageTap(appState, img.id!),
             onDoubleTap: () => _playExternal(appState),
+            onLongPress: () => appState.enterVisualSelectionMode(img.id),
             onPlayExternal: () => _playExternal(appState),
             onEditTags: () => _editVideoTags(appState, img),
           );
@@ -204,6 +219,7 @@ class _ImageGridState extends State<ImageGrid> {
           selected: appState.isSelected(img.id ?? -1),
           onTap: () => _handleImageTap(appState, img.id!),
           onDoubleTap: () => _openViewer(appState, images, i - folders.length),
+          onLongPress: () => appState.enterVisualSelectionMode(img.id),
           compact: true,
           cacheEpoch: appState.thumbEpoch,
         );
@@ -235,6 +251,7 @@ class _ImageGridState extends State<ImageGrid> {
             compact: false,
             onTap: () => _handleImageTap(appState, img.id!),
             onDoubleTap: () => _playExternal(appState),
+            onLongPress: () => appState.enterVisualSelectionMode(img.id),
             onPlayExternal: () => _playExternal(appState),
             onEditTags: () => _editVideoTags(appState, img),
           );
@@ -245,6 +262,7 @@ class _ImageGridState extends State<ImageGrid> {
           selected: appState.isSelected(img.id ?? -1),
           onTap: () => _handleImageTap(appState, img.id!),
           onDoubleTap: () => _openViewer(appState, images, i - folders.length),
+          onLongPress: () => appState.enterVisualSelectionMode(img.id),
           compact: false,
           cacheEpoch: appState.thumbEpoch,
         );
@@ -354,6 +372,7 @@ class _ThumbnailCard extends StatefulWidget {
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onDoubleTap;
+  final VoidCallback? onLongPress;
   final bool compact;
 
   /// 缩略图缓存被清空时会自增；卡片靠它重新生成缩略图
@@ -365,6 +384,7 @@ class _ThumbnailCard extends StatefulWidget {
     required this.selected,
     required this.onTap,
     required this.onDoubleTap,
+    this.onLongPress,
     required this.compact,
     required this.cacheEpoch,
   });
@@ -448,6 +468,7 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
       return InkWell(
         onTap: widget.onTap,
         onDoubleTap: widget.onDoubleTap,
+        onLongPress: widget.onLongPress,
         child: Container(
           color: widget.selected ? AppColors.surface : null,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -488,6 +509,7 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
     return GestureDetector(
       onTap: widget.onTap,
       onDoubleTap: widget.onDoubleTap,
+      onLongPress: widget.onLongPress,
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.surface,
@@ -540,6 +562,7 @@ class _VideoTile extends StatelessWidget {
   final bool compact;
   final VoidCallback onTap;
   final VoidCallback onDoubleTap;
+  final VoidCallback? onLongPress;
   final VoidCallback onPlayExternal;
   final VoidCallback onEditTags;
 
@@ -550,6 +573,7 @@ class _VideoTile extends StatelessWidget {
     required this.compact,
     required this.onTap,
     required this.onDoubleTap,
+    this.onLongPress,
     required this.onPlayExternal,
     required this.onEditTags,
   });
@@ -562,6 +586,7 @@ class _VideoTile extends StatelessWidget {
       return InkWell(
         onTap: onTap,
         onDoubleTap: onDoubleTap,
+        onLongPress: onLongPress,
         child: Container(
           color: selected ? AppColors.surface : null,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -596,6 +621,7 @@ class _VideoTile extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       onDoubleTap: onDoubleTap,
+      onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.surface,

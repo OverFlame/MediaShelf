@@ -94,6 +94,21 @@ class TagDao {
     return _db.delete('tags', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// 这个标签被多少条媒体、多少个文件夹引用。
+  ///
+  /// 删除前用来告诉用户会解除多少关联；规则标签（kind/ext）不写关联行，
+  /// 这里一般返回 0。
+  Future<({int media, int folders})> countUsage(int tagId) async {
+    final mediaRows = await _db.rawQuery(
+        'SELECT COUNT(*) AS c FROM media_tags WHERE tag_id = ?', [tagId]);
+    final folderRows = await _db.rawQuery(
+        'SELECT COUNT(*) AS c FROM folder_tags WHERE tag_id = ?', [tagId]);
+    return (
+      media: (mediaRows.first['c'] as int?) ?? 0,
+      folders: (folderRows.first['c'] as int?) ?? 0,
+    );
+  }
+
   Future<List<Tag>> getAll() async {
     final rows = await _db.query('tags', orderBy: 'namespace, name');
     return rows.map(Tag.fromMap).toList();

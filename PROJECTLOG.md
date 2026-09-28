@@ -886,3 +886,47 @@
 未完成事项：本机 `adb devices` 为空。阶段 9 的通过标准「实机能扫描一个目录，能拉起外部播放器」只能在设备上核对。CI 也没有远端运行记录（本机没装 gh，Actions 要等推送后才有结果）。
 
 踩坑：`edit` 工具连续两次把相邻两行合成一行（删掉了尾随换行）。改 Kotlin 与 Dart 的长方法时改用 Python 脚本替换并断言出现次数。
+
+## 2026-09-28 标签管理与多选批量操作（`1.1.0+18`）
+
+用户报四个缺陷：「没有删除标签功能」「没有多选功能（打标签、删除等操作）」「左下角标签库一大块都是扩展名标签很难看，加入从命名空间折叠的功能并持久化」「添加新标签时命名空间栏根据已有的命名空间猜测，添加一样的标签时提醒」。
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| 命名空间折叠 | `AppState` 加 `collapsedNamespaces` / `isNamespaceCollapsed` / `toggleNamespaceCollapsed` / `setAllNamespacesCollapsed`，默认折叠 `ext`（几十个扩展名一次收起来），落盘进 `settings.json` 的 `collapsed_namespaces` |
+| 折叠界面 | 标签面板命名空间标题改成可点，带箭头与「还有筛选生效」的小标记；表头加展开全部 / 折叠全部两个按钮，折叠后条目不再构建 |
+| 规则标签保护 | `AppState.isRuleTag` 判定 `kind` / `ext` 命名空间：菜单里只给「折叠此命名空间」加一行说明，不给改名、改色、删除（规则标签删了也会在下次启动被 `ensureRuleTags` 补回来） |
+| 删除标签 | `TagDao.countUsage(tagId)` 先数出会解除多少媒体与文件夹关联，确认框写清「将解除 N 个媒体、M 个文件夹的关联 / 磁盘上的文件不会被删除」，再由已有的 `deleteTag` 级联清 `media_tags` 与 `folder_tags` |
+| 新建标签联想 | 对话框读 `AppState.knownNamespaces`（过滤掉 `general` / `kind` / `ext`）给命名空间建议 chip；同名同命名空间红字提醒并禁用创建，同名不同命名空间只提醒 |
+| 视觉库多选 | 磁贴长按进多选（`_handleImageTap` 里多选模式下的单击改成勾选，不再打开查看器），选择条加全选与「从软件移除记录」（确认后走 `MediaDao.deleteByIds`，磁盘不动） |
+| 曲目多选 | 曲目工具栏加多选开关，选中集非空时出现全选、批量加标签、批量移除标签、移除记录 |
+| 旧对话框去重 | `lib/widgets/dialogs.dart` 里那份旧的 `showTagPickerDialog` 缺 `filterTagIds`，与 `tag_picker_dialog.dart` 的新版重名；`folder_browser.dart` 改成 `import 'dialogs.dart' hide showTagPickerDialog;` |
+| 版本 | `pubspec.yaml` 升到 `1.1.0+18`，关于页常量同步 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 折叠状态存哪 | 存 `settings.json` 而不是数据库：它是纯界面偏好，跟着 `not_tag_ids` 那套设置一起走，不必为它加表 |
+| 默认折叠哪个 | 只默认折叠 `ext`：用户嫌的就是这一块；`kind` 只有四个，留着当筛选入口 |
+| 规则标签为什么不能删 | `AppState.init()` 每次都跑 `ensureRuleTags`，删了下次启动会回来，给了删除按钮只会让人以为没生效。所以给折叠，不给删 |
+| 移除记录而不是删除文件 | 与前面几轮的删除口径一致：软件里移除记录，磁盘文件不动，文案里写明 |
+| 可见项登记 | 作品层的媒体行由 `ImageGrid` 自己查（`AppState.images` 在作品层是空的），所以 `ImageGrid` 每次重建后把可见媒体 id 登记回 `AppState`，全选与 Shift 区间选都按这份登记来 |
+| 媒体代数 | 加 `AppState.mediaRevision`，删除后自增；作品层网格靠它知道要重查，不然磁贴会留在界面上 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error。
+- `flutter test`：436 用例全过。新增 `test/state/app_state_tag_admin_test.dart` 7 例、`test/widget/tag_panel_test.dart` 6 例，并在 `test/widget/home_page_test.dart` 补「图片库多选：长按进多选，全选后批量移除记录」。
+- 界面层靠 widget 测试核对：折叠 / 展开全部、命名空间联想、同名提醒、规则标签菜单、删除确认文案、长按进多选、多选下单击不打开查看器、全选、批量移除后磁贴消失且磁盘文件还在。
+
+未完成事项：Windows 与 Android 上没有跑过这一轮界面（本机只有 Linux 桌面与单元 / widget 测试）。
+
+踩坑：
+
+- `tag_panel.dart` 的表头在 260 宽的左栏里被新加的两个按钮挤爆（`RenderFlex overflowed by 21 pixels`）。把五个按钮统一压成 28 宽、外面再套一层右对齐的 `FittedBox(scaleDown)`，窄栏里整体缩一点，绝不溢出。
+- widget 测试里的真实数据库 I/O 必须放在 `setUp`：写进测试体会卡到 10 分钟超时。
+- 标签面板按命名空间字母序排，`ext` 一展开几十条会把后面的组挤出视野，`SliverList` 懒构建就找不到后面的条目。断言只看最前面那一组，或改用 `kind` 命名空间的标签。
+- 「全选」最初写的是 `_images`。作品层这个列表是空的，点一下全选会把已选清空 —— 是测试逮出来的真 bug，不是测试写错。

@@ -326,31 +326,76 @@ class _TagPanelState extends State<TagPanel> {
                     fontWeight: FontWeight.w600,
                     color: AppColors.textSecondaryOf(context))),
           ),
-          const Spacer(),
-          IconButton(
-            tooltip: '高级筛选表达式',
-            onPressed: () => _advancedFilter(appState),
-            icon: Icon(Icons.functions,
-                size: 15,
-                color: appState.hasAdvancedFilter
-                    ? AppColors.accent
-                    : AppColors.mutedOf(context)),
-          ),
-          IconButton(
-            tooltip: '新建标签',
-            onPressed: () => _showCreateTagDialog(appState),
-            icon: Icon(Icons.add, size: 16, color: AppColors.mutedOf(context)),
-          ),
-          if (appState.tagFilter.active || appState.hasAdvancedFilter)
-            IconButton(
-              tooltip: '清除筛选',
-              onPressed: () {
-                appState.clearTagFilters();
-                appState.clearAdvancedFilter();
-              },
-              icon: Icon(Icons.clear, size: 14, color: AppColors.mutedOf(context)),
+          // 左栏固定 260 宽：按钮组整体按需缩小，绝不横向溢出。
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      key: const ValueKey('tag-expand-all'),
+                      tooltip: '展开全部命名空间',
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 28, minHeight: 28),
+                      onPressed: () => appState.setAllNamespacesCollapsed(false),
+                      icon: Icon(Icons.unfold_more,
+                          size: 14, color: AppColors.mutedOf(context)),
+                    ),
+                    IconButton(
+                      key: const ValueKey('tag-collapse-all'),
+                      tooltip: '折叠全部命名空间',
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 28, minHeight: 28),
+                      onPressed: () => appState.setAllNamespacesCollapsed(true),
+                      icon: Icon(Icons.unfold_less,
+                          size: 14, color: AppColors.mutedOf(context)),
+                    ),
+                    IconButton(
+                      tooltip: '高级筛选表达式',
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 28, minHeight: 28),
+                      onPressed: () => _advancedFilter(appState),
+                      icon: Icon(Icons.functions,
+                          size: 15,
+                          color: appState.hasAdvancedFilter
+                              ? AppColors.accent
+                              : AppColors.mutedOf(context)),
+                    ),
+                    IconButton(
+                      tooltip: '新建标签',
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 28, minHeight: 28),
+                      onPressed: () => _showCreateTagDialog(appState),
+                      icon: Icon(Icons.add,
+                          size: 16, color: AppColors.mutedOf(context)),
+                    ),
+                    if (appState.tagFilter.active || appState.hasAdvancedFilter)
+                      IconButton(
+                        tooltip: '清除筛选',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 28, minHeight: 28),
+                        onPressed: () {
+                          appState.clearTagFilters();
+                          appState.clearAdvancedFilter();
+                        },
+                        icon: Icon(Icons.clear,
+                            size: 14, color: AppColors.mutedOf(context)),
+                      ),
+                    const SizedBox(width: 4),
+                  ],
+                ),
+              ),
             ),
-          const SizedBox(width: 4),
+          ),
         ],
       ),
     );
@@ -437,25 +482,79 @@ class _TagPanelState extends State<TagPanel> {
     );
   }
 
+  /// 命名空间在界面上显示的中文名。规则命名空间由软件自动生成，直接写
+  /// kind/ext 没人看得懂。
+  String _nsLabel(String ns) {
+    switch (ns) {
+      case TagDao.kindNamespace:
+        return '类型';
+      case TagDao.extNamespace:
+        return '扩展名';
+      case '(无命名空间)':
+        return '(无命名空间)';
+      default:
+        return ns;
+    }
+  }
+
+  /// 分组标题用的键：空命名空间统一按 '' 存
+  String _nsKey(String ns) => ns == '(无命名空间)' ? '' : ns;
+
   Widget _namespaceGroup(
       String ns, List<Tag> tags, AppState appState, TagFilter filter) {
     tags.sort((a, b) => a.name.compareTo(b.name));
+    final nsKey = _nsKey(ns);
+    final collapsed = appState.isNamespaceCollapsed(nsKey);
+    final activeCount = tags
+        .where((t) =>
+            t.id != null &&
+            (filter.andTagIds.contains(t.id) ||
+                filter.orTagIds.contains(t.id) ||
+                filter.notTagIds.contains(t.id)))
+        .length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-          child: Text(
-            ns,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: AppColors.mutedLighter,
-              letterSpacing: 0.5,
+        InkWell(
+          key: ValueKey('ns-header-$nsKey'),
+          onTap: () => appState.toggleNamespaceCollapsed(nsKey),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(6, 8, 12, 4),
+            child: Row(
+              children: [
+                Icon(
+                  collapsed ? Icons.chevron_right : Icons.expand_more,
+                  size: 14,
+                  color: AppColors.mutedLighter,
+                ),
+                Text(
+                  _nsLabel(ns),
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.mutedLighter,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${tags.length}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.mutedLighter,
+                  ),
+                ),
+                if (collapsed && activeCount > 0) ...[
+                  const SizedBox(width: 6),
+                  Icon(Icons.filter_alt,
+                      size: 11, color: AppColors.accent),
+                ],
+              ],
             ),
           ),
         ),
-        ...tags.map((tag) => _tagItem(tag, appState, filter)),
+        if (!collapsed) ...tags.map((tag) => _tagItem(tag, appState, filter)),
         const SizedBox(height: 4),
       ],
     );
@@ -469,6 +568,7 @@ class _TagPanelState extends State<TagPanel> {
     final dotColor = AppColors.parseColor(tag.color);
 
     return Material(
+      key: ValueKey('tag-item-${tag.id}'),
       color: anyActive ? AppColors.surfaceAltOf(context) : Colors.transparent,
       child: InkWell(
         onTap: () => appState.toggleAndFilter(tag.id!),
@@ -515,6 +615,7 @@ class _TagPanelState extends State<TagPanel> {
     final andActive = filter.andTagIds.contains(tag.id);
     final orActive = filter.orTagIds.contains(tag.id);
     final notActive = filter.notTagIds.contains(tag.id);
+    final isRule = AppState.isRuleTag(tag);
 
     return PopupMenuButton<String>(
       padding: EdgeInsets.zero,
@@ -549,6 +650,9 @@ class _TagPanelState extends State<TagPanel> {
           case 'delete':
             _showDeleteTagDialog(tag, appState);
             break;
+          case 'collapse':
+            appState.toggleNamespaceCollapsed(tag.namespace);
+            break;
         }
       },
       itemBuilder: (ctx) => [
@@ -569,13 +673,27 @@ class _TagPanelState extends State<TagPanel> {
           const PopupMenuItem(
               value: 'clear', child: Text('清除此标签筛选', style: TextStyle(fontSize: 12))),
         const PopupMenuDivider(),
-        const PopupMenuItem(
-            value: 'edit', child: Text('重命名/改色', style: TextStyle(fontSize: 12))),
-        PopupMenuItem(
-          value: 'delete',
-          child: Text('删除标签',
-              style: TextStyle(fontSize: 12, color: AppColors.danger)),
-        ),
+        if (isRule) ...[
+          PopupMenuItem(
+            value: 'collapse',
+            child: const Text('折叠此命名空间', style: TextStyle(fontSize: 12)),
+          ),
+          PopupMenuItem(
+            enabled: false,
+            child: Text('规则标签由软件自动生成，不能改名或删除',
+                style: TextStyle(
+                    fontSize: 10, color: AppColors.mutedOf(context))),
+          ),
+        ] else ...[
+          const PopupMenuItem(
+              value: 'edit',
+              child: Text('重命名/改色', style: TextStyle(fontSize: 12))),
+          PopupMenuItem(
+            value: 'delete',
+            child: Text('删除标签',
+                style: TextStyle(fontSize: 12, color: AppColors.danger)),
+          ),
+        ],
       ],
     );
   }
@@ -615,72 +733,133 @@ class _TagPanelState extends State<TagPanel> {
       '#a98cf5', '#f06e7f', '#f0a868', '#e2c275',
       '#9ccb86', '#63bfc8', '#6fb6ec', '#9fa6ef',
     ];
+    // 联想用：库里已有的普通命名空间（general 是留空时的默认值，规则
+    // 命名空间由软件维护，都不必提示）。
+    final suggestions = appState.knownNamespaces
+        .where((n) =>
+            n != 'general' &&
+            n != TagDao.kindNamespace &&
+            n != TagDao.extNamespace)
+        .toList();
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('新建标签'),
-          content: SizedBox(
-            width: 300,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  autofocus: true,
-                  decoration: const InputDecoration(
-                      labelText: '标签名', hintText: '例如：纯音乐'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: nsCtrl,
-                  decoration: const InputDecoration(
-                      labelText: '命名空间 (可选)', hintText: '例如：风格'),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: presetColors.map((c) {
-                    final selected = color == c;
-                    return GestureDetector(
-                      onTap: () => setLocal(() => color = c),
-                      child: Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: AppColors.parseColor(c),
-                          shape: BoxShape.circle,
-                          border: selected
-                              ? Border.all(
-                                  color: AppColors.textPrimaryOf(ctx), width: 2)
-                              : null,
-                        ),
+        builder: (ctx, setLocal) {
+          final name = nameCtrl.text.trim();
+          final ns = nsCtrl.text.trim().isEmpty
+              ? 'general'
+              : nsCtrl.text.trim();
+          final exact =
+              name.isEmpty ? null : appState.findTagByName(name, namespace: ns);
+          final other = name.isEmpty ? null : appState.findTagByName(name);
+          final warning = exact != null
+              ? '「${exact.toString()}」已经存在，换个名字或改命名空间'
+              : (other != null
+                  ? '「${other.toString()}」在别的命名空间，继续创建会得到两个同名标签'
+                  : null);
+          return AlertDialog(
+            title: const Text('新建标签'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    key: const ValueKey('create-tag-name'),
+                    controller: nameCtrl,
+                    autofocus: true,
+                    onChanged: (_) => setLocal(() {}),
+                    decoration: const InputDecoration(
+                        labelText: '标签名', hintText: '例如：纯音乐'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('create-tag-ns'),
+                    controller: nsCtrl,
+                    onChanged: (_) => setLocal(() {}),
+                    decoration: const InputDecoration(
+                        labelText: '命名空间 (可选)', hintText: '例如：风格'),
+                  ),
+                  if (suggestions.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: suggestions.map((ns) {
+                          return ActionChip(
+                            key: ValueKey('ns-suggestion-$ns'),
+                            label: Text(ns,
+                                style: const TextStyle(fontSize: 11)),
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () => setLocal(() => nsCtrl.text = ns),
+                          );
+                        }).toList(),
                       ),
-                    );
-                  }).toList(),
-                ),
-              ],
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: presetColors.map((c) {
+                      final selected = color == c;
+                      return GestureDetector(
+                        onTap: () => setLocal(() => color = c),
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: AppColors.parseColor(c),
+                            shape: BoxShape.circle,
+                            border: selected
+                                ? Border.all(
+                                    color: AppColors.textPrimaryOf(ctx),
+                                    width: 2)
+                                : null,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  if (warning != null) ...[
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        warning,
+                        key: const ValueKey('create-tag-warning'),
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: exact != null
+                                ? AppColors.danger
+                                : AppColors.mutedOf(ctx)),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('取消')),
-            TextButton(
-              onPressed: () {
-                final name = nameCtrl.text.trim();
-                if (name.isNotEmpty) {
-                  appState.createTag(name,
-                      namespace: nsCtrl.text.trim(), color: color);
-                  Navigator.pop(ctx);
-                }
-              },
-              child: const Text('创建'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消')),
+              TextButton(
+                key: const ValueKey('create-tag-submit'),
+                onPressed: (name.isEmpty || exact != null)
+                    ? null
+                    : () {
+                        appState.createTag(name,
+                            namespace: nsCtrl.text.trim(), color: color);
+                        Navigator.pop(ctx);
+                      },
+                child: const Text('创建'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -765,12 +944,16 @@ class _TagPanelState extends State<TagPanel> {
     );
   }
 
-  void _showDeleteTagDialog(Tag tag, AppState appState) {
+  Future<void> _showDeleteTagDialog(Tag tag, AppState appState) async {
+    final counts = await appState.tagUsageCounts(tag.id!);
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除标签'),
-        content: Text('确定删除「${tag.name}」？关联的曲目/文件夹标签也会被移除。',
+        content: Text(
+            '确定删除「${tag.name}」？\n将解除 ${counts.media} 个媒体、'
+            '${counts.folders} 个文件夹的关联。\n磁盘上的文件不会被删除。',
             style: TextStyle(
                 color: AppColors.textSecondaryOf(ctx), fontSize: 13)),
         actions: [

@@ -8,10 +8,11 @@ import '../state/app_state.dart';
 import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
-import 'dialogs.dart';
+import 'dialogs.dart' hide showTagPickerDialog;
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
 import 'subtitle_assign_dialog.dart';
+import 'tag_picker_dialog.dart';
 
 /// 中间栏：作品/文件夹浏览（面包屑 + 子文件夹 + 曲目列表）
 class FolderBrowser extends StatelessWidget {
@@ -121,15 +122,50 @@ class FolderBrowser extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          IconButton(
+            key: const ValueKey('track-toolbar-select'),
+            tooltip: appState.selectionMode ? '退出多选' : '多选',
+            icon: Icon(
+              appState.selectionMode
+                  ? Icons.check_box
+                  : Icons.check_box_outline_blank,
+              size: 18,
+              color: appState.selectionMode ? AppColors.accent : null,
+            ),
+            onPressed: appState.selectionMode
+                ? () => appState.clearTrackSelection()
+                : () => appState.enterTrackSelectionMode(),
+          ),
           if (appState.selectedTrackIds.isNotEmpty) ...[
             Text('已选 ${appState.selectedTrackIds.length} 首',
                 style: TextStyle(
                     color: AppColors.mutedLightOf(context), fontSize: 12)),
             const SizedBox(width: 8),
             TextButton.icon(
+              key: const ValueKey('track-select-all'),
+              onPressed: appState.selectAllTracks,
+              icon: const Icon(Icons.select_all, size: 15),
+              label: const Text('全选'),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
               onPressed: () => _batchAddTags(context, appState),
               icon: const Icon(Icons.sell_outlined, size: 15),
               label: const Text('批量加标签'),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
+              onPressed: () => _batchRemoveTags(context, appState),
+              icon: const Icon(Icons.label_off_outlined, size: 15),
+              label: const Text('批量移除标签'),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
+              key: const ValueKey('track-remove-records'),
+              onPressed: () => _batchRemoveRecords(context, appState),
+              icon: const Icon(Icons.playlist_remove, size: 15),
+              label: Text('移除记录',
+                  style: TextStyle(color: AppColors.danger)),
             ),
             const SizedBox(width: 4),
             IconButton(
@@ -172,6 +208,51 @@ class FolderBrowser extends StatelessWidget {
     if (tags == null) return;
     await appState.addTagsToTracks(ids, tags);
     appState.clearTrackSelection();
+  }
+
+  Future<void> _batchRemoveTags(BuildContext context, AppState appState) async {
+    final ids = appState.selectedTrackIds.toList();
+    if (ids.isEmpty) return;
+    final existing = await appState.getTagIdsOnTracks(ids);
+    if (!context.mounted) return;
+    final tags = await showTagPickerDialog(context,
+        title: '移除选中曲目的标签', filterTagIds: existing);
+    if (tags == null) return;
+    await appState.removeTagsFromTracks(ids, tags);
+    appState.clearTrackSelection();
+  }
+
+  /// 从软件移除选中曲目的记录：只删库里的行，磁盘文件保持原样。
+  Future<void> _batchRemoveRecords(
+      BuildContext context, AppState appState) async {
+    final ids = appState.selectedTrackIds.toList();
+    if (ids.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移除记录'),
+        content: Text(
+            '从软件里移除选中的 ${ids.length} 首？\n'
+            '磁盘上的文件不会被删除，标签关联会一起解除。',
+            style: TextStyle(
+                color: AppColors.textSecondaryOf(ctx), fontSize: 13)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child:
+                const Text('移除', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final deleted = await appState.deleteMediaByIds(ids);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已移除 $deleted 条记录，磁盘文件未改动')));
   }
 
   Widget _sortMenu(BuildContext context, AppState appState) {

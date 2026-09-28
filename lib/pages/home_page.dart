@@ -295,12 +295,11 @@ class _LibrarySwitcher extends StatelessWidget {
   }
 }
 
-/// 图片/视频库的工具条：网格列数、视图模式、标签筛选、高级筛选、
+/// 图片/视频库的工具条：网格列数、视图模式、多选、标签筛选、高级筛选、
 /// 刷新、清理缩略图缓存、图片详情开关。
 ///
-/// 视频库不显示标签与高级筛选入口：`AppState` 的标签与筛选路径写死了
-/// `MediaType.image`（`app_state.dart:451`、`:475`、`:582`），对视频不生效，
-/// 摆上来只会是假按钮。
+/// 标签筛选入口图片库与视频库都有：标签查询按 `MediaType` 分型之后，
+/// 视频同样能走 `media_tags`。
 class _VisualToolbar extends StatelessWidget {
   final String library;
   final bool detailOpen;
@@ -356,6 +355,21 @@ class _VisualToolbar extends StatelessWidget {
                 ),
                 onPressed: () => appState
                     .setViewMode(appState.viewMode == 'grid' ? 'list' : 'grid'),
+              ),
+              IconButton(
+                key: ValueKey('$library-toolbar-select'),
+                tooltip: appState.visualSelectionMode ? '退出多选' : '多选',
+                icon: Icon(
+                  appState.visualSelectionMode
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank,
+                  size: 18,
+                  color:
+                      appState.visualSelectionMode ? AppColors.accent : null,
+                ),
+                onPressed: () => appState.visualSelectionMode
+                    ? appState.exitVisualSelectionMode()
+                    : appState.enterVisualSelectionMode(),
               ),
               if (!compact) ...[
                 IconButton(
@@ -605,7 +619,7 @@ class _AdvancedFilterBar extends StatelessWidget {
   }
 }
 
-/// 多选生效时的横条：批量标签只对图片库开放（标签路径按图片类型写死）
+/// 多选生效时的横条：批量标签与批量移除记录
 class _SelectionBar extends StatelessWidget {
   final String library;
 
@@ -625,6 +639,12 @@ class _SelectionBar extends StatelessWidget {
                   fontSize: 12, color: AppColors.textPrimary)),
           const Spacer(),
           TextButton.icon(
+            key: const ValueKey('selection-select-all'),
+            onPressed: appState.selectAllImages,
+            icon: const Icon(Icons.select_all, size: 16),
+            label: const Text('全选', style: TextStyle(fontSize: 12)),
+          ),
+          TextButton.icon(
             onPressed: () => _addTags(context, appState, ids),
             icon: const Icon(Icons.label_outline, size: 16),
             label: const Text('添加标签', style: TextStyle(fontSize: 12)),
@@ -635,6 +655,13 @@ class _SelectionBar extends StatelessWidget {
             label: const Text('移除标签', style: TextStyle(fontSize: 12)),
           ),
           TextButton.icon(
+            key: const ValueKey('selection-delete'),
+            onPressed: () => _removeRecords(context, appState, ids),
+            icon: const Icon(Icons.playlist_remove, size: 16),
+            label: Text('移除记录',
+                style: TextStyle(fontSize: 12, color: AppColors.danger)),
+          ),
+          TextButton.icon(
             onPressed: appState.clearSelection,
             icon: const Icon(Icons.deselect, size: 16),
             label: const Text('清除选择', style: TextStyle(fontSize: 12)),
@@ -642,6 +669,37 @@ class _SelectionBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// 从软件移除选中记录：只删库里的行，磁盘文件保持原样。
+  Future<void> _removeRecords(
+      BuildContext context, AppState appState, Set<int> ids) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移除记录'),
+        content: Text(
+            '从软件里移除选中的 ${ids.length} 项？\n'
+            '磁盘上的文件不会被删除，标签关联会一起解除。',
+            style: TextStyle(
+                color: AppColors.textSecondaryOf(ctx), fontSize: 13)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child:
+                const Text('移除', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final deleted = await appState.deleteMediaByIds(ids);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已移除 $deleted 条记录，磁盘文件未改动')));
   }
 
   Future<void> _addTags(

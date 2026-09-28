@@ -96,6 +96,20 @@ class SettingsService {
     await _save();
   }
 
+  // ── 标签面板折叠的命名空间 ──
+
+  /// 收起来的命名空间。返回 null 表示用户还没动过，首次启动按规则折叠扩展名。
+  List<String>? get collapsedTagNamespaces {
+    final raw = _data['collapsed_namespaces'];
+    if (raw is! List) return null;
+    return raw.whereType<String>().toList();
+  }
+
+  Future<void> setCollapsedTagNamespaces(List<String> namespaces) async {
+    _data['collapsed_namespaces'] = namespaces;
+    await _save();
+  }
+
   // ── 曲目排序 ──
   String get sortKey => (_data['sort_key'] as String?) ?? 'filename';
 

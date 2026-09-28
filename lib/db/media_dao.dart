@@ -235,6 +235,27 @@ class MediaDao {
     return deleted;
   }
 
+  /// 按 id 批量删媒体记录（批量多选的「从软件移除」走这里）。
+  ///
+  /// 只删库里的行，磁盘文件不动。media_tags、media_segments、reading_spreads
+  /// 都按外键级联清掉；reading_progress.media_id 是 SET NULL，阅读质量不受影响。
+  Future<int> deleteByIds(Iterable<int> ids, {MediaType? type}) async {
+    final list = ids.toSet().toList();
+    if (list.isEmpty) return 0;
+    final typeSql = type == null ? '' : ' AND media_type = ?';
+    final typeArg = type == null ? const <Object?>[] : <Object?>[type.value];
+    var deleted = 0;
+    for (var i = 0; i < list.length; i += _batchSize) {
+      final batch = list.sublist(
+          i, i + _batchSize > list.length ? list.length : i + _batchSize);
+      final ph = List.filled(batch.length, '?').join(',');
+      deleted += await _db.delete('media',
+          where: 'id IN ($ph)$typeSql', whereArgs: [...batch, ...typeArg]);
+    }
+    logInfo('MediaDao', 'deleteByIds 删除 $deleted 行（type=${type?.value}）');
+    return deleted;
+  }
+
   // ═══ 读 ═══
 
   String _typeWhere(MediaType? type, List<Object?> args, {String? extra}) {

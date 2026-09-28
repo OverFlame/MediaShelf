@@ -87,6 +87,33 @@ class AppState extends ChangeNotifier {
   /// 线性扫描，两万张图时每次通知都要扫一遍。
   final Map<int, MediaItem> _imageIndex = {};
 
+  /// 当前界面上真正看得见的媒体 id。
+  ///
+  /// 作品层由 [ImageGrid] 自己查媒体行（`_images` 那一层只有文件夹），
+  /// 所以「全选」「区间选」不能只看 [_images]，要听这里的登记。
+  List<int> _visibleMediaIds = const [];
+
+  /// [ImageGrid] 每次重建后登记可见媒体；内容没变就不通知，避免死循环。
+  void reportVisibleMediaIds(List<int> ids) {
+    if (ids.length == _visibleMediaIds.length) {
+      var same = true;
+      for (var i = 0; i < ids.length; i++) {
+        if (ids[i] != _visibleMediaIds[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    _visibleMediaIds = List<int>.unmodifiable(ids);
+    notifyListeners();
+  }
+
+  /// 能被「全选」「区间选」摸到的媒体：优先当前列表，其次界面登记的可见项。
+  List<int> get _selectableMediaIds => _images.isNotEmpty
+      ? _images.map((i) => i.id).whereType<int>().toList()
+      : _visibleMediaIds;
+
   /// 统一替换图片列表并重建索引（不要直接给 [_images] 赋值）。
   void _setImages(List<MediaItem> list) {
     _images = list;
@@ -96,6 +123,11 @@ class AppState extends ChangeNotifier {
       if (id != null) _imageIndex[id] = img;
     }
   }
+
+  /// 媒体行增删的代数：作品层的网格自己缓存媒体列表，删完记录要
+  /// 靠这个代数知道该重查，不然磁贴会留在界面上。
+  int _mediaRevision = 0;
+  int get mediaRevision => _mediaRevision;
 
   int _totalCount = 0;
   int get totalCount => _totalCount;
@@ -138,6 +170,11 @@ class AppState extends ChangeNotifier {
   Set<int> get selectedIds => UnmodifiableSetView(_selectedImageIds);
   bool isSelected(int id) => _selectedImageIds.contains(id);
   int? _anchorImageId;
+
+  /// 视觉库多选模式。开启后单击是勾选而不是打开，长按、Ctrl 点击或工具栏
+  /// 的「多选」都会打开它；选中集合清空时自动关掉。
+  bool _visualSelectionMode = false;
+  bool get visualSelectionMode => _visualSelectionMode;
 
   // ── 图片视图设置 ──
   int _gridColumns = 4;
@@ -232,6 +269,7 @@ class AppState extends ChangeNotifier {
     await _tagDao.ensureRuleTags(extNames: _ruleTagExtensions);
     await loadTags();
     await _initNotTagIds();
+    await _initCollapsedNamespaces();
     await loadRecentTracks();
     await loadCoverCacheLimit();
     await refresh();
@@ -267,6 +305,54 @@ class AppState extends ChangeNotifier {
   void _persistNotTagIds() {
     unawaited(
         SettingsService.instance.setExcludedTagIds(_tagFilter.notTagIds));
+  }
+
+  // ── 标签面板折叠的命名空间 ──
+
+  final Set<String> _collapsedNamespaces = {};
+
+  /// 折叠起来的命名空间（标签面板据此只画标题行）。
+  Set<String> get collapsedNamespaces =>
+      UnmodifiableSetView(_collapsedNamespaces);
+
+  bool isNamespaceCollapsed(String namespace) =>
+      _collapsedNamespaces.contains(namespace);
+
+  /// 首次启动折叠扩展名那一组：那是按文件后缀自动生成的规则标签，几十个，
+  /// 不折叠会盖住用户自己打的标签。用户改过就按用户存的来。
+  Future<void> _initCollapsedNamespaces() async {
+    final stored = SettingsService.instance.collapsedTagNamespaces;
+    if (stored != null) {
+      _collapsedNamespaces
+        ..clear()
+        ..addAll(stored);
+      return;
+    }
+    _collapsedNamespaces.add(TagDao.extNamespace);
+    await SettingsService.instance
+        .setCollapsedTagNamespaces(_collapsedNamespaces.toList());
+  }
+
+  void toggleNamespaceCollapsed(String namespace) {
+    if (!_collapsedNamespaces.remove(namespace)) {
+      _collapsedNamespaces.add(namespace);
+    }
+    unawaited(SettingsService.instance
+        .setCollapsedTagNamespaces(_collapsedNamespaces.toList()));
+    notifyListeners();
+  }
+
+  /// 展开或折叠当前已有的全部命名空间（标签面板的「全部折叠/展开」）。
+  void setAllNamespacesCollapsed(bool collapsed) {
+    final all = _allTags.map((t) => t.namespace).toSet();
+    if (collapsed) {
+      _collapsedNamespaces.addAll(all);
+    } else {
+      _collapsedNamespaces.removeAll(all);
+    }
+    unawaited(SettingsService.instance
+        .setCollapsedTagNamespaces(_collapsedNamespaces.toList()));
+    notifyListeners();
   }
 
   // ═══════════════ 设置 ═══════════════
@@ -404,6 +490,7 @@ class AppState extends ChangeNotifier {
 
   /// 切换多选（Ctrl+点击）
   void toggleSelect(int id) {
+    _visualSelectionMode = true;
     if (_selectedImageIds.contains(id)) {
       _selectedImageIds.remove(id);
     } else {
@@ -416,29 +503,84 @@ class AppState extends ChangeNotifier {
 
   /// 区间多选（Shift+点击，按当前图片列表顺序从锚点到目标）
   void rangeSelect(int id) {
-    final list = _images;
-    final anchorIdx = _anchorImageId == null
-        ? -1
-        : list.indexWhere((i) => i.id == _anchorImageId);
-    final curIdx = list.indexWhere((i) => i.id == id);
+    final ids = _selectableMediaIds;
+    final anchorIdx =
+        _anchorImageId == null ? -1 : ids.indexOf(_anchorImageId!);
+    final curIdx = ids.indexOf(id);
     if (anchorIdx < 0 || curIdx < 0) {
       toggleSelect(id);
       return;
     }
     final lo = anchorIdx < curIdx ? anchorIdx : curIdx;
     final hi = anchorIdx < curIdx ? curIdx : anchorIdx;
-    for (final img in list.sublist(lo, hi + 1)) {
-      if (img.id != null) _selectedImageIds.add(img.id!);
-    }
+    _selectedImageIds.addAll(ids.sublist(lo, hi + 1));
     _selectedImageId = id;
     notifyListeners();
   }
 
   void clearSelection() {
+    _visualSelectionMode = false;
     _selectedImageId = null;
     _selectedImageIds.clear();
     _anchorImageId = null;
     notifyListeners();
+  }
+
+  /// 进入视觉库多选模式；给了 id 就顺手把它勾上（长按磁贴走这条路）
+  void enterVisualSelectionMode([int? id]) {
+    _visualSelectionMode = true;
+    if (id != null) {
+      _selectedImageIds.add(id);
+      _selectedImageId = id;
+      _anchorImageId = id;
+    }
+    notifyListeners();
+  }
+
+  void exitVisualSelectionMode() {
+    if (!_visualSelectionMode && _selectedImageIds.isEmpty) return;
+    clearSelection();
+  }
+
+  /// 选中当前列表里的全部图片或视频
+  void selectAllImages() {
+    _visualSelectionMode = true;
+    final ids = _selectableMediaIds;
+    _selectedImageIds
+      ..clear()
+      ..addAll(ids);
+    _anchorImageId = ids.isEmpty ? null : ids.first;
+    notifyListeners();
+  }
+
+  /// 批量「从软件移除」：只删库里的媒体行，磁盘文件不动。
+  ///
+  /// 返回真正删掉的行数。关联的标签行由外键级联清掉，查看器里对应的
+  /// 条目也一起收起来。
+  Future<int> deleteMediaByIds(Iterable<int> ids) async {
+    final list = ids.toSet().toList();
+    if (list.isEmpty) return 0;
+    final paths = await _mediaDao.pathsByIds(list.toSet());
+    final deleted = await _mediaDao.deleteByIds(list);
+    for (final id in list) {
+      _trackTags.remove(id);
+      _imageTags.remove(id);
+      _selectedTrackIds.remove(id);
+      _selectedImageIds.remove(id);
+    }
+    _dropViewerItemsFor(paths);
+    if (_selectedTrackIds.isEmpty) _selectionMode = false;
+    if (_selectedImageIds.isEmpty) _visualSelectionMode = false;
+    if (_anchorImageId != null && !_selectedImageIds.contains(_anchorImageId)) {
+      _anchorImageId = null;
+    }
+    if (_anchorTrackId != null && !_selectedTrackIds.contains(_anchorTrackId)) {
+      _anchorTrackId = null;
+    }
+    _mediaRevision++;
+    await refresh();
+    logInfo('AppState', '批量移除媒体 $deleted 条（请求 ${list.length} 条）');
+    return deleted;
   }
 
   /// 打开查看器 — 传入可导航的图片列表和起始索引
@@ -600,7 +742,10 @@ class AppState extends ChangeNotifier {
             '选中集合随上下文收窄: $selectedBefore -> ${_selectedTrackIds.length}');
       }
 
-      final visibleImageIds = _images.map((i) => i.id).whereType<int>().toSet();
+      final visibleImageIds = <int>{
+        ..._images.map((i) => i.id).whereType<int>(),
+        ..._visibleMediaIds,
+      };
       final selectedImagesBefore = _selectedImageIds.length;
       _selectedImageIds.retainAll(visibleImageIds);
       if (_anchorImageId != null && !visibleImageIds.contains(_anchorImageId)) {
@@ -610,6 +755,7 @@ class AppState extends ChangeNotifier {
           !visibleImageIds.contains(_selectedImageId)) {
         _selectedImageId = null;
       }
+      if (_selectedImageIds.isEmpty) _visualSelectionMode = false;
       if (selectedImagesBefore != _selectedImageIds.length) {
         logInfo('AppState',
             '图片选中集合随上下文收窄: $selectedImagesBefore -> ${_selectedImageIds.length}');
@@ -1712,6 +1858,30 @@ class AppState extends ChangeNotifier {
   Future<List<Tag>> getFolderTags(int folderId) =>
       _tagDao.getTagsForFolder(folderId);
 
+  /// 规则标签由软件按扩展名或媒体类型自动补行，删掉下次启动还会回来。
+  static bool isRuleTag(Tag tag) => TagDao.ruleNamespaces.contains(tag.namespace);
+
+  /// 按名字找标签。给了命名空间就精确匹配，没给就跨命名空间找第一个。
+  Tag? findTagByName(String name, {String? namespace}) {
+    final target = name.trim().toLowerCase();
+    if (target.isEmpty) return null;
+    for (final t in _allTags) {
+      if (t.name.toLowerCase() != target) continue;
+      if (namespace == null || t.namespace == namespace) return t;
+    }
+    return null;
+  }
+
+  /// 标签被多少条媒体、多少个文件夹引用（删除前提示用）。
+  Future<({int media, int folders})> tagUsageCounts(int tagId) =>
+      _tagDao.countUsage(tagId);
+
+  /// 标签库里出现过的命名空间（新建标签时给输入框做联想）。
+  List<String> get knownNamespaces {
+    final names = _allTags.map((t) => t.namespace).toSet().toList()..sort();
+    return names;
+  }
+
   Future<Tag> createTag(String name,
       {String namespace = '', String color = '#cba6f7'}) async {
     final ns = namespace.isEmpty ? 'general' : namespace;
@@ -1792,6 +1962,22 @@ class AppState extends ChangeNotifier {
     _selectionMode = false;
     _selectedTrackIds.clear();
     _anchorTrackId = null;
+    notifyListeners();
+  }
+
+  /// 只开多选模式，不预先选中任何曲目（工具条的「选择」按钮走这条路）
+  void enterTrackSelectionMode() {
+    _selectionMode = true;
+    notifyListeners();
+  }
+
+  /// 选中当前列表里的全部曲目（多选工具条的「全选」）
+  void selectAllTracks() {
+    _selectionMode = true;
+    _selectedTrackIds
+      ..clear()
+      ..addAll(_tracks.map((t) => t.id).whereType<int>());
+    _anchorTrackId = _tracks.isEmpty ? null : _tracks.first.id;
     notifyListeners();
   }
 
