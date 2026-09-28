@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 
+import '../services/media_rules.dart';
 import '../utils/log_util.dart';
 
 /// 媒体类型。音频、图片、视频、字幕共用一张 media 表。
@@ -133,19 +134,14 @@ class MediaDao {
 
   // ═══ 归一化工具 ═══
 
-  /// 取小写扩展名（含点）。没有扩展名返回空串。
+  /// 取小写扩展名（含点）。规则在 media_rules.dart，这里只是转发。
   ///
   /// 只认最后一个点；点在路径开头（隐藏文件）或结尾时算没有扩展名，
   /// 所以 `.gitignore` 与 `a` 都返回空串，`a.tar.gz` 返回 `.gz`。
-  static String extOf(String path) {
-    final slash = path.lastIndexOf(RegExp(r'[\\/]'));
-    final dot = path.lastIndexOf('.');
-    if (dot <= slash + 1) return '';
-    return path.substring(dot).toLowerCase();
-  }
+  static String extOf(String path) => extOfPath(path);
 
   /// 供大小写不敏感查找的列值，统一小写。查询侧也要先 toLowerCase 再回填。
-  static String nameLowerOf(String path) => path.toLowerCase();
+  static String nameLowerOf(String path) => nameLowerOfPath(path);
 
   /// 补全 ext 与 name_lower 再落库，避免调用点漏填。
   static Map<String, Object?> rowWithDerived(Map<String, Object?> row) {

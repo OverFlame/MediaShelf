@@ -48,6 +48,8 @@ dependencies:
   provider: ^6.1.5+1
   sqflite: ^2.4.3
   sqflite_common_ffi: ^2.4.2+1
+  # 迁移服务与校验工具直接用 sqflite_common 的 API 和 databaseFactory
+  sqflite_common: ^2.5.11
   path_provider: ^2.1.6
   path: ^1.9.1
   file_picker: ^12.1.2

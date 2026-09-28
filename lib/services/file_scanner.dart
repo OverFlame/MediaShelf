@@ -4,22 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../utils/log_util.dart';
+import 'media_rules.dart';
 
-/// 支持的音频格式
-const audioExtensions = {'.mp3', '.wav'};
-
-/// 支持的字幕格式
-const subtitleExtensions = {'.vtt', '.srt', '.lrc'};
-
-bool isAudioFile(String path) {
-  final lower = path.toLowerCase();
-  return audioExtensions.any((e) => lower.endsWith(e));
-}
-
-bool isSubtitleFile(String path) {
-  final lower = path.toLowerCase();
-  return subtitleExtensions.any((e) => lower.endsWith(e));
-}
+// 扩展名白名单与类型判定都定义在 media_rules.dart，这里转出去，
+// 老调用方（`import '../services/file_scanner.dart'`）不用改。
+export 'media_rules.dart';
 
 /// 扫描结果
 class ScanResult {
