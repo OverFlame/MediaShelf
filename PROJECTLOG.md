@@ -920,6 +920,7 @@
 
 - `flutter analyze --no-fatal-infos`：5 条 info，0 error。
 - `flutter test`：436 用例全过。新增 `test/state/app_state_tag_admin_test.dart` 7 例、`test/widget/tag_panel_test.dart` 6 例，并在 `test/widget/home_page_test.dart` 补「图片库多选：长按进多选，全选后批量移除记录」。
+- `bash scripts/build_linux.sh --mode release`：退出码 0，产物 `build/linux/x64/release/bundle/mediashelf`，系统 sqlite3 已复制进 bundle 的 lib 目录。
 - 界面层靠 widget 测试核对：折叠 / 展开全部、命名空间联想、同名提醒、规则标签菜单、删除确认文案、长按进多选、多选下单击不打开查看器、全选、批量移除后磁贴消失且磁盘文件还在。
 
 未完成事项：Windows 与 Android 上没有跑过这一轮界面（本机只有 Linux 桌面与单元 / widget 测试）。
