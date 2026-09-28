@@ -27,6 +27,7 @@ import '../services/video_launcher.dart';
 import '../services/volume_cover_service.dart';
 import '../utils/filter_expression.dart';
 import '../utils/log_util.dart';
+import '../utils/progress_throttle.dart';
 import 'player_controller.dart';
 
 /// 标签筛选规则
@@ -1555,6 +1556,13 @@ class AppState extends ChangeNotifier {
 
   /// 已经排进补齐队列的路径，避免同一批被反复排队。
   final List<String> _thumbBackfillQueue = <String>[];
+
+  /// 与队列同步的集合，用来 O(1) 判重。
+  ///
+  /// 队列从前只有 List：`contains` 判重要扫全表，`removeAt(0)` 出队要把后面
+  /// 的元素整体前移。5000 张缩略图，两边各自都是一千两百多万次操作。
+  final Set<String> _thumbBackfillPending = <String>{};
+
   bool _thumbBackfillRunning = false;
 
   /// 在后台把 [paths] 的 300px 缩略图逐张补齐（已存在就跳过）。
@@ -1564,7 +1572,7 @@ class AppState extends ChangeNotifier {
   /// 卡片据此重新检查文件，补完的图不用重启就会出现。
   Future<void> backfillThumbnails(Iterable<String> paths) async {
     for (final path in paths) {
-      if (path.isNotEmpty && !_thumbBackfillQueue.contains(path)) {
+      if (path.isNotEmpty && _thumbBackfillPending.add(path)) {
         _thumbBackfillQueue.add(path);
       }
     }
@@ -1574,7 +1582,9 @@ class AppState extends ChangeNotifier {
     var done = 0;
     try {
       while (_thumbBackfillQueue.isNotEmpty) {
-        final path = _thumbBackfillQueue.removeAt(0);
+        // 从尾部取：补齐顺序对用户没有意义，而 removeLast 是 O(1)。
+        final path = _thumbBackfillQueue.removeLast();
+        _thumbBackfillPending.remove(path);
         try {
           final file = File(service.thumbPath(path, size: 300));
           if (await file.exists()) continue;
@@ -1653,10 +1663,13 @@ class AppState extends ChangeNotifier {
       final importService = ImportService.fromDB();
       final stream =
           importService.importDirectory(dirPath, workId: workId, scan: scan);
+      // 导入流按文件吐进度。逐条 notifyListeners 会让整页重建上千次，
+      // 进度条却看不出差别，所以按 1% 粒度通知。
+      final throttle = ProgressThrottle();
       await for (final p in stream) {
         imported++;
         _importProgress = p.percent;
-        notifyListeners();
+        if (throttle.shouldNotify(p.percent)) notifyListeners();
       }
     } catch (e) {
       _importError = e.toString();

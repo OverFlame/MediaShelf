@@ -27,7 +27,12 @@ class _FakePathProvider extends PathProviderPlatform {
   Future<String?> getApplicationSupportPath() async => root;
 }
 
+/// 只为了占住 Process 的位置。exitCode 必须给 0：
+/// VideoLauncher 现在会看退出码，非 0 或抛异常都算「外链播放失败」。
 class _FakeProcess implements Process {
+  @override
+  Future<int> get exitCode => Future<int>.value(0);
+
   @override
   dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }

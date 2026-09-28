@@ -22,6 +22,8 @@ class VideoLauncher {
     Future<Process> Function(String, List<String>)? start,
     SystemOpen? openWithSystem,
     String? os,
+    this.openTimeout = const Duration(seconds: 10),
+    this.exitCodeGrace = const Duration(milliseconds: 1200),
   })  : _start = start ?? Process.start,
         _openWithSystem = openWithSystem ?? _invokeNativeOpen,
         _os = os ?? detectOs();
@@ -30,6 +32,15 @@ class VideoLauncher {
       _start;
   final SystemOpen _openWithSystem;
   final String _os;
+
+  /// 等平台通道回话的上限。Android 侧 Activity 没起来或是旧版本没有
+  /// `openVideo` 实现时，通道回调可能永远不来，不能把界面挂在那里。
+  final Duration openTimeout;
+
+  /// 桌面进程退出码的观察窗口。`xdg-open` 找不到处理器时立刻非 0 退出，
+  /// 这个失败要让用户看见；但有些桌面处理器会把进程挂在后台（等应用退出），
+  /// 所以超过这个窗口还没退出就按成功算。
+  final Duration exitCodeGrace;
 
   /// 平台通道，名字与 `MediaBridge.channel` 一致：同一个通道由 MainActivity 处理。
   @visibleForTesting
@@ -92,7 +103,13 @@ class VideoLauncher {
       return LaunchResult.unsupportedPlatform;
     }
     try {
-      await _start(cmd.$1, cmd.$2);
+      final proc = await _start(cmd.$1, cmd.$2);
+      final code = await _exitCodeOrNull(proc);
+      if (code != null && code != 0) {
+        logWarn('Launch',
+            '外部播放器立刻退出（退出码 $code）：${cmd.$1} ${cmd.$2.join(' ')}');
+        return LaunchResult.failed;
+      }
       logInfo('Launch', '已交给外部播放器：${cmd.$1} ${cmd.$2.join(' ')}');
       return LaunchResult.ok;
     } catch (e) {
@@ -101,11 +118,18 @@ class VideoLauncher {
     }
   }
 
+  /// 等 [exitCodeGrace]，进程退出就给退出码，超时给 null。
+  Future<int?> _exitCodeOrNull(Process proc) => Future.any<int?>(<Future<int?>>[
+        proc.exitCode,
+        Future<int?>.delayed(exitCodeGrace, () => null),
+      ]);
+
   /// Android 起不了进程：交给 MainActivity，用 Intent.ACTION_VIEW + FileProvider 分派。
   Future<LaunchResult> _openOnAndroid(String path) async {
     final mime = mimeTypeFor(path);
     try {
-      final ok = await _openWithSystem(path, mime);
+      // 没装播放器、Activity 没起来、旧版本没有 openVideo 实现，通道都可能不回话。
+      final ok = await _openWithSystem(path, mime).timeout(openTimeout);
       if (!ok) {
         logWarn('Launch', '没有应用能打开 $mime：$path');
         return LaunchResult.failed;

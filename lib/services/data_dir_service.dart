@@ -92,6 +92,8 @@ class DataDirService {
     await _copyFileStrict(
         p.join(oldDir, 'settings.json'), p.join(newD, 'settings.json'));
     await _copyDirStrict(p.join(oldDir, 'covers'), p.join(newD, 'covers'));
+    // 外链播放写出的 m3u8 也在这里，一起搬走，用户能在新目录找到刚生成的列表。
+    await _copyDirStrict(p.join(oldDir, 'playlist'), p.join(newD, 'playlist'));
 
     // 指针最后写。这里绝不能「先删旧指针、再改名」：删完成功而改名之前被打断，
     // 指针就没了，应用会回落默认目录并建一个空库，用户以为数据丢了。
@@ -136,14 +138,30 @@ class DataDirService {
     }
   }
 
+  /// 逐块比较两个文件是否完全一致。
+  ///
+  /// 比的是可能上百 MB 的 SQLite 库：两边各 readAsBytes 一次要吃掉几百 MB
+  /// 常驻内存，低端机直接 OOM。块大小取 64KB，够大不费 syscall，
+  /// 够小不会把内存顶起来。
   Future<bool> _sameBytes(File a, File b) async {
     if (await a.length() != await b.length()) return false;
-    final ab = await a.readAsBytes();
-    final bb = await b.readAsBytes();
-    for (int i = 0; i < ab.length; i++) {
-      if (ab[i] != bb[i]) return false;
+    final ra = await a.open();
+    final rb = await b.open();
+    try {
+      const chunk = 64 * 1024;
+      while (true) {
+        final ab = await ra.read(chunk);
+        final bb = await rb.read(chunk);
+        if (ab.length != bb.length) return false;
+        for (var i = 0; i < ab.length; i++) {
+          if (ab[i] != bb[i]) return false;
+        }
+        if (ab.isEmpty) return true;
+      }
+    } finally {
+      await ra.close();
+      await rb.close();
     }
-    return true;
   }
 
   Future<void> _copyDirStrict(String src, String dst) async {

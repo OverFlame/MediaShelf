@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -6,8 +7,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mediashelf/services/media_rules.dart';
 import 'package:mediashelf/services/video_launcher.dart';
 
-/// 只用来占位，测试不读它的任何成员
+/// 假进程。测试只读 exitCode，其余成员一碰就炸。
 class _FakeProcess implements Process {
+  _FakeProcess({this.code = 0, this.exitCodeFuture});
+
+  final int code;
+  final Future<int>? exitCodeFuture;
+
+  @override
+  Future<int> get exitCode => exitCodeFuture ?? Future<int>.value(code);
+
   @override
   noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }
@@ -66,6 +75,28 @@ void main() {
     expect(await launcher.open('/m/a.m3u8'), LaunchResult.failed);
   });
 
+  test('桌面进程立刻非 0 退出时返回 failed', () async {
+    final launcher = VideoLauncher(
+      os: 'linux',
+      start: (exe, args) async => _FakeProcess(code: 3),
+    );
+
+    // xdg-open 没有处理器时就是这样：起得来、立刻带非 0 退出码收工。
+    // 旧实现把 Process 丢掉直接报 ok，用户只看到「已交给系统默认播放器」。
+    expect(await launcher.open('/m/a.m3u8'), LaunchResult.failed);
+  });
+
+  test('桌面处理器挂在后台（不退出）时仍算成功', () async {
+    final never = Completer<int>();
+    final launcher = VideoLauncher(
+      os: 'linux',
+      exitCodeGrace: const Duration(milliseconds: 30),
+      start: (exe, args) async => _FakeProcess(exitCodeFuture: never.future),
+    );
+
+    expect(await launcher.open('/m/a.m3u8'), LaunchResult.ok);
+  });
+
   test('detectOs 只认 Windows、Linux 与 Android', () {
     expect(VideoLauncher.detectOs(),
         anyOf('windows', 'linux', 'android', 'other'));
@@ -106,6 +137,26 @@ void main() {
       openWithSystem: (p, m) async => throw MissingPluginException('no impl'),
     );
     expect(await boom.open('/m/a.mp4'), LaunchResult.failed);
+  });
+
+  test('Android 桥迟迟不回时按超时算失败', () async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      VideoLauncher.channel,
+      (call) async {
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        return true;
+      },
+    );
+    addTearDown(() => binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(VideoLauncher.channel, null));
+
+    final launcher = VideoLauncher(
+        os: 'android', openTimeout: const Duration(milliseconds: 30));
+
+    // 旧实现没有 timeout：通道不回话，这个 await 就一直挂着，
+    // 界面停在点击那一刻，也没有任何日志。
+    expect(await launcher.open('/m/a.mp4'), LaunchResult.failed);
   });
 
   test('Android 默认实现走 mediashelf/playback 的 openVideo', () async {

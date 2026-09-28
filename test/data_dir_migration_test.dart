@@ -94,6 +94,48 @@ void main() {
     expect(File(p.join(newD, 'mediashelf.db')).readAsStringSync(), 'DB-CONTENT');
   });
 
+  test('跨多个 64KB 块的同一个文件仍然判定一致', () async {
+    // 300KB：比较要跨过好几块，只看第一块或只比长度的实现会漏掉后面的差异。
+    await seed(defaultDir);
+    final big = List<int>.filled(300 * 1024, 0x41);
+    await File(p.join(defaultDir, 'mediashelf.db')).writeAsBytes(big);
+    final newD = p.join(tmp.path, 'copied');
+    await Directory(newD).create(recursive: true);
+    await File(p.join(newD, 'mediashelf.db')).writeAsBytes(big);
+
+    await DataDirService.instance.migrateTo(newD);
+
+    expect(File(p.join(newD, 'mediashelf.db')).lengthSync(), big.length);
+  });
+
+  test('差异出现在第一块之后也能查出来', () async {
+    await seed(defaultDir);
+    final big = List<int>.filled(300 * 1024, 0x41);
+    await File(p.join(defaultDir, 'mediashelf.db')).writeAsBytes(big);
+    final other = List<int>.of(big)..[200 * 1024] = 0x42;
+    final newD = p.join(tmp.path, 'occupied2');
+    await Directory(newD).create(recursive: true);
+    await File(p.join(newD, 'mediashelf.db')).writeAsBytes(other);
+
+    await expectLater(
+      DataDirService.instance.migrateTo(newD),
+      throwsA(isA<StateError>()),
+      reason: '第 4 块里有一个字节不同，不能被当成一致而跳过',
+    );
+  });
+
+  test('迁移连外链播放写出的 playlist 目录一起搬', () async {
+    await seed(defaultDir);
+    await Directory(p.join(defaultDir, 'playlist')).create(recursive: true);
+    await File(p.join(defaultDir, 'playlist', '专辑.m3u8')).writeAsString('#EXTM3U');
+    final newD = p.join(tmp.path, 'withlist');
+
+    await DataDirService.instance.migrateTo(newD);
+
+    expect(File(p.join(newD, 'playlist', '专辑.m3u8')).readAsStringSync(),
+        '#EXTM3U');
+  });
+
   test('目标即当前目录：直接返回，不做复制', () async {
     await seed(defaultDir);
 
