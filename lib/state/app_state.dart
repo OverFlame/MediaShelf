@@ -45,6 +45,9 @@ class TagFilter {
 class AppState extends ChangeNotifier {
   final PlayerController player;
 
+  /// 外链播放器。用例注入假实现，界面用例才能断言交给系统的命令
+  final VideoLauncher _launcher;
+
   // ── 作品集 ──
   List<Work> _works = [];
   List<Work> get works => _works;
@@ -150,7 +153,8 @@ class AppState extends ChangeNotifier {
   SegmentService get _segmentService =>
       SegmentService(DatabaseManager.instance.db);
 
-  AppState({required this.player});
+  AppState({required this.player, VideoLauncher? videoLauncher})
+      : _launcher = videoLauncher ?? VideoLauncher();
 
   Future<void> init() async {
     logInfo('AppState', 'Initializing...');
@@ -1096,7 +1100,7 @@ class AppState extends ChangeNotifier {
               path: m.path, title: m.title ?? m.filename, durationMs: m.durationMs),
       ],
     );
-    return VideoLauncher().open(file);
+    return _launcher.open(file);
   }
 
   // ═══════════════ 收藏选段（BUILD_GUIDE 第 24.3 节）═══════════════
