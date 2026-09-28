@@ -604,3 +604,40 @@
 - 提交 `7dc6c75`，`pubspec.yaml` 版本号改 `0.6.0+11`。
 
 未完成事项：Windows 真机未验。三项待实测：PotPlayer 与 VLC 传多文件的参数；含空格路径给 `start` 加引号；VLC 的 `--playlist-enqueue`。Android 走 Intent 加 FileProvider，v1 不做。
+
+## 2026-09-28 阶段 12 收藏选段
+
+目标：把一段区间存成可复用的选段，循环交给引擎区间，不用定时器轮询。
+
+动作：
+
+| 文件 | 改动 |
+| --- | --- |
+| `lib/db/tables.dart` | 版本升到 6，加 `media_segments` 表与索引，迁移进 `Tables.migrations[6]` |
+| `lib/services/segment_service.dart` | 新建。起止收口、优先级判定与增删改查 |
+| `lib/state/player_controller.dart` | 加 `_loopSegment` 与 `setLoopSegment`，起播传 `loopingStartAt` 与 `loopingEndAt` |
+| `lib/state/app_state.dart` | 加选段列表、增删改与跳转，切歌时顺带载入选段 |
+| `lib/widgets/segment_panel.dart` | 新建。底部弹层，两个手柄的 RangeSlider 定范围 |
+| `lib/widgets/player_bar.dart` | 加「选区」按钮 |
+| `test/services/segment_service_test.dart` | 新建。21 条用例 |
+| `test/state/player_controller_test.dart` | 加 5 条段循环用例 |
+| `test/widget/segment_panel_test.dart` | 新建。6 条界面点击用例 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 循环实现 | 用引擎的排他循环区间。首播传边界，播放中改边界调 `setLoopPoint` 与 `setLoopEndPoint` |
+| 优先级 | 段循环优先于 `RepeatMode.one`。判定抽成纯函数 `policyOf`，用例直接断言 |
+| 松手生效 | `onChanged` 只动手柄，`onChangeEnd` 才把区间交给播放器 |
+| 时长口径 | 起止按毫秒存。`normalizeRange` 收口到曲目时长，最短 200 毫秒 |
+| 空列表通知 | 列表没变就不通知，避免切歌时多出一次重建 |
+| 未初始化守卫 | `_applyLoopPoints` 在没初始化时直接返回。用例因此不碰原生库 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：6 条 info，0 error，与阶段 0 基线逐条相同。
+- `flutter test`：143 用例全过，阶段 11 的基线是 111。
+- 提交 `95f2150`，`pubspec.yaml` 版本号改 `0.7.0+12`。
+
+未完成事项：Windows 与 Android 真机未验。界面用例按桌面宽屏尺寸跑。窄屏下「选区」按钮与队列按钮一起收进溢出菜单，未覆盖。
