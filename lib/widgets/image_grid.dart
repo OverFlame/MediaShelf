@@ -12,6 +12,7 @@ import '../db/media_dao.dart';
 import '../services/thumbnail_cache.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/latest_only_runner.dart';
 import '../utils/log_util.dart';
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
@@ -495,8 +496,9 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
   /// build 里不再做任何文件系统调用。
   bool _thumbMissing = true;
 
-  /// 生成中的标记，避免 build 触发和 initState 触发撞在一起重复解码
-  bool _generating = false;
+  /// 生成串行器：同一时刻只解码一张，跑的过程中换了图就在收尾时补跑一次。
+  /// 早先用一个布尔量直接 return，换图时新请求被丢掉，磁贴会一直空着。
+  final LatestOnlyRunner _runner = LatestOnlyRunner();
 
   /// 计算好的缩略图文件（路径要 stat 源文件拿 mtime，
   /// 所以只在异步路径上算，build 里不碰文件系统）
@@ -519,9 +521,9 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
     }
   }
 
-  Future<void> _checkAndGenerate() async {
-    if (_generating) return;
-    _generating = true;
+  Future<void> _checkAndGenerate() => _runner.run(_generateOnce);
+
+  Future<void> _generateOnce() async {
     final path = widget.image.path;
     // thumbPath 内部要 stat 源文件拿 mtime，所以只在异步路径上算。
     // 放在 try 里：缓存目录没准备好时也要落成「没有缩略图」，
@@ -532,23 +534,21 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
       if (!await thumbFile.exists()) {
         await ThumbnailService.instance.ensureThumbnail(path, size: 300);
       }
-      if (mounted) {
-        setState(() {
-          _thumbFile = thumbFile;
-          _thumbMissing = false;
-          _thumbReady = true;
-        });
-      }
+      // 等的这段时间里卡片可能已经被复用给另一张图（`didUpdateWidget` 已经把
+      // 状态退回「没缩略图」并登记了重跑），旧图的结果不能盖上去。
+      if (!mounted || widget.image.path != path) return;
+      setState(() {
+        _thumbFile = thumbFile;
+        _thumbMissing = false;
+        _thumbReady = true;
+      });
     } catch (e) {
       logDebug('Grid', 'Thumbnail generate failed: $path ($e)');
-      if (mounted) {
-        setState(() {
-          _thumbFile = thumbFile;
-          _thumbReady = false;
-        });
-      }
-    } finally {
-      _generating = false;
+      if (!mounted || widget.image.path != path) return;
+      setState(() {
+        _thumbFile = thumbFile;
+        _thumbReady = false;
+      });
     }
   }
 

@@ -1213,6 +1213,7 @@ class AppState extends ChangeNotifier {
 
     final deleted = await _trackDao.deleteByPaths(orphan);
     _trackTags.clear();
+    if (deleted > 0) _mediaRevision++;
     logInfo('AppState',
         '删除文件夹后清理失联曲目 ${orphan.length} 条（实删 $deleted 行）');
     return deleted;
@@ -1363,6 +1364,9 @@ class AppState extends ChangeNotifier {
     final deleted = await _mediaDao.deleteByPaths(victims);
     _trackTags.clear();
     _dropViewerItemsFor(victims);
+    // 媒体行被删了就要推进代数：作品层的 ImageGrid 缓存着查过的列表，
+    // 只靠 folderVersion 它不知道该重查，删掉的磁贴会留在界面上。
+    if (deleted > 0) _mediaRevision++;
     logInfo('AppState',
         '深度删除后清理媒体 ${victims.length} 条（实删 $deleted 行）');
     return deleted;
@@ -2697,11 +2701,20 @@ class AppState extends ChangeNotifier {
     if (_migrating) {
       throw StateError('数据目录迁移已在进行中');
     }
+    // 导入不停就关库：在途的写入与 refresh 会打在已关闭的连接上。
+    if (_importing) {
+      throw StateError('正在导入，等导入结束再迁移数据目录');
+    }
     _migrating = true;
     final oldDir = await DataDirService.instance.dataDir;
     try {
+      // 关库前先前进一代：在途的 refresh 拿到结果后发现代际不匹配会主动丢弃，
+      // 不会去写已经关掉的连接。
+      _refreshGeneration++;
       await DatabaseManager.instance.close();
       final newD = await DataDirService.instance.migrateTo(newDir);
+      // 日志跟着数据目录走，否则迁移后还往旧目录写。
+      LogUtil.attachFileSink(p.join(newD, 'logs'));
       await DatabaseManager.instance.init();
       // 更新数据目录内的封面缓存路径前缀（covers/track_*.jpg、covers/work_*.jpg）
       await _rewriteCoverPaths(oldDir, newD);
