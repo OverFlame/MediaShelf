@@ -306,7 +306,45 @@
 验证：
 
 - 本轮只改文档。`flutter analyze --no-fatal-infos` 仍是 6 条 info、0 error，`flutter test` 仍是 75 用例全过。
-- ste-lint-zh --shape：BUILD_GUIDE.md 7829 字 0/0/0，PROJECT_STEPS.md 2048 字 0/0/0，PROJECTLOG.md 3127 字 0/0/0。
+- ste-lint-zh --shape：BUILD_GUIDE.md 7829 字 0/0/0，PROJECT_STEPS.md 2048 字 0/0/0，PROJECTLOG.md 3534 字 0/0/0。
 
 未完成事项：`folders.cover_path` 的 v6 增量、卷封面 DAO 与手动指定、系列导入入口。另有特典自动标签与卷内图片区。等用户放行后开工。
+
+## 2026-09-27 三种媒体组织形式与改进（决策）
+
+背景：用户提出多卷漫画，要求我自己盘点三种媒体的形态。本轮只读勘察。
+
+发现：
+
+| 处 | 问题 |
+| --- | --- |
+| `lib/db/tables.dart:16` | `works.library` 的 CHECK 只有 audio 与 video，图片系列建不了 |
+| `lib/services/file_scanner.dart:9` | 音频只认 .mp3 与 .wav，FLAC、M4A、AAC、OGG、OPUS 全扫不到 |
+| `PictureViewer2/lib/services/file_scanner.dart:6-9` | 图片 9 个扩展名，缺 HEIC 与 AVIF |
+| `PictureViewer2/lib/db/image_dao.dart:302-317` | 排序键只有五个，全走 COLLATE NOCASE，没有自然排序 |
+| `lib/state/app_state.dart:228-231` | 作品层把条目写死成空列表，电影系列无处安放 |
+| `media` 列 | 无拍摄日期、无页序、无阅读进度 |
+| `play_history` | 只有播放时间，没有看到第几分钟 |
+
+决定：
+
+| 议题 | 决定 |
+| --- | --- |
+| 漫画多卷 | 系列 = works（library 加 image），一本 = 一级文件夹 |
+| 自然排序 | `media` 加 `sort_key` 列，数字补零后排序，三边共用 |
+| 扩展名 | 音频补 FLAC／M4A／AAC／OGG／OPUS，图片补 HEIC／AVIF |
+| 作品层 | 允许作品下直接放条目，用途是电影系列、单卷散图与单曲作品 |
+
+后置：压缩包识别、EXIF 拍摄日期列、阅读与观看进度、特典名字表可配。
+
+不做：整轨 cue 分轨、BDMV 原盘折叠、跨页合并显示、跨媒体系列、古典乐多创作者元数据。
+
+落点：v6 增量与阶段 4 一起做，作品平铺条目在阶段 6。文案落在 BUILD_GUIDE 第 20 节，并同步第 18.6 节的图片入口指向。
+
+验证：
+
+- 本轮只改文档。`flutter analyze --no-fatal-infos` 仍是 6 条 info、0 error，`flutter test` 仍是 75 用例全过。
+- ste-lint-zh --shape：BUILD_GUIDE.md 8399 字 0/0/0，PROJECT_STEPS.md 2076 字 0/0/0，PROJECTLOG.md 3534 字 0/0/0。
+
+未完成事项：以上四条决定的代码实现，等用户放行。
 
