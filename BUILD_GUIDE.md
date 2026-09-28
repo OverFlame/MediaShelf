@@ -1655,3 +1655,167 @@ is_default_subtitle INTEGER NOT NULL DEFAULT 0
 后置：字幕时间轴手动微调、A2 逐字高亮、三位分钟、自动获取字幕。
 
 不做：SUB 与 IDX 位图字幕解析。位图字幕需要配 idx 索引与位图坐标，与文本字幕不是一条路。只识别扩展名并提示。
+
+## 24 播放增强（定稿）
+
+本节定稿四项播放能力。实施顺序为功能 1、功能 3、功能 2。功能 4 等许可证核实结果，暂不排期。
+
+### 24.1 播放模式补全
+
+基线代码在 `lib/state/player_controller.dart`。
+
+| 能力 | 现状 | 结论 |
+| --- | --- | --- |
+| 单曲循环 | 已有 `RepeatMode.one`（`lib/state/player_controller.dart:10`） | 保留 |
+| 列表循环 | 已有 `RepeatMode.all` | 保留 |
+| 播完停止 | 已有 `RepeatMode.off` | 保留 |
+| 随机 | 已有开关（`:31`），索引每次现算（`:241`） | 改洗牌队列 |
+| 播放速度 | 无 | 新增 |
+| 队列编辑 | 无 | 新增 |
+| 连播入口 | 无 | 新增 |
+| 模式持久化 | 无 | 新增 |
+
+落地要点：
+
+| 序号 | 项 | 做法 |
+| --- | --- | --- |
+| 1 | 速度 | 调 `SoLoud.setRelativePlaySpeed(handle, speed)`（`flutter_soloud-4.1.7/lib/src/soloud.dart:2503`）。范围 0.5 到 2.0，步长 0.25 |
+| 2 | 洗牌 | 进入随机时生成一次乱序表，按表推进。表走完再重排，避免短时间重复 |
+| 3 | 队列编辑 | 新增 `playNext(TrackItem)`、`removeAt(int)`、`reorder(int, int)`，配套 `List<TrackItem> get queue` 与 `int get index` |
+| 4 | 持久化 | 在 `lib/services/settings_service.dart` 加三个键。写法照 `setCoverCacheLimitMB`（`:136-140`） |
+| 5 | 连播入口 | 文件夹菜单（`lib/widgets/folder_browser.dart:267`）与作品菜单（`lib/widgets/works_grid.dart:106`）各加一项，调用 `lib/state/app_state.dart:958` 的 `playTracks` |
+| 6 | 界面 | `lib/widgets/player_bar.dart` 加速率与队列按钮。队列面板新建 `lib/widgets/queue_panel.dart`，用 `ReorderableListView` |
+| 7 | 后置项 | 交叉淡化、淡入淡出、播放位置记忆 |
+
+
+验收：
+
+- `flutter analyze --no-fatal-infos` 无 error。
+- 新增 `test/state/player_controller_test.dart`。用例覆盖洗牌不重复、队列删除与重排、速度边界钳制、模式持久化回读。
+
+### 24.2 外链播放列表
+
+目标是让整部剧集按顺序进入外部播放器。本机无 PotPlayer 与 VLC，参数细节待真机确认。
+
+新建两个文件。
+
+- `lib/services/playlist_writer.dart`。写 UTF-8 的 m3u8。首行 `#EXTM3U`，每项一行 `#EXTINF:<秒>,<标题>` 加一行绝对路径。输出到数据目录的 `playlist/` 子目录。
+- `lib/services/video_launcher.dart`。接口按第 9.4 节。`enum LaunchResult { ok, unsupportedPlatform, failed }`。构造函数注入 `Future<Process> Function(String, List<String>)?`。
+
+平台分派表：
+
+| 平台 | 命令 | 结果 |
+| --- | --- | --- |
+| Windows | `cmd /c start "" <播放列表路径>` | ok |
+| Linux | `xdg-open <播放列表路径>` | ok |
+| 其他 | 不执行 | unsupportedPlatform |
+
+选定 m3u8 的理由有两条。PotPlayer 与 VLC 都支持该格式。纯文本便于用户检查。
+
+菜单入口放右键菜单，覆盖文件夹与剧集卡片。文案为「用外部播放器播放」。
+
+待真机实测项：
+
+- PotPlayer 与 VLC 接收多文件命令行参数的形式。
+- 含空格路径传给 `start` 时的引号处理。
+- VLC 的 `--playlist-enqueue` 行为。
+- Android 走 `Intent.ACTION_VIEW` 加 FileProvider，见第 9.5 节。v1 不做。
+
+验收：
+
+- 新增 `test/services/playlist_writer_test.dart`。断言行序、时长取整、标题回退。
+- 新增 `test/services/video_launcher_test.dart`。注入假 `start`，断言命令与参数。
+- 真机验收在 Windows 机器上补做。
+
+### 24.3 收藏选段
+
+引擎已支持排他循环区间，不用定时器轮询。
+
+- 首播时传边界：`play(..., looping: true, loopingStartAt: start, loopingEndAt: end)`（`flutter_soloud-4.1.7/lib/src/soloud.dart:1996-2006`）。
+- 播放中改边界：`setLoopPoint`（`:2698`）与 `setLoopEndPoint`（`:2731`）。
+- 单次跳转用 `seek`（`:2821`）。
+
+表结构随 `media` 的下一版增量加。
+
+```sql
+CREATE TABLE media_segments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+  start_ms INTEGER NOT NULL,
+  end_ms INTEGER NOT NULL,
+  name TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_media_segments_media ON media_segments(media_id);
+```
+
+循环优先级：
+
+| 优先级 | 条件 | 行为 |
+| --- | --- | --- |
+| 1 | 选段循环开启 | 只循环该段 |
+| 2 | `RepeatMode.one` | 循环整曲 |
+| 3 | `RepeatMode.all` | 顺序推进 |
+| 4 | `RepeatMode.off` | 播完停止 |
+
+界面放播放条。按钮文案为「选区」。拖动两个手柄定范围，松手才生效。段列表支持命名、跳转、循环、删除。
+
+约束：
+
+- 起止按毫秒存。`end_ms` 必须大于 `start_ms`。
+- 越界值收口到曲目时长内。
+- 一轨可存多段。
+
+验收：
+
+- 新增 `test/services/segment_service_test.dart`。覆盖起止换算、越界收口、优先级判定。
+- 新增 `test/state/player_controller_test.dart` 的段循环用例。
+
+### 24.4 内置视频播放器
+
+状态为后置。第 9 节的 v1 范围暂时不变，仍不做应用内解码播放视频。
+
+后端候选：
+
+| 候选人 | 许可证 | 平台 | 结论 |
+| --- | --- | --- | --- |
+| media_kit | MIT 封装 | Windows / Linux / Android | 首选候选 |
+| video_player | BSD-3-Clause | 不含 Windows 与 Linux | 排除 |
+| flutter_vlc_player | GPL-2.0+ | 全平台 | 排除，触强 copyleft |
+| 外部进程 | 无新增 | 全平台 | 等价功能 3，作兜底 |
+
+libmpv 许可证核实结果（2026-09-28，本地实测）：
+
+- `media_kit-1.2.6/LICENSE` 是 MIT。README 的 License 节不提 libmpv。
+- Windows 库包在构建时下载预编译包。文件名见 `media_kit_libs_windows_video-1.0.11/windows/CMakeLists.txt:67`，来源是 `media-kit/libmpv-win32-video-build` 的 release（`:70`），以 `libmpv-2.dll` 动态链接（`:169`）。
+- Linux 库包不打包 libmpv，改用系统库（`media_kit_libs_linux-1.2.1/linux/CMakeLists.txt`）。
+- 该预编译包的构建选项未知。mpv 上游是多文件 LGPL-2.1+ 混部分 GPL-2+。最终许可证取决于 gpl 选项。本次核实未拿到可信结论。
+
+三条定案路径：
+
+1. 在 Windows 机器下载该 7z，查内部许可证文件或 `libmpv-2.dll` 的版本信息。
+2. 询问 media_kit 维护者，参考 issue #20。
+3. 自建 LGPL-only 的 libmpv，构建时关闭 gpl 选项。H.264 与 HEVC 解码属 LGPL 部分，可行。
+
+法律口径：GPL 与 LGPL 的义务在分发时触发。自用不分发时不产生义务。要分发就需要 LGPL-only 加动态链接加声明，或改走外部进程。
+
+### 24.5 第三方许可证口径
+
+现有文件 `THIRD_PARTY_NOTICES.md` 已声明：只收 MIT、BSD、Apache、Zlib 等宽松许可证，不收 GPL 与 AGPL。
+
+新增依赖时按三条执行。
+
+1. 先查许可证，再写进 `pubspec.yaml`。
+2. 宽松许可证直接收。LGPL 组件只在动态链接且附声明时收。
+3. 每次新增依赖，同步追加 `THIRD_PARTY_NOTICES.md`。
+
+### 24.6 落点
+
+| 阶段 | 内容 |
+| --- | --- |
+| 阶段 10 | 播放模式补全（24.1） |
+| 阶段 11 | 外链播放列表（24.2） |
+| 阶段 12 | 收藏选段（24.3），含 `media_segments` 建表 |
+| 待定 | 内置视频播放器（24.4），等许可证定案 |
+
+阶段 10 到 12 插在阶段 4 之前实施。改动集中在播放层，与数据层重构不冲突。原阶段 4 到 9 的排期不变。

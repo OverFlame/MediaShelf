@@ -67,13 +67,16 @@ flutter test
 | 0 | 建仓与改名 | 已完成，提交 `7f155ab` |
 | 1 | 依赖合并 | 已完成，提交 `c2ec53c` |
 | 2 | 数据层统一 | 已完成，提交 `5b36a64` |
-| 3 | 迁移服务 | 待开始 |
+| 3 | 迁移服务 | 已完成，提交 `586a72f` |
 | 4 | 图片栈迁入 | 待开始（含阅读器与字幕解析） |
 | 5 | 视频识别与外链 | 待开始 |
 | 6 | 统一 AppState | 待开始（含阅读进度与字幕归属） |
 | 7 | 设置、主题与页面 | 待开始 |
 | 8 | 打包与 CI | 待开始 |
 | 9 | Android 验收 | 延后 |
+| 10 | 播放模式补全 | 待开始，插在阶段 4 前，见第 24.1 节 |
+| 11 | 外链播放列表 | 待开始，插在阶段 4 前，见第 24.2 节 |
+| 12 | 收藏选段 | 待开始，插在阶段 4 前，见第 24.3 节 |
 
 ## 5 逐阶段步骤
 
@@ -156,6 +159,64 @@ dart run tool/migrate_check.dart --src-a <老库 A> --src-b <老库 B> --dst <�
 
 - 老库不要就地升级。两边版本号都是 4，表结构不同。
 - 迁移前先读 `.datadir` 指针文件，两边数据根不一样。
+
+### 阶段 10 播放模式补全
+
+依据：BUILD_GUIDE 第 24.1 节。
+
+动作：
+
+1. 在 `lib/state/player_controller.dart` 加洗牌队列、队列编辑三个方法与速度控制。
+2. 在 `lib/services/settings_service.dart` 加 `repeat_mode`、`shuffle`、`play_speed` 三个键。
+3. 在 `lib/widgets/player_bar.dart` 加速率与队列按钮，新建 `lib/widgets/queue_panel.dart`。
+4. 在文件夹与作品菜单加连播入口，调用 `lib/state/app_state.dart:958` 的 `playTracks`。
+
+验收：
+
+```bash
+flutter test test/state
+flutter analyze --no-fatal-infos
+```
+
+通过标准：洗牌不重复、队列删除与重排、速度边界、模式回读四组用例通过。
+
+### 阶段 11 外链播放列表
+
+依据：BUILD_GUIDE 第 24.2 节。
+
+动作：
+
+1. 新建 `lib/services/playlist_writer.dart`，写 UTF-8 的 m3u8 到数据目录 `playlist/`。
+2. 新建 `lib/services/video_launcher.dart`，按第 9.4 节做平台分派。
+3. 在剧集与卷的右键菜单加「用外部播放器播放」。
+
+验收：
+
+```bash
+flutter test test/services
+flutter analyze --no-fatal-infos
+```
+
+通过标准：m3u8 行序与命令参数用例通过。真机验收在 Windows 机器上补做。
+
+### 阶段 12 收藏选段
+
+依据：BUILD_GUIDE 第 24.3 节。
+
+动作：
+
+1. 加 `media_segments` 表与索引，随 `media` 的下一版增量走。
+2. 新建 `lib/services/segment_service.dart`，管起止校验与优先级判定。
+3. 在播放条加选区按钮与段列表。
+
+验收：
+
+```bash
+flutter test test/services test/state
+flutter analyze --no-fatal-infos
+```
+
+通过标准：起止换算、越界收口、优先级判定用例通过。
 
 ### 阶段 4 图片栈迁入
 
@@ -374,4 +435,4 @@ python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
 
 `LICENSE` 是 MIT 原文，BUILD_GUIDE 第 15 节里那条 BSD 3-Clause 署名问题不存在。
 
-下一步是阶段 3 迁移服务。
+阶段 3 已完成。下一步按第 24 节做播放增强，顺序是阶段 10、阶段 11、阶段 12。三项做完再回到阶段 4。

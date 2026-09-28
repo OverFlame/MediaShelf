@@ -448,3 +448,86 @@
 - ste-lint-zh --shape：BUILD_GUIDE.md 10671 字 0/0/0，PROJECT_STEPS.md 2224 字 0/0/0，PROJECTLOG.md 4631 字 0/0/0。
 
 未完成事项：fast_gbk 依赖、注册表、编码链、LRC 增强、匹配规则与两列归属模型都未实现，等用户放行代码。
+
+## 2026-09-28 阶段 3 迁移服务
+
+目标：把 AudioShelf 与 PictureViewer2 两个老库并成一个 mediashelf.db。
+
+动作：
+
+| 文件 | 内容 |
+| --- | --- |
+| `lib/services/media_rules.dart` | 新建。扩展名白名单与路径归一化的唯一来源，纯 Dart |
+| `lib/services/migration_service.dart` | 新建。跨库只读 SELECT，目标库单事务写入 |
+| `lib/services/migration_check.dart` | 新建。五类断言 |
+| `tool/migrate.dart` | 新建。迁移命令行入口 |
+| `tool/migrate_check.dart` | 新建。校验命令行入口 |
+| `tool/migrate_args.dart` | 新建。参数解析，支持 `--x V` 与 `--x=V` |
+| `test/services/migration_fixtures.dart` | 新建。两个老库的 DDL 与样本数据 |
+| `test/services/migration_service_test.dart` | 新建。5 个用例 |
+| `test/services/migration_check_test.dart` | 新建。4 个用例 |
+| `lib/services/file_scanner.dart` | 改。扩展名规则改为转发 media_rules.dart |
+| `lib/db/media_dao.dart` | 改。`extOf` 与 `nameLowerOf` 转发 media_rules.dart |
+| `pubspec.yaml` | 改。加 `sqflite_common: ^2.5.11` |
+
+关键决定：
+
+| 议题 | 决定 | 理由 |
+| --- | --- | --- |
+| 工具能否脱离 Flutter | 能。service 与 tool 不 import Flutter | 探针实测 `dart run` 下 sqflite_common_ffi 可用 |
+| 扩展名规则放哪 | 单独拆 `media_rules.dart` | 迁移与扫描共用一份，纯 Dart 可跑 |
+| 同一路径两库都有 | 保留先到者，记入 duplicatePaths | 避免迁移中止，校验时单独报数 |
+| 老库缺表 | 跳过并记入 skippedTables | 缺表老库不影响其余数据 |
+| 备份 | 默认开，`--no-backup` 可关 | 迁移前先留副本 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：6 issues，0 error，6 条 info 与基线逐条相同。
+- `flutter test`：84/84 全过。基线 75，本轮新增 9 条。
+- 端到端：临时夹具两库迁出 5 行 media，`migrate_check` 五项全 PASS。
+- 端到端：重复迁移时服务抛 `StateError`，退出码 1。
+- 端到端：真实空图片库加 AudioShelf 夹具迁出 2 行，五项全 PASS。
+
+未完成事项：迁移入口还未接进应用界面。Android 老库路径未验证。图片库的真实数据为零，多卷漫画场景要等用户真实库。
+
+## 2026-09-28 播放增强定稿（第 24 节）
+
+需求：评估四项播放能力的难度。硬约束是不引入商业许可风险。
+
+分析结论：
+
+| 功能 | 难度 | 工期 | 新增依赖 | 结论 |
+| --- | --- | --- | --- | --- |
+| 1 播放模式补全 | 低 | 1 到 2 天 | 无 | 先做 |
+| 2 收藏选段 | 低到中 | 2 到 3 天 | 无 | 第三做 |
+| 3 外链播放列表 | 低到中 | 1 到 2 天 | 无 | 第二做 |
+| 4 内置视频播放器 | 高 | 3 到 6 天 | 待定 | 后置 |
+
+许可证核实：
+
+| 组件 | 许可证 | 证据 |
+| --- | --- | --- |
+| flutter_soloud 4.1.7 | MIT | 包内 LICENSE |
+| media_kit 1.2.6 | MIT | 包内 LICENSE，README 不提 libmpv |
+| 预编译 libmpv | 未定 | Windows 库包下载 7z，构建选项未知 |
+| libvlc | GPL-2.0+ | VideoLAN 官方 FAQ |
+| PotPlayer / VLC 进程调用 | 无 | 不产生链接 |
+
+决定：
+
+| 议题 | 决定 |
+| --- | --- |
+| 实施顺序 | 先做功能 1、功能 3、功能 2 |
+| 功能 4 | 后置，等 libmpv 许可证定案 |
+| 选段形态 | A-B 区间循环加书签跳转，两者都做 |
+| 文档 | 写成 BUILD_GUIDE 第 24 节加本条记录 |
+
+落点：第 24 节把三项排为阶段 10 到 12，插在阶段 4 之前。改动集中在播放层，与数据层重构不冲突。
+
+验证：
+
+- 本轮只改文档，代码零改动。
+- `flutter analyze --no-fatal-infos` 与 `flutter test` 数字不变。
+- ste-lint-zh --shape：三份文档 0/0/0。
+
+未完成事项：功能 4 后端未定案。PotPlayer 与 VLC 的多文件参数待真机实测。功能 1、3、2 的代码未动。
