@@ -931,3 +931,46 @@
 - widget 测试里的真实数据库 I/O 必须放在 `setUp`：写进测试体会卡到 10 分钟超时。
 - 标签面板按命名空间字母序排，`ext` 一展开几十条会把后面的组挤出视野，`SliverList` 懒构建就找不到后面的条目。断言只看最前面那一组，或改用 `kind` 命名空间的标签。
 - 「全选」最初写的是 `_images`。作品层这个列表是空的，点一下全选会把已选清空 —— 是测试逮出来的真 bug，不是测试写错。
+
+
+## 2026-09-28 标签对话框折叠、左栏固定表头与图片/视频库标签栏（`1.2.0+19`）
+
+用户报四个缺陷：「在给作品编辑标签的时候也要加上这个以命名空间收起/展开的效果」「左侧标签栏上下滚动浏览的时候上面筛选、添加等功能栏不能随着移动」「图片/视频居然没有标签栏」「浅色主题只对音频做了适配，其他两个选中后还是黑色显得非常难看」。
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| 标签选择对话框 | `lib/widgets/tag_picker_dialog.dart` 整文件重写：按命名空间分组，标题 `ValueKey('picker-ns-header-$key')` 可点收起/展开（空命名空间用空串做键，与 `AppState` 一致），行 `ValueKey('picker-tag-$id')`，底部「已选 N」，颜色全走 `AppColors.*Of(context)` |
+| 左栏固定表头 | `lib/widgets/tag_panel.dart` 的 `_tagSection` 改成 `LayoutBuilder`：`maxHeight >= 170` 时用 `Column[_tagHeader, Divider, _tagSearchBar, if(activeIds.isNotEmpty) _activeFilterBar, Expanded(ListView.builder)]`，只让标签列表滚；矮于此退回原来的 `CustomScrollView`（整体一起滚） |
+| 图片/视频库标签栏 | `lib/pages/home_page.dart` 加 `Map<String, String> _leftTabs`；`_buildLeftPanel({onNavigate})` 视觉库返回 `Column[_leftPanelTabs(tab, onNavigate), Divider, Expanded(tab == 'tags' ? TagPanel(filterOnly: true, onNavigate:) : FolderPanel(library: _library))]`，页签 key 为 `'$_library-left-tab-folders'` / `-tags`；抽屉版本同样走 `_buildLeftPanel(onNavigate: () => Navigator.of(drawerCtx).pop())` |
+| 浅色主题适配 | 把 `lib/widgets/image_grid.dart`(15)、`lib/widgets/folder_panel.dart`(29)、`lib/widgets/works_grid.dart`(1)、`lib/widgets/image_detail.dart`(36)、`lib/widgets/tag_panel.dart`(3)、`lib/pages/home_page.dart`(5) 里的 `AppColors.<色名>` 换成 `AppColors.<色名>Of(context)`；`lib/widgets/image_viewer.dart` 的 19 处不动，全屏查看器保持深色底 |
+| 主题访问器补齐 | `lib/theme/app_theme.dart` 加浅色常量 `textTertiaryLight #5A6070`、`mutedLighterC #9AA0B2`、`deepLight #E2E4EC`、`surfaceHighLight #B8BDCB` 与访问器 `textTertiaryOf` / `mutedLighterOf` / `deepOf` / `surfaceHighOf` |
+| 版本 | `pubspec.yaml` 升到 `1.2.0+19`，关于页常量同步 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 折叠状态共用一份 | 对话框与左栏都读 `AppState.collapsedNamespaces`：在哪儿收起来的，换个入口打开还是收着的，不必维护两套状态 |
+| 搜索时忽略折叠 | 搜到的标签必须看得见，否则「搜不出来」会被当成「没有这个标签」；此时标题也不响应点击 |
+| 固定行还是整体滚 | 矮窗口里（800x600 的音频左栏只剩 86 高）固定行会把面板顶出溢出条，所以按高度二选一，宁可退回整体滚也不溢出 |
+| 视觉库给标签栏的方式 | 图片/视频库左栏原本只有文件夹树，直接换成标签面板会丢入口，所以做两个页签，各库记住各库的选择 |
+| 查看器不跟着换色 | 全屏看图时深色底是刻意的（衬图片），只把网格、列表、详情、对话框这些界面改成随主题走 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error（`import_service.dart:45-47` 的 `prefer_initializing_formals` 与 `cover_image.dart:34` 的 `unnecessary_underscores`，都是既有项）。
+- `flutter test`：444 用例全过。新增 `test/widget/tag_picker_dialog_test.dart` 4 例；`test/widget/tag_panel_test.dart` 补「滚动标签列表时表头与搜索框不跟着移动」「面板被压到几十像素高时退回整体滚动，不溢出」；`test/widget/image_grid_test.dart` 补「卡片底色跟着主题走」；`test/widget/home_page_test.dart` 补「图片库左栏：文件夹 / 标签两个页签可切换」。
+- `bash scripts/build_linux.sh --mode release`：退出码 0，产物 `build/linux/x64/release/bundle/mediashelf`。
+- 界面层核对：对话框分组收起/展开、搜索忽略折叠、已选计数与确定返回、浅色下对话框底色是 `panelLight`；左栏列表滚 600 时表头与搜索框坐标不变、列表内容上移；矮窗口退回整体滚且不抛异常；图片/视频库页签切换与各库记忆；浅色下网格卡片底色是 `surfaceLight`，深色下仍是 `surface`。
+
+未完成事项：Windows 与 Android 上没有跑过这一轮界面（本机只有 Linux 桌面与单元 / widget 测试）。
+
+踩坑：
+
+- 批量把颜色换成 `...Of(context)` 后 54 处 `const` 失效（`const_eval_method_invocation`），写了一段脚本按 analyze 报的行列删掉最近的前一个 `const` 才回到基线。
+- 左栏固定表头第一版直接上 `Column`：800x600 窗口下音频左栏只剩 86 高，`RenderFlex overflowed by 23 pixels on the bottom`，8 个既有用例一起红。加 `LayoutBuilder` 高度兜底后恢复。
+- `AppState.createTag` 会把空命名空间归成 `general`，测试里要造真正的「无命名空间」标签得直接 `TagDao.insert(Tag(namespace: ''))` 再 `app.loadTags()`。
+- `ListView.builder` 的 `maxScrollExtent` 是估出来的：`jumpTo` 到估出来的最大值会被重新算出的范围夹回去（实测 6285 被夹到 2051），测试改用 `jumpTo(600)` 这种确定值。
+- 懒构建滚动后不一定回收已构建的分组，别拿「某个 key 还在不在」当「有没有滚」的证据，要拿坐标或 `position.pixels`。

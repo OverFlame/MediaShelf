@@ -100,7 +100,7 @@ class _FolderPanelState extends State<FolderPanel> {
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: LinearProgressIndicator(
               value: appState.importProgress,
-              backgroundColor: AppColors.surface,
+              backgroundColor: AppColors.surfaceOf(context),
               color: AppColors.accent,
               minHeight: 2,
             ),
@@ -158,7 +158,7 @@ class _FolderPanelState extends State<FolderPanel> {
     return InkWell(
       onTap: () => _goToRoot(appState),
       child: Container(
-        color: selected ? AppColors.surface : null,
+        color: selected ? AppColors.surfaceOf(context) : null,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         child: Row(
           children: [
@@ -175,7 +175,7 @@ class _FolderPanelState extends State<FolderPanel> {
                   fontSize: 12,
                   fontWeight:
                       selected ? FontWeight.w600 : FontWeight.normal,
-                  color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                  color: selected ? AppColors.textPrimaryOf(context) : AppColors.textSecondaryOf(context),
                 ),
               ),
             ),
@@ -199,12 +199,12 @@ class _FolderPanelState extends State<FolderPanel> {
       padding: const EdgeInsets.fromLTRB(12, 4, 8, 2),
       child: Row(
         children: [
-          const Text(
+           Text(
             '文件夹',
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: AppColors.mutedLight,
+              color: AppColors.mutedLightOf(context),
             ),
           ),
           const Spacer(),
@@ -214,8 +214,8 @@ class _FolderPanelState extends State<FolderPanel> {
             child: IconButton(
               padding: EdgeInsets.zero,
               onPressed: () => _createRootFolder(appState),
-              icon: const Icon(Icons.create_new_folder_outlined,
-                  size: 15, color: AppColors.muted),
+              icon:  Icon(Icons.create_new_folder_outlined,
+                  size: 15, color: AppColors.mutedOf(context)),
               tooltip: '新建根文件夹',
             ),
           ),
@@ -239,9 +239,9 @@ class _FolderPanelState extends State<FolderPanel> {
                 onSubmitted: (_) => _addFromPath(appState),
                 decoration: InputDecoration(
                   hintText: '输入文件夹或文件路径，回车添加',
-                  hintStyle: const TextStyle(
+                  hintStyle:  TextStyle(
                     fontSize: 11,
-                    color: AppColors.mutedLight,
+                    color: AppColors.mutedLightOf(context),
                   ),
                   isDense: true,
                   contentPadding: const EdgeInsets.symmetric(
@@ -250,20 +250,20 @@ class _FolderPanelState extends State<FolderPanel> {
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(6),
-                    borderSide: const BorderSide(color: AppColors.surfaceAlt),
+                    borderSide:  BorderSide(color: AppColors.surfaceAltOf(context)),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(6),
-                    borderSide: const BorderSide(color: AppColors.surfaceAlt),
+                    borderSide:  BorderSide(color: AppColors.surfaceAltOf(context)),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(6),
                     borderSide: const BorderSide(color: AppColors.accent),
                   ),
                   filled: true,
-                  fillColor: AppColors.surface,
+                  fillColor: AppColors.surfaceOf(context),
                 ),
-                style: const TextStyle(fontSize: 12, color: AppColors.textPrimary),
+                style:  TextStyle(fontSize: 12, color: AppColors.textPrimaryOf(context)),
               ),
             ),
           ),
@@ -277,8 +277,8 @@ class _FolderPanelState extends State<FolderPanel> {
               tooltip: '从路径添加',
               style: IconButton.styleFrom(
                 foregroundColor: AppColors.accent,
-                backgroundColor: AppColors.surface,
-                side: const BorderSide(color: AppColors.surfaceAlt),
+                backgroundColor: AppColors.surfaceOf(context),
+                side:  BorderSide(color: AppColors.surfaceAltOf(context)),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(6),
                 ),
@@ -315,7 +315,7 @@ class _FolderPanelState extends State<FolderPanel> {
                 ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.accent,
-                  side: const BorderSide(color: AppColors.surfaceAlt),
+                  side:  BorderSide(color: AppColors.surfaceAltOf(context)),
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                 ),
               ),
@@ -332,7 +332,7 @@ class _FolderPanelState extends State<FolderPanel> {
                   Icons.image_outlined,
                   size: 14,
                   color: appState.importing
-                      ? AppColors.mutedLight
+                      ? AppColors.mutedLightOf(context)
                       : AppColors.teal,
                 ),
                 label: Text(
@@ -340,13 +340,13 @@ class _FolderPanelState extends State<FolderPanel> {
                   style: TextStyle(
                     fontSize: 12,
                     color: appState.importing
-                        ? AppColors.mutedLight
-                        : AppColors.textPrimary,
+                        ? AppColors.mutedLightOf(context)
+                        : AppColors.textPrimaryOf(context),
                   ),
                 ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.teal,
-                  side: const BorderSide(color: AppColors.surfaceAlt),
+                  side:  BorderSide(color: AppColors.surfaceAltOf(context)),
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                 ),
               ),
@@ -366,15 +366,15 @@ class _FolderPanelState extends State<FolderPanel> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.folder_open, size: 48, color: AppColors.muted),
+               Icon(Icons.folder_open, size: 48, color: AppColors.mutedOf(context)),
               const SizedBox(height: 12),
               Text(
                 _isVideo
                     ? '拖拽文件夹/视频到主区域 |\n点击按钮浏览 | 输入路径添加'
                     : '拖拽文件夹/图片到主区域 |\n点击按钮浏览 | 输入路径添加',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
+                style:  TextStyle(
+                  color: AppColors.textSecondaryOf(context),
                   fontSize: 12,
                   height: 1.5,
                 ),
@@ -682,7 +682,7 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
         InkWell(
           onTap: () => appState.enterFolder(widget.folder.id!),
           child: Container(
-            color: selected ? AppColors.surface : null,
+            color: selected ? AppColors.surfaceOf(context) : null,
             padding: EdgeInsets.only(
               left: 6 + widget.depth * 14.0,
               right: 4,
@@ -705,7 +705,7 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
                                 ? Icons.expand_more
                                 : Icons.chevron_right,
                             size: 16,
-                            color: AppColors.muted,
+                            color: AppColors.mutedOf(context),
                           ),
                         ),
                 ),
@@ -723,7 +723,7 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                      color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                      color: selected ? AppColors.textPrimaryOf(context) : AppColors.textSecondaryOf(context),
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -735,8 +735,8 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
                   child: PopupMenuButton<String>(
                     padding: EdgeInsets.zero,
                     iconSize: 15,
-                    icon: const Icon(Icons.more_vert,
-                        size: 15, color: AppColors.muted),
+                    icon:  Icon(Icons.more_vert,
+                        size: 15, color: AppColors.mutedOf(context)),
                     tooltip: '文件夹操作',
                     onSelected: (v) => _onMenu(v, appState),
                     itemBuilder: (ctx) => [
@@ -864,14 +864,14 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
     return showDialog<bool?>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.panel,
-        title: const Text('同步操作', style: TextStyle(color: AppColors.textPrimary)),
+        backgroundColor: AppColors.panelOf(context),
+        title:  Text('同步操作', style: TextStyle(color: AppColors.textPrimaryOf(context))),
         content: Text(content,
-            style: const TextStyle(color: AppColors.textTertiary, fontSize: 13)),
+            style:  TextStyle(color: AppColors.textTertiaryOf(context), fontSize: 13)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消', style: TextStyle(color: AppColors.mutedLight)),
+            child:  Text('取消', style: TextStyle(color: AppColors.mutedLightOf(context))),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),

@@ -23,6 +23,7 @@ import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/folder_panel.dart';
 import 'package:mediashelf/widgets/image_detail.dart';
 import 'package:mediashelf/widgets/image_grid.dart';
+import 'package:mediashelf/widgets/tag_panel.dart';
 import 'package:mediashelf/widgets/works_grid.dart';
 
 class _FakePathProvider extends PathProviderPlatform {
@@ -429,5 +430,41 @@ void main() {
       expect(File(p.join(albumDir.path, name)).existsSync(), isTrue,
           reason: '移除记录不动磁盘文件');
     }
+  });
+
+  testWidgets('图片库左栏：文件夹 / 标签两个页签可切换', (tester) async {
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+
+    // 默认是文件夹页签
+    expect(find.byType(FolderPanel), findsOneWidget);
+    expect(find.byKey(const ValueKey('image-left-tab-folders')), findsOneWidget);
+    expect(find.byKey(const ValueKey('image-left-tab-tags')), findsOneWidget);
+
+    // 切到标签页签：换成标签面板，文件夹面板让位
+    await tester.tap(find.byKey(const ValueKey('image-left-tab-tags')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(find.byType(TagPanel), findsOneWidget, reason: '图片库也要有标签栏');
+    expect(find.byType(FolderPanel), findsNothing);
+    expect(find.byKey(const ValueKey('tag-expand-all')), findsOneWidget);
+
+    // 视频库同样有两个页签，且各自记住自己的选择
+    await switchLibrary(tester, kVideoLibrary);
+    expect(find.byType(FolderPanel), findsOneWidget, reason: '视频库默认文件夹页签');
+    await tester.tap(find.byKey(const ValueKey('video-left-tab-tags')));
+    await tester.pump();
+    await settleIo(tester);
+    expect(find.byType(TagPanel), findsOneWidget);
+
+    await switchLibrary(tester, kImageLibrary);
+    expect(find.byType(TagPanel), findsOneWidget,
+        reason: '回到图片库时保持上次选的标签页签');
+
+    // 音频库没有文件夹页签，左栏直接就是标签面板
+    await switchLibrary(tester, kAudioLibrary);
+    expect(find.byType(TagPanel), findsOneWidget);
+    expect(find.byKey(const ValueKey('audio-left-tab-tags')), findsNothing);
   });
 }

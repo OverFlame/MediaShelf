@@ -295,21 +295,45 @@ class _TagPanelState extends State<TagPanel> {
         return a.compareTo(b);
       });
 
-    // 表头、搜索框与「已选筛选」条跟标签列表一起滚动：
-    // 面板在矮窗口里被压扁时，固定行不会再顶出溢出条。
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(child: _tagHeader(appState)),
-        const SliverToBoxAdapter(child: Divider(height: 1)),
-        SliverToBoxAdapter(child: _tagSearchBar()),
-        if (activeIds.isNotEmpty)
-          SliverToBoxAdapter(child: _activeFilterBar(appState)),
-        SliverList.builder(
-          itemCount: sortedNs.length,
-          itemBuilder: (ctx, i) => _namespaceGroup(
-              sortedNs[i], namespaces[sortedNs[i]]!, appState, filter),
-        ),
-      ],
+    // 表头、搜索框与「已选筛选」条固定在顶上，只有标签列表滚动：
+    // 往下翻几十个标签时，筛选与添加入口不会跟着跑掉。
+    Widget pinnedBody() => Column(
+          children: [
+            _tagHeader(appState),
+            const Divider(height: 1),
+            _tagSearchBar(),
+            if (activeIds.isNotEmpty) _activeFilterBar(appState),
+            Expanded(
+              child: ListView.builder(
+                itemCount: sortedNs.length,
+                itemBuilder: (ctx, i) => _namespaceGroup(
+                    sortedNs[i], namespaces[sortedNs[i]]!, appState, filter),
+              ),
+            ),
+          ],
+        );
+
+    // 面板被矮窗口压到只剩几十像素（固定行 81 高）时退回整体滚动，
+    // 免得固定表头把面板顶出溢出条。
+    Widget scrollingBody() => CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _tagHeader(appState)),
+            const SliverToBoxAdapter(child: Divider(height: 1)),
+            SliverToBoxAdapter(child: _tagSearchBar()),
+            if (activeIds.isNotEmpty)
+              SliverToBoxAdapter(child: _activeFilterBar(appState)),
+            SliverList.builder(
+              itemCount: sortedNs.length,
+              itemBuilder: (ctx, i) => _namespaceGroup(
+                  sortedNs[i], namespaces[sortedNs[i]]!, appState, filter),
+            ),
+          ],
+        );
+
+    return LayoutBuilder(
+      builder: (ctx, constraints) => constraints.maxHeight >= 170
+          ? pinnedBody()
+          : scrollingBody(),
     );
   }
 
@@ -526,14 +550,14 @@ class _TagPanelState extends State<TagPanel> {
                 Icon(
                   collapsed ? Icons.chevron_right : Icons.expand_more,
                   size: 14,
-                  color: AppColors.mutedLighter,
+                  color: AppColors.mutedLighterOf(context),
                 ),
                 Text(
                   _nsLabel(ns),
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.mutedLighter,
+                    color: AppColors.mutedLighterOf(context),
                     letterSpacing: 0.5,
                   ),
                 ),
@@ -542,7 +566,7 @@ class _TagPanelState extends State<TagPanel> {
                   '${tags.length}',
                   style: TextStyle(
                     fontSize: 10,
-                    color: AppColors.mutedLighter,
+                    color: AppColors.mutedLighterOf(context),
                   ),
                 ),
                 if (collapsed && activeCount > 0) ...[

@@ -42,6 +42,9 @@ class _HomePageState extends State<HomePage> {
   /// 图片库右侧详情面板是否展开（窄屏改成推一个页面）
   bool _detailOpen = false;
 
+  /// 图片 / 视频库左栏当前显示「文件夹」还是「标签」
+  final Map<String, String> _leftTabs = {};
+
   bool get _isVisual => _library != kAudioLibrary;
 
   Future<void> _switchLibrary(String lib) async {
@@ -107,16 +110,68 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ── 左栏：音频库是标签面板，图片/视频库是文件夹面板 ──
-  Widget _buildLeftPanel() {
-    switch (_library) {
-      case kImageLibrary:
-        return const FolderPanel(library: kImageLibrary);
-      case kVideoLibrary:
-        return const FolderPanel(library: kVideoLibrary);
-      default:
-        return const TagPanel();
+  // ── 左栏：音频库是标签面板，图片/视频库是「文件夹 / 标签」两个页签 ──
+  Widget _buildLeftPanel({VoidCallback? onNavigate}) {
+    if (_library == kAudioLibrary) {
+      return TagPanel(onNavigate: onNavigate);
     }
+    final tab = _leftTabs[_library] ?? 'folders';
+    return Column(
+      children: [
+        _leftPanelTabs(tab, onNavigate),
+        const Divider(height: 1),
+        Expanded(
+          child: tab == 'tags'
+              ? TagPanel(filterOnly: true, onNavigate: onNavigate)
+              : FolderPanel(library: _library),
+        ),
+      ],
+    );
+  }
+
+  /// 左栏页签：文件夹（树）/ 标签（筛选与打标签都在这里）。
+  Widget _leftPanelTabs(String tab, VoidCallback? onNavigate) {
+    Widget item(String id, String label, IconData icon) {
+      final on = tab == id;
+      return Expanded(
+        child: InkWell(
+          key: ValueKey('$_library-left-tab-$id'),
+          onTap: () {
+            setState(() => _leftTabs[_library] = id);
+            onNavigate?.call();
+          },
+          child: Container(
+            height: 34,
+            color: on ? AppColors.surfaceOf(context) : null,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon,
+                    size: 14,
+                    color: on
+                        ? AppColors.accent
+                        : AppColors.mutedLightOf(context)),
+                const SizedBox(width: 4),
+                Text(label,
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+                        color: on
+                            ? AppColors.textPrimaryOf(context)
+                            : AppColors.mutedLightOf(context))),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        item('folders', '文件夹', Icons.folder_outlined),
+        item('tags', '标签', Icons.sell_outlined),
+      ],
+    );
   }
 
   Widget _buildDrawer() {
@@ -124,9 +179,8 @@ class _HomePageState extends State<HomePage> {
       width: 290,
       child: SafeArea(
         child: Builder(
-          builder: (drawerCtx) => _library == kAudioLibrary
-              ? TagPanel(onNavigate: () => Navigator.of(drawerCtx).pop())
-              : _buildLeftPanel(),
+          builder: (drawerCtx) => _buildLeftPanel(
+              onNavigate: () => Navigator.of(drawerCtx).pop()),
         ),
       ),
     );
@@ -583,24 +637,24 @@ class _AdvancedFilterBar extends StatelessWidget {
     final appState = context.watch<AppState>();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      color: AppColors.surface,
+      color: AppColors.surfaceOf(context),
       child: Row(
         children: [
-          const Text('高级筛选',
+           Text('高级筛选',
               style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.mutedLight)),
+                  color: AppColors.mutedLightOf(context))),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               appState.advancedFilter,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style:  TextStyle(
                   fontSize: 12,
                   fontFamily: 'monospace',
-                  color: AppColors.textPrimary),
+                  color: AppColors.textPrimaryOf(context)),
             ),
           ),
           IconButton(
@@ -631,12 +685,12 @@ class _SelectionBar extends StatelessWidget {
     final ids = appState.selectedIds;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      color: AppColors.surface,
+      color: AppColors.surfaceOf(context),
       child: Row(
         children: [
           Text('已选 ${ids.length} 项',
-              style: const TextStyle(
-                  fontSize: 12, color: AppColors.textPrimary)),
+              style:  TextStyle(
+                  fontSize: 12, color: AppColors.textPrimaryOf(context))),
           const Spacer(),
           TextButton.icon(
             key: const ValueKey('selection-select-all'),

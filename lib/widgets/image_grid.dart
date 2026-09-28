@@ -276,13 +276,13 @@ class _ImageGridState extends State<ImageGrid> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.folder_open, size: 64, color: AppColors.muted),
+           Icon(Icons.folder_open, size: 64, color: AppColors.mutedOf(context)),
           const SizedBox(height: 16),
           Text(_isVideo ? '这里还没有视频' : '这里还没有内容',
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 15, fontWeight: FontWeight.w500)),
+              style:  TextStyle(color: AppColors.textSecondaryOf(context), fontSize: 15, fontWeight: FontWeight.w500)),
           const SizedBox(height: 8),
           Text(_isVideo ? '添加文件夹或拖拽视频开始导入' : '添加文件夹或拖拽图片开始导入',
-              style: const TextStyle(color: AppColors.muted, fontSize: 12)),
+              style:  TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
           const SizedBox(height: 20),
           OutlinedButton.icon(
             key: const ValueKey('grid-empty-add-folder'),
@@ -291,7 +291,7 @@ class _ImageGridState extends State<ImageGrid> {
             label: const Text('添加文件夹'),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppColors.accent,
-              side: const BorderSide(color: AppColors.surfaceAlt),
+              side:  BorderSide(color: AppColors.surfaceAltOf(context)),
             ),
           ),
         ],
@@ -325,7 +325,7 @@ class _FolderTile extends StatelessWidget {
         onTap: () => appState.enterFolder(folder.id!),
         child: Container(
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: AppColors.surfaceOf(context),
             borderRadius: BorderRadius.circular(4),
           ),
           child: Padding(
@@ -347,7 +347,7 @@ class _FolderTile extends StatelessWidget {
                     folder.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
+                    style:  TextStyle(fontSize: 11, color: AppColors.textPrimaryOf(context)),
                   ),
                 ),
               ],
@@ -360,7 +360,7 @@ class _FolderTile extends StatelessWidget {
       dense: true,
       leading: const Icon(Icons.folder, size: 22, color: AppColors.warning),
       title: Text(folder.name,
-          style: const TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+          style:  TextStyle(fontSize: 13, color: AppColors.textPrimaryOf(context))),
       onTap: () => appState.enterFolder(folder.id!),
     );
   }
@@ -470,7 +470,7 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
         onDoubleTap: widget.onDoubleTap,
         onLongPress: widget.onLongPress,
         child: Container(
-          color: widget.selected ? AppColors.surface : null,
+          color: widget.selected ? AppColors.surfaceOf(context) : null,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
             children: [
@@ -490,12 +490,12 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
                     Text(_displayName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13, color: AppColors.textPrimary)),
+                        style:  TextStyle(fontSize: 13, color: AppColors.textPrimaryOf(context))),
                     if (widget.image.alias != null)
                       Text(widget.image.filename,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 10, color: AppColors.muted)),
+                          style:  TextStyle(fontSize: 10, color: AppColors.mutedOf(context))),
                   ],
                 ),
               ),
@@ -512,7 +512,7 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
       onLongPress: widget.onLongPress,
       child: Container(
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: AppColors.surfaceOf(context),
           borderRadius: BorderRadius.circular(4),
           border: Border.all(
             color: widget.selected ? AppColors.accent : Colors.transparent,
@@ -548,8 +548,8 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
   }
 
   Widget _placeholder() {
-    return const Center(
-      child: Icon(Icons.image_outlined, color: AppColors.muted, size: 32),
+    return  Center(
+      child: Icon(Icons.image_outlined, color: AppColors.mutedOf(context), size: 32),
     );
   }
 }
@@ -588,7 +588,7 @@ class _VideoTile extends StatelessWidget {
         onDoubleTap: onDoubleTap,
         onLongPress: onLongPress,
         child: Container(
-          color: selected ? AppColors.surface : null,
+          color: selected ? AppColors.surfaceOf(context) : null,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
             children: [
@@ -598,8 +598,8 @@ class _VideoTile extends StatelessWidget {
                 child: Text(_displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.textPrimary)),
+                    style:  TextStyle(
+                        fontSize: 13, color: AppColors.textPrimaryOf(context))),
               ),
               IconButton(
                 key: ValueKey('video-tags-${video.id}'),
@@ -624,7 +624,7 @@ class _VideoTile extends StatelessWidget {
       onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: AppColors.surfaceOf(context),
           borderRadius: BorderRadius.circular(4),
           border: Border.all(
             color: selected ? AppColors.accent : Colors.transparent,

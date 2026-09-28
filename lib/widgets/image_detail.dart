@@ -72,16 +72,16 @@ class _ImageDetailState extends State<ImageDetail> {
 
     if (image == null) {
       return Container(
-        color: AppColors.deep,
-        child: const Center(
+        color: AppColors.deepOf(context),
+        child:  Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.image_outlined, size: 48, color: AppColors.surfaceAlt),
+              Icon(Icons.image_outlined, size: 48, color: AppColors.surfaceAltOf(context)),
               SizedBox(height: 12),
               Text(
                 '选择一张图片以查看详情',
-                style: TextStyle(color: AppColors.mutedLight, fontSize: 12),
+                style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12),
               ),
             ],
           ),
@@ -90,7 +90,7 @@ class _ImageDetailState extends State<ImageDetail> {
     }
 
     return Container(
-      color: AppColors.deep,
+      color: AppColors.deepOf(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -146,7 +146,7 @@ class _ImageDetailState extends State<ImageDetail> {
 
   Widget _exifSection() {
     if (_exifLoading) {
-      return const Padding(
+      return  Padding(
         padding: EdgeInsets.all(8),
         child: Center(
           child: SizedBox(
@@ -154,7 +154,7 @@ class _ImageDetailState extends State<ImageDetail> {
             height: 14,
             child: CircularProgressIndicator(
               strokeWidth: 1.5,
-              color: AppColors.mutedLight,
+              color: AppColors.mutedLightOf(context),
             ),
           ),
         ),
@@ -163,21 +163,21 @@ class _ImageDetailState extends State<ImageDetail> {
 
     final e = _exifData;
     if (e == null || !e.hasData) {
-      return const Text(
+      return  Text(
         '无 EXIF 数据',
-        style: TextStyle(fontSize: 11, color: AppColors.muted),
+        style: TextStyle(fontSize: 11, color: AppColors.mutedOf(context)),
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+         Text(
           'EXIF 信息',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            color: AppColors.mutedLighter,
+            color: AppColors.mutedLighterOf(context),
             letterSpacing: 0.5,
           ),
         ),
@@ -212,15 +212,15 @@ class _ImageDetailState extends State<ImageDetail> {
             width: 64,
             child: Text(
               label,
-              style: const TextStyle(fontSize: 11, color: AppColors.mutedLight),
+              style:  TextStyle(fontSize: 11, color: AppColors.mutedLightOf(context)),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
+              style:  TextStyle(
                 fontSize: 11,
-                color: AppColors.textTertiary,
+                color: AppColors.textTertiaryOf(context),
               ),
             ),
           ),
@@ -236,15 +236,15 @@ class _ImageDetailState extends State<ImageDetail> {
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      color: AppColors.panel,
+      color: AppColors.panelOf(context),
       child: Row(
         children: [
-          const Text(
+           Text(
             '详情',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
+              color: AppColors.textSecondaryOf(context),
             ),
           ),
           const Spacer(),
@@ -265,12 +265,12 @@ class _ImageDetailState extends State<ImageDetail> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+         Text(
           '文件信息',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            color: AppColors.mutedLighter,
+            color: AppColors.mutedLighterOf(context),
             letterSpacing: 0.5,
           ),
         ),
@@ -321,31 +321,31 @@ class _ImageDetailState extends State<ImageDetail> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(
+           SizedBox(
             width: 64,
             child: Text(
               '别名',
-              style: TextStyle(fontSize: 11, color: AppColors.mutedLight),
+              style: TextStyle(fontSize: 11, color: AppColors.mutedLightOf(context)),
             ),
           ),
           Expanded(
             child: Text(
               image.alias?.isNotEmpty == true ? image.alias! : '—',
-              style: const TextStyle(
+              style:  TextStyle(
                 fontSize: 11,
-                color: AppColors.textPrimary,
+                color: AppColors.textPrimaryOf(context),
               ),
             ),
           ),
           GestureDetector(
             onTap: () => _editAlias(image),
             behavior: HitTestBehavior.opaque,
-            child: const Padding(
+            child:  Padding(
               padding: EdgeInsets.all(4),
               child: Icon(
                 Icons.edit_outlined,
                 size: 16,
-                color: AppColors.mutedLight,
+                color: AppColors.mutedLightOf(context),
               ),
             ),
           ),
@@ -383,7 +383,7 @@ class _ImageDetailState extends State<ImageDetail> {
             width: 64,
             child: Text(
               label,
-              style: const TextStyle(fontSize: 11, color: AppColors.mutedLight),
+              style:  TextStyle(fontSize: 11, color: AppColors.mutedLightOf(context)),
             ),
           ),
           Expanded(
@@ -391,7 +391,7 @@ class _ImageDetailState extends State<ImageDetail> {
               value,
               style: TextStyle(
                 fontSize: 11,
-                color: AppColors.textPrimary,
+                color: AppColors.textPrimaryOf(context),
                 fontFamily: mono ? 'monospace' : null,
               ),
             ),
@@ -417,7 +417,7 @@ class _ImageDetailState extends State<ImageDetail> {
   }
 
   Widget _divider() {
-    return const Divider(height: 1, color: AppColors.surface);
+    return  Divider(height: 1, color: AppColors.surfaceOf(context));
   }
 }
 
@@ -448,21 +448,21 @@ class _AliasDialogState extends State<_AliasDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppColors.panel,
-      title: const Text('设置别名', style: TextStyle(color: AppColors.textPrimary)),
+      backgroundColor: AppColors.panelOf(context),
+      title:  Text('设置别名', style: TextStyle(color: AppColors.textPrimaryOf(context))),
       content: TextField(
         controller: _ctrl,
         autofocus: true,
         decoration: const InputDecoration(hintText: '留空清除别名'),
-        style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+        style:  TextStyle(color: AppColors.textPrimaryOf(context), fontSize: 13),
         onSubmitted: (v) => Navigator.pop(context, v),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text(
+          child:  Text(
             '取消',
-            style: TextStyle(color: AppColors.mutedLight),
+            style: TextStyle(color: AppColors.mutedLightOf(context)),
           ),
         ),
         FilledButton(
@@ -539,7 +539,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: AppColors.surfaceOf(context),
           borderRadius: BorderRadius.circular(6),
         ),
         clipBehavior: Clip.antiAlias,
@@ -550,7 +550,7 @@ class _ImagePreviewState extends State<_ImagePreview> {
 
   Widget _buildContent() {
     if (_loading) {
-      return const SizedBox(
+      return  SizedBox(
         height: 180,
         child: Center(
           child: SizedBox(
@@ -558,14 +558,14 @@ class _ImagePreviewState extends State<_ImagePreview> {
             height: 18,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: AppColors.mutedLight,
+              color: AppColors.mutedLightOf(context),
             ),
           ),
         ),
       );
     }
     if (_failed || _previewPath == null) {
-      return const SizedBox(
+      return  SizedBox(
         height: 120,
         child: Center(
           child: Column(
@@ -574,12 +574,12 @@ class _ImagePreviewState extends State<_ImagePreview> {
               Icon(
                 Icons.broken_image_outlined,
                 size: 32,
-                color: AppColors.muted,
+                color: AppColors.mutedOf(context),
               ),
               SizedBox(height: 6),
               Text(
                 '预览不可用',
-                style: TextStyle(fontSize: 11, color: AppColors.mutedLight),
+                style: TextStyle(fontSize: 11, color: AppColors.mutedLightOf(context)),
               ),
             ],
           ),
@@ -592,13 +592,13 @@ class _ImagePreviewState extends State<_ImagePreview> {
         File(_previewPath!),
         width: double.infinity,
         fit: BoxFit.contain,
-        errorBuilder: (_, _, _) => const SizedBox(
+        errorBuilder: (_, _, _) =>  SizedBox(
           height: 120,
           child: Center(
             child: Icon(
               Icons.broken_image_outlined,
               size: 32,
-              color: AppColors.muted,
+              color: AppColors.mutedOf(context),
             ),
           ),
         ),
@@ -655,13 +655,13 @@ class _TagEditorState extends State<_TagEditor> {
     final appState = context.watch<AppState>();
 
     if (_loading) {
-      return const Center(
+      return  Center(
         child: SizedBox(
           width: 16,
           height: 16,
           child: CircularProgressIndicator(
             strokeWidth: 1.5,
-            color: AppColors.mutedLight,
+            color: AppColors.mutedLightOf(context),
           ),
         ),
       );
@@ -673,12 +673,12 @@ class _TagEditorState extends State<_TagEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+         Text(
           '标签',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w700,
-            color: AppColors.mutedLighter,
+            color: AppColors.mutedLighterOf(context),
             letterSpacing: 0.5,
           ),
         ),
@@ -735,9 +735,9 @@ class _TagEditorState extends State<_TagEditor> {
             }).toList(),
           )
         else
-          const Text(
+           Text(
             '未设置标签',
-            style: TextStyle(fontSize: 11, color: AppColors.muted),
+            style: TextStyle(fontSize: 11, color: AppColors.mutedOf(context)),
           ),
         const SizedBox(height: 10),
         // 添加标签按钮
@@ -747,17 +747,17 @@ class _TagEditorState extends State<_TagEditor> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
             decoration: BoxDecoration(
-              border: Border.all(color: AppColors.surfaceAlt),
+              border: Border.all(color: AppColors.surfaceAltOf(context)),
               borderRadius: BorderRadius.circular(4),
             ),
-            child: const Row(
+            child:  Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.add, size: 12, color: AppColors.mutedLight),
+                Icon(Icons.add, size: 12, color: AppColors.mutedLightOf(context)),
                 SizedBox(width: 4),
                 Text(
                   '添加标签',
-                  style: TextStyle(fontSize: 11, color: AppColors.mutedLight),
+                  style: TextStyle(fontSize: 11, color: AppColors.mutedLightOf(context)),
                 ),
               ],
             ),
@@ -786,10 +786,10 @@ class _TagEditorState extends State<_TagEditor> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             return AlertDialog(
-              backgroundColor: AppColors.panel,
-              title: const Text(
+              backgroundColor: AppColors.panelOf(context),
+              title:  Text(
                 '添加标签',
-                style: TextStyle(color: AppColors.textPrimary),
+                style: TextStyle(color: AppColors.textPrimaryOf(context)),
               ),
               content: SizedBox(
                 width: 280,
@@ -898,9 +898,9 @@ class _TagEditorState extends State<_TagEditor> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx),
-                  child: const Text(
+                  child:  Text(
                     '关闭',
-                    style: TextStyle(color: AppColors.mutedLight),
+                    style: TextStyle(color: AppColors.mutedLightOf(context)),
                   ),
                 ),
               ],

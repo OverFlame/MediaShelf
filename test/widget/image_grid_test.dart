@@ -18,6 +18,7 @@ import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/thumbnail_cache.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import 'package:mediashelf/theme/app_theme.dart';
 import 'package:mediashelf/widgets/image_grid.dart';
 
 /// 把 getApplicationSupportDirectory() 指到临时目录。
@@ -198,5 +199,40 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('这里还没有内容'), findsOneWidget);
     expect(find.text('添加文件夹或拖拽图片开始导入'), findsOneWidget);
+  });
+
+  Future<void> pumpGridWithTheme(WidgetTester tester, ThemeData theme) {
+    return tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<PlayerController>.value(value: player),
+          ChangeNotifierProvider<AppState>.value(value: app),
+        ],
+        child: MaterialApp(
+          theme: theme,
+          home: const Scaffold(body: ImageGrid()),
+        ),
+      ),
+    );
+  }
+
+  testWidgets('卡片底色跟着主题走：浅色下不再用深色 surface', (tester) async {
+    await enterAlbum(tester);
+    await pumpGridWithTheme(tester, AppColors.lightThemeData);
+    await settleIo(tester);
+
+    Color cardColor(int id) => ((tester.widget<Container>(find
+                .descendant(of: tile(id), matching: find.byType(Container))
+                .first))
+            .decoration as BoxDecoration)
+        .color!;
+
+    expect(cardColor(imageIds[0]), AppColors.surfaceLight,
+        reason: '浅色主题下卡片不能还是硬编码的深色 surface');
+
+    await pumpGridWithTheme(tester, AppColors.darkThemeData);
+    await settleIo(tester);
+    expect(cardColor(imageIds[0]), AppColors.surface,
+        reason: '深色主题保持原样');
   });
 }

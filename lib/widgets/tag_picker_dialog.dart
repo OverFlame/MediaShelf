@@ -60,10 +60,21 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
     super.dispose();
   }
 
+  /// 命名空间折叠状态的键：空命名空间用空串（与 AppState 一致）。
+  String _nsKey(String ns) => ns == '(无命名空间)' ? '' : ns;
+
+  String _nsLabel(String ns) {
+    if (ns == TagDao.kindNamespace) return '类型';
+    if (ns == TagDao.extNamespace) return '扩展名';
+    return ns;
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
     final q = _search.toLowerCase();
+    final searching = _search.trim().isNotEmpty;
+    // 联想搜索时忽略折叠状态，命中的标签一定看得见。
     final tags = appState.allTags
         .where((t) => !t.isRule)
         .where((t) =>
@@ -74,10 +85,24 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
             widget.filterTagIds == null || widget.filterTagIds!.contains(t.id))
         .toList();
 
+    // 按命名空间分组，标题可收起，与左侧标签栏一致。
+    final namespaces = <String, List<Tag>>{};
+    for (final t in tags) {
+      final ns = t.namespace.isEmpty ? '(无命名空间)' : t.namespace;
+      namespaces.putIfAbsent(ns, () => []).add(t);
+    }
+    final sortedNs = namespaces.keys.toList()
+      ..sort((a, b) {
+        if (a == '(无命名空间)') return 1;
+        if (b == '(无命名空间)') return -1;
+        return a.compareTo(b);
+      });
+
     return AlertDialog(
-      backgroundColor: AppColors.panel,
+      backgroundColor: AppColors.panelOf(context),
       title: Text(widget.title,
-          style: const TextStyle(color: AppColors.textPrimary, fontSize: 16)),
+          style: TextStyle(
+              color: AppColors.textPrimaryOf(context), fontSize: 16)),
       content: SizedBox(
         width: 320,
         height: 400,
@@ -87,7 +112,8 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
               controller: _searchCtrl,
               autofocus: true,
               onChanged: (v) => setState(() => _search = v),
-              style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
+              style: TextStyle(
+                  fontSize: 13, color: AppColors.textPrimaryOf(context)),
               decoration: const InputDecoration(
                 hintText: '搜索标签...',
                 isDense: true,
@@ -95,32 +121,29 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              // builder 只为可见行建 widget：一次性 toList 会为每个标签都建
-              // CheckboxListTile，标签多时打开对话框就卡。
-              child: ListView.builder(
-                itemCount: tags.length,
-                itemBuilder: (ctx, i) {
-                  final t = tags[i];
-                  final label = t.namespace.isEmpty || t.namespace == 'general'
-                      ? t.name
-                      : '${t.namespace}:${t.name}';
-                  return CheckboxListTile(
-                    dense: true,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    value: _selected.contains(t.id),
-                    onChanged: (v) => setState(() {
-                      if (v == true) {
-                        _selected.add(t.id!);
-                      } else {
-                        _selected.remove(t.id);
-                      }
-                    }),
-                    title: Text(label,
-                        style: const TextStyle(fontSize: 12)),
-                    secondary: _dot(t.color),
-                  );
-                },
-              ),
+              child: tags.isEmpty
+                  ? Center(
+                      child: Text('没有匹配的标签',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.mutedLightOf(context))))
+                  : ListView(
+                      children: [
+                        for (final ns in sortedNs) ...[
+                          _nsHeader(appState, ns, namespaces[ns]!, searching),
+                          if (searching ||
+                              !appState.isNamespaceCollapsed(_nsKey(ns)))
+                            for (final t in namespaces[ns]!) _tagRow(t),
+                        ],
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('已选 ${_selected.length}',
+                  style: TextStyle(
+                      fontSize: 11, color: AppColors.mutedLightOf(context))),
             ),
           ],
         ),
@@ -128,7 +151,8 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('取消', style: TextStyle(color: AppColors.mutedLight)),
+          child: Text('取消',
+              style: TextStyle(color: AppColors.mutedLightOf(context))),
         ),
         FilledButton(
           onPressed: () {
@@ -139,6 +163,70 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
           child: const Text('确定'),
         ),
       ],
+    );
+  }
+
+  /// 命名空间标题：点一下收起 / 展开这一组。
+  Widget _nsHeader(
+      AppState appState, String ns, List<Tag> group, bool searching) {
+    final key = _nsKey(ns);
+    final collapsed = !searching && appState.isNamespaceCollapsed(key);
+    final selectedHere =
+        group.where((t) => _selected.contains(t.id)).length;
+    return InkWell(
+      key: ValueKey('picker-ns-header-$key'),
+      onTap: searching
+          ? null
+          : () => setState(() => appState.toggleNamespaceCollapsed(key)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+        child: Row(
+          children: [
+            Icon(
+              collapsed ? Icons.chevron_right : Icons.expand_more,
+              size: 16,
+              color: AppColors.mutedLighterOf(context),
+            ),
+            const SizedBox(width: 2),
+            Text(_nsLabel(ns),
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondaryOf(context))),
+            const SizedBox(width: 6),
+            Text('${group.length}',
+                style: TextStyle(
+                    fontSize: 11, color: AppColors.mutedLighterOf(context))),
+            if (selectedHere > 0) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.check_circle,
+                  size: 12, color: AppColors.accent),
+              const SizedBox(width: 2),
+              Text('$selectedHere',
+                  style:
+                      const TextStyle(fontSize: 11, color: AppColors.accent)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tagRow(Tag t) {
+    return CheckboxListTile(
+      key: ValueKey('picker-tag-${t.id}'),
+      dense: true,
+      controlAffinity: ListTileControlAffinity.leading,
+      value: _selected.contains(t.id),
+      onChanged: (v) => setState(() {
+        if (v == true) {
+          _selected.add(t.id!);
+        } else {
+          _selected.remove(t.id);
+        }
+      }),
+      title: Text(t.name, style: const TextStyle(fontSize: 12)),
+      secondary: _dot(t.color),
     );
   }
 

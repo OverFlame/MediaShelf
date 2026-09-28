@@ -67,6 +67,10 @@ class AppColors {
   static const Color mutedC = Color(0xFF7A7F93);
   static const Color textPrimaryLight = Color(0xFF3C4050);
   static const Color textSecondaryLight = Color(0xFF6C7184);
+  static const Color textTertiaryLight = Color(0xFF5A6070);
+  static const Color mutedLighterC = Color(0xFF9AA0B2);
+  static const Color deepLight = Color(0xFFE2E4EC);
+  static const Color surfaceHighLight = Color(0xFFB8BDCB);
 
   /// 是否深色主题
   static bool isDark(BuildContext context) =>
@@ -85,6 +89,13 @@ class AppColors {
       isDark(c) ? textPrimary : textPrimaryLight;
   static Color textSecondaryOf(BuildContext c) =>
       isDark(c) ? textSecondary : textSecondaryLight;
+  static Color textTertiaryOf(BuildContext c) =>
+      isDark(c) ? textTertiary : textTertiaryLight;
+  static Color mutedLighterOf(BuildContext c) =>
+      isDark(c) ? mutedLighter : mutedLighterC;
+  static Color deepOf(BuildContext c) => isDark(c) ? deep : deepLight;
+  static Color surfaceHighOf(BuildContext c) =>
+      isDark(c) ? surfaceHigh : surfaceHighLight;
 
   static ThemeData get lightThemeData => _buildTheme(Brightness.light);
   static ThemeData get darkThemeData => _buildTheme(Brightness.dark);

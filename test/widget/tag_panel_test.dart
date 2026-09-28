@@ -238,4 +238,62 @@ void main() {
     await settleIo(tester);
     expect(app.allTags.any((t) => t.id == styleTag.id), isFalse);
   });
+
+  testWidgets('滚动标签列表时表头与搜索框不跟着移动', (tester) async {
+    await pumpPanel(tester);
+
+    // 展开扩展名这一大组，再把窗口压矮，列表才长到能滚
+    await tester.tap(find.byKey(const ValueKey('ns-header-ext')));
+    await tester.pumpAndSettle();
+    tester.view.physicalSize = const Size(900, 700);
+    await tester.pumpAndSettle();
+
+    final header = find.byKey(const ValueKey('tag-expand-all'));
+    final search = find.byType(TextField);
+    final extHeader = find.byKey(const ValueKey('ns-header-ext'));
+    final pos = tester
+        .state<ScrollableState>(find.descendant(
+            of: find.byType(ListView), matching: find.byType(Scrollable)))
+        .position;
+
+    final headerBefore = tester.getTopLeft(header);
+    final searchBefore = tester.getTopLeft(search);
+    final extBefore = tester.getTopLeft(extHeader);
+
+    // 直接挪滚动位置，比手势更确定；600 之内扩展名组还在视野里
+    pos.jumpTo(600);
+    await tester.pumpAndSettle();
+
+    expect(pos.pixels, 600, reason: '列表确实滚了');
+    expect(tester.getTopLeft(extHeader).dy, lessThan(extBefore.dy + 1),
+        reason: '列表内容整体上移');
+    expect(tester.getTopLeft(header), headerBefore, reason: '筛选/添加栏固定在顶上');
+    expect(tester.getTopLeft(search), searchBefore, reason: '搜索框也不跟着滚');
+  });
+
+  testWidgets('面板被压到几十像素高时退回整体滚动，不溢出', (tester) async {
+    // 800x600 的窗口里音频左栏只剩 ~86 高，固定表头会顶出溢出条。
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: app,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [SizedBox(height: 86, child: TagPanel(filterOnly: true))],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    // 矮窗口里表头与搜索框仍在，只是跟着列表一起滚
+    expect(find.byKey(const ValueKey('tag-expand-all')), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+  });
 }

@@ -70,7 +70,7 @@ class WorksGrid extends StatelessWidget {
                 label: const Text('添加文件夹'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.accent,
-                  side: const BorderSide(color: AppColors.surfaceAlt),
+                  side:  BorderSide(color: AppColors.surfaceAltOf(context)),
                 ),
               ),
             ],
