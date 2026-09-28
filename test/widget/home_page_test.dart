@@ -74,6 +74,8 @@ void main() {
   late int albumFolderId;
   late List<int> imageIds;
   late int videoWorkId;
+  late int videoFolderId;
+  late int videoId;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -93,9 +95,22 @@ void main() {
     // 音频作品（切回音频库时要能看到它）
     audioWorkId = (await WorkDao(db).create('音频库', library: 'audio')).id!;
 
-    // 视频作品 + 一个视频虚拟文件夹（文件夹面板才有「全部视频」这一层）
+    // 视频作品 + 一个带路径的视频虚拟文件夹 + 一个真实视频文件
     videoWorkId = (await WorkDao(db).create('视频库', library: 'video')).id!;
-    await FolderDao(db).create('片库', workId: videoWorkId, library: 'video');
+    final filmDir = await Directory(p.join(tmp.path, 'media', '片库'))
+        .create(recursive: true);
+    final clip = File(p.join(filmDir.path, 'a.mp4'));
+    await clip.writeAsBytes(const <int>[0, 0, 0, 24]);
+    final film = await FolderDao(db)
+        .create('片库', workId: videoWorkId, library: 'video');
+    videoFolderId = film.id!;
+    await FolderDao(db).addPath(videoFolderId, filmDir.path);
+    videoId = await MediaDao(db).insertRow({
+      'path': clip.path,
+      'media_type': 'video',
+      'filename': 'a.mp4',
+      'added_at': 2000,
+    });
 
     // 图片作品 + 一个带路径的虚拟文件夹 + 两张真实图片
     imageWorkId = (await WorkDao(db).create('图片库', library: 'image')).id!;
@@ -189,7 +204,8 @@ void main() {
     for (final id in imageIds) {
       expect(tile(id), findsOneWidget, reason: '作品层就该看到作品里的图片');
     }
-    expect(find.byKey(ValueKey('folder-tile-$albumFolderId')), findsOneWidget);
+    expect(find.byKey(ValueKey('folder-tile-$albumFolderId')), findsNothing,
+        reason: '作品层直接平铺媒体，入口文件夹不再多画一层同名磁贴');
   });
 
   testWidgets('双击磁贴后 showViewer 为真', (tester) async {
@@ -242,8 +258,8 @@ void main() {
     expect(find.byType(WorksGrid), findsOneWidget);
     expect(find.byType(FolderPanel), findsNothing);
     expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsOneWidget);
-    // 音频库沿用「列出全部作品」的既有行为
-    expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsOneWidget);
+    // 三个库各看各的：音频库不再混进图片、视频作品
+    expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsNothing);
   });
 
   testWidgets('视频库：文件夹面板与视频作品网格', (tester) async {
@@ -254,6 +270,30 @@ void main() {
     expect(find.text('全部视频'), findsOneWidget);
     expect(find.byKey(ValueKey('work-card-$videoWorkId')), findsOneWidget);
     expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsNothing);
+  });
+
+  testWidgets('视频库：作品层平铺视频，进虚拟文件夹后也能列出本层视频', (tester) async {
+    await pumpHome(tester);
+    await switchLibrary(tester, kVideoLibrary);
+
+    await tester.tap(find.byKey(ValueKey('work-card-$videoWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(find.byType(ImageGrid), findsOneWidget);
+    expect(find.byKey(ValueKey('video-tile-$videoId')), findsOneWidget,
+        reason: '作品层直接平铺作品里的视频');
+    expect(find.byKey(ValueKey('folder-tile-$videoFolderId')), findsNothing,
+        reason: '入口文件夹与作品同名，不再多画一层磁贴');
+
+    // 左栏树进虚拟文件夹：视频库也要按 MediaType.video 查本层媒体
+    await tester.tap(find.byKey(ValueKey('folder-$videoFolderId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(app.currentFolderId, videoFolderId);
+    expect(find.byKey(ValueKey('video-tile-$videoId')), findsOneWidget,
+        reason: '文件夹层要能列出本层视频，而不是走曲目查询');
   });
 
   testWidgets('图片库空态出现「添加文件夹」入口，点击不抛异常', (tester) async {

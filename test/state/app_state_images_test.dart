@@ -121,6 +121,47 @@ void main() {
     expect(app.totalCount, 0);
   });
 
+  test('视频库文件夹层按视频类型装填，默认排除筛选不会把视频滤掉', () async {
+    final videoDir =
+        await Directory(p.join(tmp.path, 'video')).create(recursive: true);
+    final videoWork = await workDao.create('片库', library: 'video');
+    final videoFolder = await folderDao.create('片库',
+        workId: videoWork.id, library: 'video');
+    await folderDao.addPath(videoFolder.id!, videoDir.path);
+    const rows = <(String, MediaType)>[
+      ('a.mp4', MediaType.video),
+      ('b.jpg', MediaType.image),
+    ];
+    for (final (name, type) in rows) {
+      await mediaDao.insertRow(MediaItem(
+        path: p.join(videoDir.path, name),
+        filename: name,
+        mediaType: type,
+        addedAt: 0,
+      ).toMap());
+    }
+
+    final app = AppState(player: PlayerController());
+    // init() 会装标签并套用「字幕」默认排除筛选，筛选路径也要按视频类型查
+    await app.init();
+    await app.enterWork(videoWork.id!);
+    expect(app.isVisualLibrary, isTrue);
+    await app.enterFolder(videoFolder.id!);
+    await settle();
+
+    expect(app.images.map((i) => i.filename).toList(), ['a.mp4'],
+        reason: '视频库只平铺视频；同一目录里的图片行不进来');
+    expect(app.tracks, isEmpty, reason: '视频上下文不应填曲目列表');
+
+    // 搜索同样按视频类型查：以前视频库的搜索落在曲目查询上，永远搜不到
+    app.setSearchQuery('a.mp4');
+    await settle();
+    expect(app.images.map((i) => i.filename).toList(), ['a.mp4'],
+        reason: '视频库搜索走 media 表的视频类型');
+    app.setSearchQuery('');
+    await settle();
+  });
+
   test('图片标签筛选（AND）只保留命中图片', () async {
     final (work, folder) = await makeImageLibrary();
     final a = await addImage('a.jpg');

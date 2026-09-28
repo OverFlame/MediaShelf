@@ -371,11 +371,26 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 图片列表 / 选中 / 查看器 ═══════════════
 
-  /// 当前浏览上下文是否属于图片库。
+  /// 当前浏览上下文的库标识：`audio` / `image` / `video`，没有上下文时为 null。
+  String? get currentLibrary =>
+      _currentWork?.library ?? _currentFolder?.library;
+
+  /// 当前是否在图片库。
+  bool get isImageLibrary => currentLibrary == 'image';
+
+  /// 当前是否在视觉库（图片或视频）。
   ///
-  /// [_loadCenter] 据此决定填 [_images] 还是 [_tracks]。
-  bool get isImageLibrary =>
-      _currentWork?.library == 'image' || _currentFolder?.library == 'image';
+  /// 视觉库的媒体行在 `media` 表里，音频库走 `tracks` 视图；[_loadCenter] 据此
+  /// 决定填 [_images] 还是 [_tracks]。视频与图片在这一层同构，区别只在查询用的
+  /// [MediaType]。
+  bool get isVisualLibrary {
+    final lib = currentLibrary;
+    return lib == 'image' || lib == 'video';
+  }
+
+  /// 视觉库查询该用的媒体类型；音频上下文返回图片类型，调用方只在视觉分支用它。
+  MediaType get _visualMediaType =>
+      currentLibrary == 'video' ? MediaType.video : MediaType.image;
 
   /// 单选（普通点击）
   void selectImage(int? id) {
@@ -483,14 +498,17 @@ class AppState extends ChangeNotifier {
 
   /// 加载中间栏。[gen] 是发起时的 [refresh] 代际。
   ///
-  /// 按当前作品/目录的库归属分流：图片库填 [_images]，音频库填 [_tracks]。
+  /// 按当前作品/目录的库归属分流：视觉库（图片/视频）填 [_images]，音频库填 [_tracks]。
   Future<void> _loadCenter(int gen) async {
     _loading = true;
     notifyListeners();
     try {
       final search = _searchQuery.trim();
       final filterActive = hasAdvancedFilter || _tagFilter.active;
-      final imageLib = isImageLibrary;
+      final visual = isVisualLibrary;
+      final visualType = _visualMediaType;
+      // 标签筛选要按当前库的媒体类型查：视频行不是音频，落进曲目集合就全被滤掉。
+      final matchType = visual ? visualType : MediaType.audio;
 
       List<VirtualFolder> folders;
       List<TrackItem> tracks;
@@ -498,12 +516,11 @@ class AppState extends ChangeNotifier {
 
       if (search.isNotEmpty) {
         folders = const [];
-        if (imageLib) {
+        if (visual) {
           tracks = const [];
-          var list =
-              await _mediaDao.searchByName(search, type: MediaType.image);
+          var list = await _mediaDao.searchByName(search, type: visualType);
           if (filterActive) {
-            final ids = await _computeMatchingIds(image: true);
+            final ids = await _computeMatchingIds(matchType);
             list =
                 list.where((i) => i.id != null && ids.contains(i.id)).toList();
           }
@@ -512,7 +529,7 @@ class AppState extends ChangeNotifier {
           images = const [];
           var list = await _trackDao.searchByName(search);
           if (filterActive) {
-            final ids = await _computeMatchingIds();
+            final ids = await _computeMatchingIds(matchType);
             list = list.where((t) => ids.contains(t.id)).toList();
           }
           tracks = list;
@@ -520,12 +537,12 @@ class AppState extends ChangeNotifier {
       } else {
         if (_currentWork != null && _currentFolderId != null) {
           folders = await _folderDao.listChildren(_currentFolderId!);
-          if (imageLib) {
+          if (visual) {
             tracks = const [];
             images = _currentFolderPath == null
                 ? const <MediaItem>[]
                 : await _mediaDao.queryDirectInDir(_currentFolderPath!,
-                    type: MediaType.image);
+                    type: visualType);
           } else {
             images = const [];
             tracks = _currentFolderPath == null
@@ -533,8 +550,12 @@ class AppState extends ChangeNotifier {
                 : await _trackDao.queryDirectInDir(_currentFolderPath!);
           }
         } else if (_currentWork != null) {
-          // 严格按文件夹树：作品层只显示入口子文件夹，不直接平铺媒体
-          folders = await _folderDao.listRootsByWork(_currentWork!.id!);
+          // 视觉库的作品层只平铺媒体，媒体由 ImageGrid 自己按作品查（入口文件夹
+          // 与作品同名，再画一层磁贴就是同一个名字出现两次）；音频库保留入口
+          // 文件夹，它是进入专辑/歌单的入口。
+          folders = visual
+              ? const []
+              : await _folderDao.listRootsByWork(_currentWork!.id!);
           tracks = const [];
           images = const [];
         } else {
@@ -544,15 +565,15 @@ class AppState extends ChangeNotifier {
         }
 
         if (filterActive) {
-          final ids = await _computeMatchingIds(image: imageLib);
-          if (imageLib) {
+          final ids = await _computeMatchingIds(matchType);
+          if (visual) {
             images = images
                 .where((i) => i.id != null && ids.contains(i.id))
                 .toList();
           } else {
             tracks = tracks.where((t) => ids.contains(t.id)).toList();
           }
-          folders = await _filterFolders(folders, ids, image: imageLib);
+          folders = await _filterFolders(folders, ids, matchType);
         }
       }
 
@@ -604,21 +625,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 当前筛选下命中的媒体 id 集合。[image] 为真时按图片库查询。
-  Future<Set<int>> _computeMatchingIds({bool image = false}) async {
+  /// 当前筛选下命中的媒体 id 集合。[type] 是当前库的媒体类型：音频库用
+  /// `MediaType.audio`，图片库与视频库分别用各自的类型。
+  Future<Set<int>> _computeMatchingIds(MediaType type) async {
     if (hasAdvancedFilter) {
-      return image
-          ? _tagDao.getImageIdsByExpression(_advancedFilter, _allTags)
-          : _tagDao.getTrackIdsByExpression(_advancedFilter, _allTags);
+      return _tagDao.getIdsByExpression(type, _advancedFilter, _allTags);
     }
-    if (image) {
-      return _tagDao.getImageIdsByTags(
-        andTagIds: _tagFilter.andTagIds,
-        orTagIds: _tagFilter.orTagIds,
-        notTagIds: _tagFilter.notTagIds,
-      );
-    }
-    return _tagDao.getTrackIdsByTags(
+    return _tagDao.getIdsByTags(
+      type,
       andTagIds: _tagFilter.andTagIds,
       orTagIds: _tagFilter.orTagIds,
       notTagIds: _tagFilter.notTagIds,
@@ -626,14 +640,13 @@ class AppState extends ChangeNotifier {
   }
 
   Future<List<VirtualFolder>> _filterFolders(
-      List<VirtualFolder> folders, Set<int> matchingIds,
-      {bool image = false}) async {
+      List<VirtualFolder> folders, Set<int> matchingIds, MediaType type) async {
     if (folders.isEmpty) return [];
     final matchingPaths = matchingIds.isEmpty
         ? <String>[]
-        : image
-            ? await _mediaDao.pathsByIds(matchingIds, type: MediaType.image)
-            : await _trackDao.pathsByIds(matchingIds);
+        : type == MediaType.audio
+            ? await _trackDao.pathsByIds(matchingIds)
+            : await _mediaDao.pathsByIds(matchingIds, type: type);
 
     Map<int, List<Tag>> folderTags = {};
     if (!hasAdvancedFilter && _tagFilter.active) {

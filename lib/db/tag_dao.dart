@@ -228,13 +228,25 @@ class TagDao {
   Future<Map<int, List<Tag>>> getTagsForImages(List<int> imageIds) =>
       getTagsForTracks(imageIds);
 
+  /// 按标签 AND/OR/NOT 筛选指定媒体类型，返回匹配的 media id 集合。
+  ///
+  /// 音频与图片那两个便捷入口只是固定类型的包装；视频等其它类型用本方法。
+  Future<Set<int>> getIdsByTags(
+    MediaType type, {
+    List<int> andTagIds = const [],
+    List<int> orTagIds = const [],
+    List<int> notTagIds = const [],
+  }) =>
+      _getIdsByTags(type,
+          andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
+
   /// 按标签 AND/OR/NOT 筛选曲目，返回匹配的曲目 id 集合
   Future<Set<int>> getTrackIdsByTags({
     List<int> andTagIds = const [],
     List<int> orTagIds = const [],
     List<int> notTagIds = const [],
   }) =>
-      _getIdsByTags(MediaType.audio,
+      getIdsByTags(MediaType.audio,
           andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
 
   /// 按标签 AND/OR/NOT 筛选图片，返回匹配的图片 id 集合
@@ -243,7 +255,7 @@ class TagDao {
     List<int> orTagIds = const [],
     List<int> notTagIds = const [],
   }) =>
-      _getIdsByTags(MediaType.image,
+      getIdsByTags(MediaType.image,
           andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
 
   Future<Set<int>> _getIdsByTags(
@@ -301,15 +313,20 @@ class TagDao {
     return rows.map((r) => r['id'] as int).toSet();
   }
 
+  /// 按布尔表达式筛选指定媒体类型，返回匹配的 media id 集合。
+  Future<Set<int>> getIdsByExpression(
+          MediaType type, String expression, List<Tag> allTags) =>
+      _getIdsByExpression(type, expression, allTags);
+
   /// 按布尔表达式筛选曲目
   Future<Set<int>> getTrackIdsByExpression(
           String expression, List<Tag> allTags) =>
-      _getIdsByExpression(MediaType.audio, expression, allTags);
+      getIdsByExpression(MediaType.audio, expression, allTags);
 
   /// 按布尔表达式筛选图片
   Future<Set<int>> getImageIdsByExpression(
           String expression, List<Tag> allTags) =>
-      _getIdsByExpression(MediaType.image, expression, allTags);
+      getIdsByExpression(MediaType.image, expression, allTags);
 
   Future<Set<int>> _getIdsByExpression(
       MediaType type, String expression, List<Tag> allTags) async {

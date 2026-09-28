@@ -144,7 +144,7 @@ class _HomePageState extends State<HomePage> {
               children: [
                 if (appState.recentTracks.isNotEmpty)
                   _RecentBar(appState: appState),
-                const Expanded(child: WorksGrid()),
+                const Expanded(child: WorksGrid(library: 'audio')),
               ],
             )
           : const FolderBrowser();
@@ -205,7 +205,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _searchField(AppState appState) {
-    final hint = _library == kImageLibrary ? '搜索图片...' : '搜索曲目...';
+    final hint = switch (_library) {
+      kImageLibrary => '搜索图片...',
+      kVideoLibrary => '搜索视频...',
+      _ => '搜索曲目...',
+    };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: TextField(
