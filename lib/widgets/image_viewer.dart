@@ -880,8 +880,10 @@ class _ImageViewerState extends State<ImageViewer> {
 
   Widget _buildTopBar(MediaItem img) {
     // 安卓边到边显示时状态栏会压在顶栏上，按钮点不到：把状态栏高度让出来，
-    // 渐变仍铺到屏幕最顶端。
-    final topInset = MediaQuery.viewPaddingOf(context).top;
+    // 渐变仍铺到屏幕最顶端。带曲面侧边的手机左右边缘也会吃掉触摸区，
+    // 所以横向同样让出系统窗体内边距（关闭按钮就在最右边）。
+    final viewPadding = MediaQuery.viewPaddingOf(context);
+    final topInset = viewPadding.top;
     return Positioned(
       key: const ValueKey('viewer-top-bar'),
       top: 0,
@@ -900,7 +902,11 @@ class _ImageViewerState extends State<ImageViewer> {
           ),
         ),
         child: Padding(
-          padding: EdgeInsets.only(left: 12, right: 12, top: topInset),
+          padding: EdgeInsets.only(
+            left: 12 + viewPadding.left,
+            right: 12 + viewPadding.right,
+            top: topInset,
+          ),
           child: Row(
             children: [
               Expanded(
@@ -1062,8 +1068,10 @@ class _ImageViewerState extends State<ImageViewer> {
   Widget _buildBottomBar(bool isFirst, bool isLast) {
     final rtl = _direction == ReadingDirection.rtl;
     final leftIsAdvance = rtl;
-    // 安卓手势条同理：底部留出系统导航条的高度，否则按钮点不到。
-    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    // 安卓手势条同理：底部留出系统导航条的高度，否则按钮点不到；
+    // 横向也让出窗体内边距，曲面屏上左右两个翻页按钮才不会贴到边缘。
+    final viewPadding = MediaQuery.viewPaddingOf(context);
+    final bottomInset = viewPadding.bottom;
 
     return Positioned(
       key: const ValueKey('viewer-bottom-bar'),
@@ -1072,7 +1080,11 @@ class _ImageViewerState extends State<ImageViewer> {
       right: 0,
       child: Container(
         height: 52 + bottomInset,
-        padding: EdgeInsets.only(bottom: bottomInset),
+        padding: EdgeInsets.only(
+          bottom: bottomInset,
+          left: viewPadding.left,
+          right: viewPadding.right,
+        ),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,

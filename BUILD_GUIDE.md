@@ -556,6 +556,21 @@ lib/db/media_dao.dart 定义 MediaType 与 MediaItem。
 字段与 media 表一一对应。
 可参考 AudioShelf/lib/db/track_dao.dart:5 与 PictureViewer2/lib/db/image_dao.dart:6。
 
+### 7.6 缩略图补齐（2026-09-28 补）
+
+缩略图默认 300 像素，落在缓存目录，按原图路径加尺寸哈希命名（lib/services/thumbnail_cache.dart:126）。
+导入时不生成缩略图：几百张原图同步解码会把导入卡住。
+导入一结束，AppState 把新路径交给后台队列（lib/state/app_state.dart:1561 的 `backfillThumbnails`）。
+
+| 规则 | 内容 |
+| --- | --- |
+| 去重 | 同一路径只排队一次 |
+| 并发 | 逐张串行；已有的文件跳过 |
+| 通知 | 每补 8 张 `thumbEpoch` 加一，卡片据此重画 |
+| 触发 | 导入后自动，以及每次进入新的库 / 文件夹 / 作品上下文（lib/widgets/image_grid.dart:207） |
+
+老库的图在磁盘上没有缩略图，进入上下文时补一次，不必重启应用。
+
 ## 8 迁移方案
 
 ### 8.1 输入
@@ -990,6 +1005,18 @@ flutter build apk --release
 
 布局常量先集中在 lib/theme/app_theme.dart。
 
+### 12.1 窄窗与安全区（2026-09-28 补）
+
+界面在最窄的可视宽度下也不能溢出。三条口径：
+
+| 界面 | 口径 | 位置 |
+| --- | --- | --- |
+| 视觉库工具栏 | 中间列小于 500 时走紧凑样式，图标按钮收到 36 见方；小于 220 时排序收进「更多」，按钮收到 30 见方 | lib/pages/home_page.dart:393 |
+| 多选栏 | 宽度小于 520 时改成图标按钮；小于 300 时收到 30 见方、文字只留数量，动作区可横向滚动 | lib/pages/home_page.dart:806 |
+| 图片查看器 | 顶栏与底栏让开 viewPadding 的左右与上下。曲面侧边屏上「关闭」与翻页按钮不贴边 | lib/widgets/image_viewer.dart:885 |
+
+回「作品」层用面包屑上的按钮，位置见 lib/pages/home_page.dart:696。
+
 ## 13 工程约定
 
 | 类别 | 约定 |
@@ -1020,6 +1047,9 @@ flutter build apk --release
 | 两边的数据根不同，迁移前先读 .datadir 指针文件 | 第 8.1 节 |
 | Android 外部播放器不能用 file:// URI | 第 9.5 节 |
 | 文件删除时的曲目清理逻辑依赖 tracks 表名，合并后要跟着改 | AudioShelf/lib/state/app_state.dart:534 |
+| Material 3 图标按钮默认 48 见方触摸区，手机小磁贴只有 80 到 90 像素 | lib/widgets/image_grid.dart:681；⋮ 会吃掉整张磁贴的单击与长按，收到 26 见方并关掉 tapTargetSize |
+| `pumpAndSettle` 遇到 indeterminate 进度圈会一直等到超时 | 详情面板要解码真图，用 `runAsync` 加 `pump` 循环，见 test/widget/home_page_test.dart |
+| 本机 `dart format` 是 Dart 3.13 的 tall 样式，跑一次会重排整个仓库 | 清理办法见 PROJECTLOG 的 `1.4.0+21` 条目 |
 
 ## 15 未决项
 
@@ -1241,10 +1271,10 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 ### 18.6 三个导入入口
 
 - 图片入口的组织方式是系列与卷，见第 20 节。音频入口同样是系列与卷，见第 19 节。
-- 视频入口的组织方式是剧集树，形状为总剧集文件夹（可无）、一季一个文件夹、一集一个文件。
-- 视频剧集复用 works 表加 library 列，直接沿用 setWorkMany、未归类与 listRootsByWork 一整套。
+- 视频入口的组织方式是剧集树，形状为总剧集文件夹（可无）、一季一个文件夹、一集一个文件。视频剧集复用 works 表加 library 列，直接沿用 setWorkMany、未归类与 listRootsByWork 一整套。
 - 建树按入口类型判空，落库不判空。今天 `if (scanned.audioPaths.isEmpty) return;`（lib/services/import_service.dart:68）会连带丢掉图片，要拆成两层。
 - 全库类型视图：图片、音频、视频三种模式各提供一个不依赖库树的全部条目入口，按物理目录分组。这样从没走图片入口导入的图片也能看见。
+- 批量导入：图片库与视频库各提供「每个子文件夹一个作品」的入口，一次选父目录。含媒体的直接子目录各建一个作品，名字取子目录名。子目录都不含该库媒体时退回单目录导入。音频库不用这个入口，系列与卷见第 19 节。位置：lib/state/app_state.dart:1911、lib/widgets/folder_panel.dart:469、lib/widgets/works_grid.dart:132。
 
 ### 18.7 落地顺序
 
@@ -1422,6 +1452,7 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 - 另加「恢复默认」，清空 `cover_crop`。
 - 网格卡片按卡片比例裁剪，详情页显示全图。
 - 自动候选出来的封面同样可裁。
+- 手动指定先在软件里挑，不先开系统选图：作品封面列作品里的图片，卷封面列本文件夹（含子文件夹）里的图片。手机上少点好几层。系统选图留作出口。位置：lib/widgets/cover_pick.dart:95、lib/widgets/dialogs.dart:65、lib/widgets/volume_cover_dialog.dart:106。
 
 ### 21.5 落点
 

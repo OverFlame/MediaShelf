@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -45,6 +46,9 @@ class _ImageGridState extends State<ImageGrid> {
   String? _loadedKey;
   int _loadedRevision = -1;
 
+  /// 已经在哪个上下文触发过后台缩略图补齐（`<库>:<文件夹id>:<作品id>`）
+  String? _warmedThumbKey;
+
   bool get _isVideo => widget.library == 'video';
 
   MediaType get _mediaType => _isVideo ? MediaType.video : MediaType.image;
@@ -82,6 +86,42 @@ class _ImageGridState extends State<ImageGrid> {
     );
     if (tags == null) return;
     await appState.setMediaTags(id, tags);
+  }
+
+  /// 单条媒体的标签增删（图片/视频磁贴右上角 ⋮ 菜单）。
+  ///
+  /// [add] 为 false 时先取这条媒体已有的标签收窄候选，免得让用户从全库标签里
+  /// 挑一个根本不在这张图上的来「移除」。
+  Future<void> _editMediaTags(
+    AppState appState,
+    MediaItem item, {
+    required bool add,
+  }) async {
+    final id = item.id;
+    if (id == null || !mounted) return;
+    final what = _isVideo ? '这个视频' : '这张图';
+    Set<int>? current;
+    if (!add) {
+      current = await appState.getTagIdsOnMedia([id]);
+      if (!mounted) return;
+      if (current.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$what还没有标签')));
+        return;
+      }
+    }
+    final tags = await showTagPickerDialog(
+      context,
+      title: add ? '添加标签' : '移除标签',
+      filterTagIds: current,
+    );
+    if (tags == null || tags.isEmpty || !mounted) return;
+    if (add) {
+      await appState.addTagsToMedia([id], tags);
+    } else {
+      await appState.removeTagsFromMedia([id], tags);
+    }
   }
 
   /// 作品层的媒体行自己查：`FolderDao.getPathsByWork` 拿作品的目录，
@@ -160,14 +200,20 @@ class _ImageGridState extends State<ImageGrid> {
         ? appState.images
         : (_workItems ?? const <MediaItem>[]);
     // 作品层这里自己查媒体行，AppState 那一层只有文件夹：把当前真正画出来的
-    // 媒体 id 登记回去，「全选」「Shift 区间选」才有据可依。
-    final visibleIds =
-        images.map((i) => i.id).whereType<int>().toList(growable: false);
+    // 媒体行登记回去，「全选」「Shift 区间选」和图片详情才有据可依。
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) appState.reportVisibleMediaIds(visibleIds);
+      if (mounted) appState.reportVisibleMedia(images);
     });
-    final loading = appState.loading || (key != null && _workItems == null);
+    // 老库（1.3.0 之前导入的图片）磁盘上没有缩略图：进到某个上下文时补一次，
+    // 免得用户以为「必须重启才有图」。按上下文只触发一次，生成走 AppState 的
+    // 后台队列，卡片自己也会按需生成，两边都命中磁盘则直接返回。
+    final warmKey = '${widget.library}:${appState.currentFolderId}:${work?.id}';
+    if (images.isNotEmpty && _warmedThumbKey != warmKey) {
+      _warmedThumbKey = warmKey;
+      unawaited(appState.backfillThumbnails(images.map((i) => i.path)));
+    }
 
+    final loading = appState.loading || (key != null && _workItems == null);
     if (!loading && folders.isEmpty && images.isEmpty) {
       return _buildEmptyState(context);
     }
@@ -216,6 +262,7 @@ class _ImageGridState extends State<ImageGrid> {
             onLongPress: () => appState.enterVisualSelectionMode(img.id),
             onPlayExternal: () => _playExternal(appState),
             onEditTags: () => _editVideoTags(appState, img),
+            onRemoveTags: () => _editMediaTags(appState, img, add: false),
           );
         }
         return _ThumbnailCard(
@@ -227,6 +274,8 @@ class _ImageGridState extends State<ImageGrid> {
           onLongPress: () => appState.enterVisualSelectionMode(img.id),
           compact: true,
           cacheEpoch: appState.thumbEpoch,
+          onEditTags: () => _editMediaTags(appState, img, add: true),
+          onRemoveTags: () => _editMediaTags(appState, img, add: false),
         );
       },
     );
@@ -259,6 +308,7 @@ class _ImageGridState extends State<ImageGrid> {
             onLongPress: () => appState.enterVisualSelectionMode(img.id),
             onPlayExternal: () => _playExternal(appState),
             onEditTags: () => _editVideoTags(appState, img),
+            onRemoveTags: () => _editMediaTags(appState, img, add: false),
           );
         }
         return _ThumbnailCard(
@@ -270,6 +320,8 @@ class _ImageGridState extends State<ImageGrid> {
           onLongPress: () => appState.enterVisualSelectionMode(img.id),
           compact: false,
           cacheEpoch: appState.thumbEpoch,
+          onEditTags: () => _editMediaTags(appState, img, add: true),
+          onRemoveTags: () => _editMediaTags(appState, img, add: false),
         );
       },
     );
@@ -299,6 +351,17 @@ class _ImageGridState extends State<ImageGrid> {
               side:  BorderSide(color: AppColors.surfaceAltOf(context)),
             ),
           ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const ValueKey('grid-empty-batch-import'),
+            onPressed: () => _pickBatchFolder(context, appState),
+            icon: const Icon(Icons.library_add_outlined, size: 16),
+            label: const Text(
+              '批量导入：每个子文件夹一个作品',
+              style: TextStyle(fontSize: 12),
+            ),
+            style: TextButton.styleFrom(foregroundColor: AppColors.teal),
+          ),
         ],
       ),
     );
@@ -312,6 +375,27 @@ class _ImageGridState extends State<ImageGrid> {
     if (result != null && result.isNotEmpty && context.mounted) {
       await appState.importDirectory(result, library: widget.library);
     }
+  }
+
+  /// 批量导入：选父目录，里面的每个子文件夹各建一个作品。
+  Future<void> _pickBatchFolder(BuildContext context, AppState appState) async {
+    if (!await ensureScanAccessOrPrompt(context)) return;
+    final result = await FilePicker.getDirectoryPath(
+      dialogTitle: _isVideo ? '选择父文件夹（每个子文件夹一个视频作品）' : '选择父文件夹（每个子文件夹一个图片作品）',
+    );
+    if (result == null || result.isEmpty || !context.mounted) return;
+    final created = await appState.importSubdirectoriesAsWorks(
+      result,
+      library: widget.library,
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          created > 0 ? '批量导入完成：新建 $created 个作品' : '没有发现可导入的子文件夹（或里面的媒体都已在库里）',
+        ),
+      ),
+    );
   }
 }
 
@@ -383,6 +467,10 @@ class _ThumbnailCard extends StatefulWidget {
   /// 缩略图缓存被清空时会自增；卡片靠它重新生成缩略图
   final int cacheEpoch;
 
+  /// 右上角 ⋮ 菜单：添加/移除这条媒体的标签
+  final VoidCallback onEditTags;
+  final VoidCallback onRemoveTags;
+
   const _ThumbnailCard({
     super.key,
     required this.image,
@@ -392,6 +480,8 @@ class _ThumbnailCard extends StatefulWidget {
     this.onLongPress,
     required this.compact,
     required this.cacheEpoch,
+    required this.onEditTags,
+    required this.onRemoveTags,
   });
 
   @override
@@ -506,6 +596,7 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
                   ],
                 ),
               ),
+              _tagsMenu(onDark: false),
             ],
           ),
         ),
@@ -536,7 +627,18 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
             else
               _placeholder(),
             Positioned(
-              bottom: 0, left: 0, right: 0,
+              top: 0,
+              right: 0,
+              child: Material(
+                color: Colors.black45,
+                borderRadius: BorderRadius.circular(4),
+                child: _tagsMenu(onDark: true),
+              ),
+            ),
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 color: Colors.black54,
@@ -559,6 +661,42 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
       child: Icon(Icons.image_outlined, color: AppColors.mutedOf(context), size: 32),
     );
   }
+
+  /// 图片磁贴的 ⋮ 菜单：以前图片只有双击看图，标签只能在多选栏里整批改，
+  /// 单张图想补一个标签没有入口。
+  Widget _tagsMenu({required bool onDark}) {
+    return PopupMenuButton<String>(
+      key: ValueKey('image-menu-${widget.image.id}'),
+      icon: Icon(
+        Icons.more_vert,
+        size: 14,
+        color: onDark ? Colors.white : AppColors.mutedOf(context),
+      ),
+      tooltip: '图片操作',
+      padding: EdgeInsets.zero,
+      // 小磁贴（手机上是 80~90 像素见方）容不下 M3 默认的 48 见方触摸区，
+      // 否则 ⋮ 会盖住大半个磁贴、把单击和长按都吃掉。
+      style: IconButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: const Size.square(26),
+        maximumSize: const Size.square(26),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+      ),
+      onSelected: (v) =>
+          v == 'tags' ? widget.onEditTags() : widget.onRemoveTags(),
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'tags',
+          child: Text('标签...', style: TextStyle(fontSize: 13)),
+        ),
+        PopupMenuItem(
+          value: 'untag',
+          child: Text('移除标签...', style: TextStyle(fontSize: 13)),
+        ),
+      ],
+    );
+  }
 }
 
 /// 视频卡片（网格/列表）：只画图标与文件名，不做应用内解码。
@@ -572,6 +710,7 @@ class _VideoTile extends StatelessWidget {
   final VoidCallback? onLongPress;
   final VoidCallback onPlayExternal;
   final VoidCallback onEditTags;
+  final VoidCallback onRemoveTags;
 
   const _VideoTile({
     super.key,
@@ -583,6 +722,7 @@ class _VideoTile extends StatelessWidget {
     this.onLongPress,
     required this.onPlayExternal,
     required this.onEditTags,
+    required this.onRemoveTags,
   });
 
   String get _displayName => video.alias ?? video.filename;
@@ -657,10 +797,13 @@ class _VideoTile extends StatelessWidget {
                   tooltip: '视频操作',
                   padding: EdgeInsets.zero,
                   onSelected: (v) {
-                    if (v == 'tags') {
-                      onEditTags();
-                    } else {
-                      onPlayExternal();
+                    switch (v) {
+                      case 'tags':
+                        onEditTags();
+                      case 'untag':
+                        onRemoveTags();
+                      default:
+                        onPlayExternal();
                     }
                   },
                   itemBuilder: (_) => [
@@ -674,6 +817,14 @@ class _VideoTile extends StatelessWidget {
                       value: 'tags',
                       child: const Text('标签...',
                           style: TextStyle(fontSize: 13)),
+                    ),
+                    PopupMenuItem(
+                      key: ValueKey('video-untag-menu-${video.id}'),
+                      value: 'untag',
+                      child: const Text(
+                        '移除标签...',
+                        style: TextStyle(fontSize: 13),
+                      ),
                     ),
                   ],
                 ),

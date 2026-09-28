@@ -353,12 +353,34 @@ class _FolderTile extends StatelessWidget {
               icon: Icon(Icons.more_vert, size: 16, color: AppColors.mutedOf(context)),
               onSelected: (v) => _onMenu(context, appState, v),
               itemBuilder: (_) => const [
-                PopupMenuItem(value: 'open', child: Text('打开', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'playAll', child: Text('播放全部', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'playExternal', child: Text('用外部播放器播放', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'move', child: Text('移动到作品...', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'tags', child: Text('添加标签...', style: TextStyle(fontSize: 13))),
+                PopupMenuItem(
+                  value: 'open',
+                  child: Text('打开', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'playAll',
+                  child: Text('播放全部', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'playExternal',
+                  child: Text('用外部播放器播放', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'rename',
+                  child: Text('重命名', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'move',
+                  child: Text('移动到作品...', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'tags',
+                  child: Text('添加标签...', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'untag',
+                  child: Text('移除标签...', style: TextStyle(fontSize: 13)),
+                ),
                 PopupMenuDivider(),
                 PopupMenuItem(
                     value: 'delete',
@@ -404,6 +426,31 @@ class _FolderTile extends StatelessWidget {
         if (recursive == null) return;
         await appState.addTagsToFolder(folder.id!, tags, recursive: recursive);
         break;
+      case 'untag':
+        final folderTags = await appState.getFolderTags(folder.id!);
+        final ids = folderTags.map((t) => t.id).whereType<int>().toSet();
+        if (!context.mounted) return;
+        if (ids.isEmpty) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('该文件夹没有标签')));
+          return;
+        }
+        final removed = await showTagPickerDialog(
+          context,
+          title: '移除文件夹标签',
+          filterTagIds: ids,
+        );
+        if (removed == null || removed.isEmpty) return;
+        if (!context.mounted) return;
+        final recursiveRemove = await _confirmSync(context, removing: true);
+        if (recursiveRemove == null) return;
+        await appState.removeTagsFromFolder(
+          folder.id!,
+          removed,
+          recursive: recursiveRemove,
+        );
+        break;
       case 'delete':
         final count = await appState.countMediaUnderFolder(folder.id!);
         if (!context.mounted) return;
@@ -421,25 +468,27 @@ class _FolderTile extends StatelessWidget {
   }
 
   /// 询问是否递归同步到子文件夹曲目；null=取消, true=同步, false=仅当前文件夹
-  Future<bool?> _confirmSync(BuildContext context) {
+  Future<bool?> _confirmSync(BuildContext context, {bool removing = false}) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('同步操作'),
-        content: const Text(
-          '是否把该标签同步到文件夹内所有曲目及子文件夹？',
-          style: TextStyle(fontSize: 13),
+        content: Text(
+          removing ? '是否把该标签从文件夹内所有曲目及子文件夹中一并移除？' : '是否把该标签同步到文件夹内所有曲目及子文件夹？',
+          style: const TextStyle(fontSize: 13),
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
               child: const Text('取消')),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('仅标记文件夹')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(removing ? '仅移除文件夹标签' : '仅标记文件夹'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('同步到所有曲目')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(removing ? '同步移除所有曲目' : '同步到所有曲目'),
+          ),
         ],
       ),
     );

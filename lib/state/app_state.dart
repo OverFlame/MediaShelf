@@ -95,7 +95,16 @@ class AppState extends ChangeNotifier {
   List<int> _visibleMediaIds = const [];
 
   /// [ImageGrid] 每次重建后登记可见媒体；内容没变就不通知，避免死循环。
-  void reportVisibleMediaIds(List<int> ids) {
+  ///
+  /// 同时把媒体行并进 [_imageIndex]：作品层的 [_images] 只有文件夹，媒体行是
+  /// [ImageGrid] 自己查出来的，不登记的话 [selectedImage] 解析不到，图片详情
+  /// 面板与窄屏详情页只会显示占位。
+  void reportVisibleMedia(List<MediaItem> items) {
+    for (final item in items) {
+      final id = item.id;
+      if (id != null) _imageIndex[id] = item;
+    }
+    final ids = items.map((i) => i.id).whereType<int>().toList();
     if (ids.length == _visibleMediaIds.length) {
       var same = true;
       for (var i = 0; i < ids.length; i++) {
@@ -620,6 +629,35 @@ class AppState extends ChangeNotifier {
     _selectedImageIds.clear();
     _anchorImageId = null;
     notifyListeners();
+  }
+
+  /// 打开图片详情前的兜底选中：没有有效选中项时退到查看器当前图，再退到当前
+  /// 列表第一张。返回 false 表示当前上下文里一张图都没有。
+  ///
+  /// 没有这一步时，手机/桌面在作品层点「图片详情」只会看到一个占位（以前
+  /// 只有手动单击过磁贴、且选中项没被 refresh 收窄，详情才有内容）。
+  bool ensureDetailSelection() {
+    final current = _selectedImageId;
+    if (current != null && _imageIndex.containsKey(current)) return true;
+    int? fallback;
+    final viewerId = viewerImage?.id;
+    if (viewerId != null && _imageIndex.containsKey(viewerId)) {
+      fallback = viewerId;
+    } else {
+      for (final item in _imageIndex.values) {
+        if (item.id != null) {
+          fallback = item.id;
+          break;
+        }
+      }
+    }
+    if (fallback == null) return false;
+    // 只动「详情看哪张」，不碰多选集合：用户已经框了一批图时打开详情，
+    // 不该把框选清掉（详情面板自己只读 selectedImage）。
+    _selectedImageId = fallback;
+    _anchorImageId = fallback;
+    notifyListeners();
+    return true;
   }
 
   /// 进入视觉库多选模式；给了 id 就顺手把它勾上（长按磁贴走这条路）
@@ -1222,6 +1260,35 @@ class AppState extends ChangeNotifier {
     return _countMediaInFolders(ids);
   }
 
+  /// 作品下全部媒体的 id：作品卡片的标签增删要用（一次作用于整个作品）。
+  ///
+  /// 取法同 [countMediaUnderWork]，但这里要全部命中项——作品视图里看到的本来
+  /// 就是这些目录下的媒体，标签也该整批生效。
+  Future<List<int>> mediaIdsUnderWork(int workId) async {
+    final rows = await _mediaUnderWork(workId);
+    return rows.map((m) => m.id).whereType<int>().toList();
+  }
+
+  /// 作品下的全部图片（按自然序）：作品封面的「从作品图片里选」用它当候选。
+  Future<List<MediaItem>> imagesUnderWork(int workId) =>
+      _mediaUnderWork(workId, type: MediaType.image);
+
+  /// 作品目录闭包里的媒体行。[type] 非空时只取该类型。
+  Future<List<MediaItem>> _mediaUnderWork(int workId, {MediaType? type}) async {
+    final owned = await _folderDao.listByWork(workId);
+    if (owned.isEmpty) return const [];
+    final ids = await _expandFoldersDeep(
+      owned.map((f) => f.id).whereType<int>().toSet(),
+    );
+    final paths = await _pathsOfFolders(ids);
+    if (paths.isEmpty) return const [];
+    return _mediaDao.queryByDirs(
+      paths.toList(),
+      type: type,
+      orderBy: MediaDao.naturalOrderBy,
+    );
+  }
+
   /// 深度删除某作品会移除多少条媒体记录（删除前用来提示用户）。
   Future<int> countMediaUnderWork(int workId) async {
     final owned = await _folderDao.listByWork(workId);
@@ -1431,12 +1498,14 @@ class AppState extends ChangeNotifier {
   Future<int> _runVisualImport(
       String dirPath, int workId, String library, List<String> paths) async {
     var imported = 0;
+    final freshPaths = <String>[];
     try {
       final existing = await _mediaDao.existingPaths(paths);
       final now = DateTime.now().millisecondsSinceEpoch;
       final rows = <Map<String, Object?>>[];
       for (final path in paths) {
         if (existing.contains(path)) continue;
+        freshPaths.add(path);
         var size = 0;
         var mtime = 0;
         try {
@@ -1473,7 +1542,56 @@ class AppState extends ChangeNotifier {
       _folderVersion++;
       await refresh();
     }
+    // README 承诺「缩略图进库时后台补齐」：这里接着补，不占导入的关键路径。
+    if (imported > 0 && freshPaths.isNotEmpty) {
+      unawaited(backfillThumbnails(freshPaths));
+    }
     return imported;
+  }
+
+  /// 已经排进补齐队列的路径，避免同一批被反复排队。
+  final List<String> _thumbBackfillQueue = <String>[];
+  bool _thumbBackfillRunning = false;
+
+  /// 在后台把 [paths] 的 300px 缩略图逐张补齐（已存在就跳过）。
+  ///
+  /// 进库时同步生成会把导入卡住（几百张原图解码很久），所以导入一结束就把
+  /// 新路径丢进来异步跑；每补 8 张自增一次 [thumbEpoch]，已经画出来的占位
+  /// 卡片据此重新检查文件，补完的图不用重启就会出现。
+  Future<void> backfillThumbnails(Iterable<String> paths) async {
+    for (final path in paths) {
+      if (path.isNotEmpty && !_thumbBackfillQueue.contains(path)) {
+        _thumbBackfillQueue.add(path);
+      }
+    }
+    if (_thumbBackfillRunning || _thumbBackfillQueue.isEmpty) return;
+    _thumbBackfillRunning = true;
+    final service = ThumbnailService.instance;
+    var done = 0;
+    try {
+      while (_thumbBackfillQueue.isNotEmpty) {
+        final path = _thumbBackfillQueue.removeAt(0);
+        try {
+          final file = File(service.thumbPath(path, size: 300));
+          if (await file.exists()) continue;
+          await service.ensureThumbnail(path, size: 300);
+          done++;
+          if (done % 8 == 0) {
+            _thumbEpoch++;
+            notifyListeners();
+          }
+        } catch (e) {
+          logDebug('AppState', '缩略图补齐失败 "$path": $e');
+        }
+      }
+    } finally {
+      _thumbBackfillRunning = false;
+      if (done > 0) {
+        logInfo('AppState', '缩略图后台补齐 $done 张');
+        _thumbEpoch++;
+        notifyListeners();
+      }
+    }
   }
 
   /// 导入目录到指定作品（合并）
@@ -1780,6 +1898,67 @@ class AppState extends ChangeNotifier {
       if (entity is! Directory) continue;
       final scan = await FileScanner.scanDirectoryOffThread(entity.path);
       if (scan.audioPaths.isNotEmpty) hits.add(entity.path);
+    }
+    hits.sort((a, b) => naturalCompare(_baseName(a), _baseName(b)));
+    return hits;
+  }
+
+  /// 批量导入：选一个父目录，每个含媒体的直接子目录各建一个作品。
+  ///
+  /// 音频库有「导入系列」（子目录当成同一个作品的各卷），图片/视频库以前只能
+  /// 一个目录一个作品地导入；这里补上批量做法：一个子目录 = 一个作品。子目录
+  /// 都没有该库媒体时退回按单目录导入。返回新建的作品数。
+  Future<int> importSubdirectoriesAsWorks(
+    String dirPath, {
+    String? library,
+  }) async {
+    if (!_beginImport('importSubdirectoriesAsWorks')) return 0;
+    var created = 0;
+    try {
+      final scan = await FileScanner.scanDirectoryOffThread(dirPath);
+      final lib = library ?? _libraryForScan(scan);
+      if (lib == 'audio') {
+        logWarn('AppState', '音频库请用「导入系列」把子目录当成卷: $dirPath');
+        return 0;
+      }
+      final children = await _childDirsWithMedia(dirPath, lib);
+      if (children.isEmpty) {
+        logInfo('AppState', '子目录里没有 $lib 媒体，按单目录导入: $dirPath');
+        final work = await _importVisualWork(dirPath, lib, scan);
+        return work == null ? 0 : 1;
+      }
+      for (final child in children) {
+        final childScan = await FileScanner.scanDirectoryOffThread(child);
+        if (childScan.isEmpty) continue;
+        final work = await _importVisualWork(child, lib, childScan);
+        if (work != null) {
+          created++;
+          logInfo('AppState', '批量导入子目录: ${_baseName(child)}（$child）');
+        }
+      }
+      logInfo('AppState', '批量导入完成：子目录 ${children.length} 个，新建作品 $created 个');
+    } catch (e) {
+      _importError = e.toString();
+      logError('AppState', '批量导入失败', e.toString());
+    } finally {
+      _endImport();
+    }
+    return created;
+  }
+
+  /// 直接子目录里含该库媒体的那些，按名字自然序。
+  Future<List<String>> _childDirsWithMedia(
+    String dirPath,
+    String library,
+  ) async {
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) return const <String>[];
+    final hits = <String>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! Directory) continue;
+      final scan = await FileScanner.scanDirectoryOffThread(entity.path);
+      final paths = library == 'video' ? scan.videoPaths : scan.imagePaths;
+      if (paths.isNotEmpty) hits.add(entity.path);
     }
     hits.sort((a, b) => naturalCompare(_baseName(a), _baseName(b)));
     return hits;

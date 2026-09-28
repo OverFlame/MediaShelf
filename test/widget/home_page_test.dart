@@ -247,8 +247,20 @@ void main() {
     expect(find.byType(ImageDetail), findsNothing);
     await tester.tap(find.byKey(const ValueKey('image-toolbar-detail')));
     await tester.pump();
-    await settleIo(tester);
+    // 详情里现在有真图要解码：加载态是 indeterminate 进度圈，
+    // pumpAndSettle 永远等不到静止，只能让真实 I/O 跑几轮。
+    for (var i = 0; i < 6; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 40)),
+      );
+      await tester.pump();
+    }
     expect(find.byType(ImageDetail), findsOneWidget);
+    // 修好之前这里只有「选择一张图片以查看详情」占位（AppState 解析不到
+    // 作品层的选中项），现在应该落到当前列表的第一张。
+    expect(find.text('选择一张图片以查看详情'), findsNothing);
+    expect(find.text('文件名'), findsOneWidget);
+    expect(find.text('a.png'), findsWidgets);
   });
 
   testWidgets('切回音频库后音频作品网格仍在', (tester) async {
@@ -529,5 +541,195 @@ void main() {
       await settleIo(tester);
       expect(tester.takeException(), isNull, reason: '$width 宽下工具栏不该溢出');
     }
+  });
+
+  testWidgets('视觉库工具栏：窄窗口 + 打开详情面板也不溢出（回归：800 宽溢出 30 像素）', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    // 缩到 800：宽版布局（左栏 260），工具栏还有 539 宽，此时不是紧凑态
+    tester.view.physicalSize = const Size(800, 1200);
+    await tester.pump();
+    await settleIo(tester);
+    expect(tester.takeException(), isNull, reason: '800 宽时代码路也不该溢出');
+    expect(
+      find.byKey(const ValueKey('image-toolbar-detail')),
+      findsOneWidget,
+      reason: '非紧凑态下详情按钮在工具栏上',
+    );
+
+    // 从这里打开详情面板：面板占走 320，中间列只剩 218 宽（评审复现的溢出场景）
+    await tester.tap(find.byKey(const ValueKey('image-toolbar-detail')));
+    await tester.pump();
+    // 详情里有真图要解码，加载圈的 indeterminate 动画等不到静止
+    for (var i = 0; i < 6; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 40)),
+      );
+      await tester.pump();
+    }
+    expect(find.byType(ImageDetail), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('image-toolbar-more')),
+      findsOneWidget,
+      reason: '218 宽下工具栏要走紧凑样式',
+    );
+    expect(tester.takeException(), isNull, reason: '详情面板占走 320 宽后，工具栏不该再溢出');
+  });
+
+  testWidgets('极窄工具栏：连排序也收进「更多」菜单（详情面板占剩的 218 宽）', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    tester.view.physicalSize = const Size(800, 1200);
+    await tester.pump();
+    await settleIo(tester);
+    await tester.tap(find.byKey(const ValueKey('image-toolbar-detail')));
+    await tester.pump();
+    for (var i = 0; i < 6; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 40)),
+      );
+      await tester.pump();
+    }
+    expect(find.byType(ImageDetail), findsOneWidget);
+
+    // 218 宽连排序按钮都放不下，让它进菜单，而不是把工具栏挤爆
+    expect(find.byKey(const ValueKey('image-toolbar-sort')), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const ValueKey('image-toolbar-more')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('排序'), findsOneWidget, reason: '菜单里要有排序分组');
+    // 详情面板的文件信息里也有「修改时间」，要点菜单里那一项
+    await tester.tap(
+      find.ancestor(
+        of: find.text('修改时间'),
+        matching: find.byType(CheckedPopupMenuItem<String>),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    // 详情面板里的图还在解码，加载圈是 indeterminate，不能用 settleIo
+    for (var i = 0; i < 4; i++) {
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 40)));
+      await tester.pump();
+    }
+
+    expect(app.visualSortKey, 'mtime', reason: '从「更多」里选的排序要真的生效');
+    expect(find.byKey(const ValueKey('image-toolbar-sort')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('手机宽度下的多选栏改成图标按钮，不再溢出', (tester) async {
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    // 手机宽度：磁贴只有 80 多像素见方，长按要避开右上角的 ⋮ 菜单
+    tester.view.physicalSize = const Size(380, 900);
+    await tester.pump();
+    await settleIo(tester);
+    final rect = tester.getRect(tile(imageIds.first));
+    await tester.longPressAt(rect.centerLeft + const Offset(20, 0));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(app.visualSelectionMode, isTrue);
+
+    // 380 宽下五个动作收成图标按钮（老版固定宽度文字按钮必溢出）
+    for (final key in [
+      'selection-select-all',
+      'selection-add-tags',
+      'selection-remove-tags',
+      'selection-delete',
+      'selection-clear',
+    ]) {
+      expect(find.byKey(ValueKey(key)), findsOneWidget, reason: '$key 要在选择条上');
+    }
+    expect(
+      find.widgetWithText(TextButton, '全选'),
+      findsNothing,
+      reason: '窄屏下不再用带文字按钮',
+    );
+    expect(tester.takeException(), isNull, reason: '380 宽下选择条不该溢出');
+
+    // 更要命的 260 宽（宽版布局 + 详情面板曾把它压到 218）：图标再缩一号、
+    // 动作区可横向滚动，一样不许溢出
+    tester.view.physicalSize = const Size(260, 900);
+    await tester.pump();
+    await settleIo(tester);
+    expect(find.byKey(const ValueKey('selection-clear')), findsOneWidget);
+    expect(tester.takeException(), isNull, reason: '260 宽下选择条不该溢出');
+
+    // 宽窗口下仍是带文字按钮，不牺牲可读性
+    tester.view.physicalSize = const Size(1600, 1200);
+    await tester.pump();
+    await settleIo(tester);
+    expect(find.widgetWithText(TextButton, '清除选择'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('作品层一键回「作品」：面包屑上的作品按钮', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+    expect(find.byType(WorksGrid), findsOneWidget);
+
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+    expect(find.byType(ImageGrid), findsOneWidget);
+    expect(app.currentWork, isNotNull);
+
+    // 以前刚进作品时面包屑整条不显示，进了作品就只能绕文件夹树回去
+    await tester.tap(find.byKey(const ValueKey('breadcrumb-works')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(app.currentWork, isNull);
+    expect(find.byType(WorksGrid), findsOneWidget);
+    expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsOneWidget);
+  });
+
+  testWidgets('作品卡片菜单能添加/移除标签（作用于整个作品）', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+
+    final card = find.byKey(ValueKey('work-card-$imageWorkId'));
+    await tester.tap(
+      find.descendant(of: card, matching: find.byTooltip('作品操作')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('添加标签...'), findsOneWidget);
+    expect(find.text('移除标签...'), findsOneWidget);
   });
 }

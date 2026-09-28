@@ -5,10 +5,14 @@ import 'package:provider/provider.dart';
 import '../db/work_dao.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/log_util.dart';
 import 'cover_image.dart';
-import 'dialogs.dart';
+// dialogs.dart 里那份旧的 showTagPickerDialog 参数更少（没有 filterTagIds），
+// 这里统一用 tag_picker_dialog.dart 的版本。
+import 'dialogs.dart' hide showTagPickerDialog;
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
+import 'tag_picker_dialog.dart';
 
 /// 主页作品集网格。
 ///
@@ -73,6 +77,17 @@ class WorksGrid extends StatelessWidget {
                   side:  BorderSide(color: AppColors.surfaceAltOf(context)),
                 ),
               ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                key: const ValueKey('works-empty-batch-import'),
+                onPressed: () => _pickBatchFolder(context),
+                icon: const Icon(Icons.library_add_outlined, size: 16),
+                label: const Text(
+                  '批量导入：每个子文件夹一个作品',
+                  style: TextStyle(fontSize: 12),
+                ),
+                style: TextButton.styleFrom(foregroundColor: AppColors.teal),
+              ),
             ],
           ],
         ),
@@ -113,6 +128,30 @@ class WorksGrid extends StatelessWidget {
     if (result != null && result.isNotEmpty && context.mounted) {
       await appState.importDirectory(result, library: lib);
     }
+  }
+
+  /// 批量导入：选父目录，里面的每个子文件夹各建一个作品。
+  Future<void> _pickBatchFolder(BuildContext context) async {
+    if (_isAudio) return;
+    final lib = _lib;
+    final appState = context.read<AppState>();
+    if (!await ensureScanAccessOrPrompt(context)) return;
+    final result = await FilePicker.getDirectoryPath(
+      dialogTitle: _isImage ? '选择父文件夹（每个子文件夹一个图片作品）' : '选择父文件夹（每个子文件夹一个视频作品）',
+    );
+    if (result == null || result.isEmpty || !context.mounted) return;
+    final created = await appState.importSubdirectoriesAsWorks(
+      result,
+      library: lib,
+    );
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          created > 0 ? '批量导入完成：新建 $created 个作品' : '没有发现可导入的子文件夹（或里面的媒体都已在库里）',
+        ),
+      ),
+    );
   }
 }
 
@@ -185,9 +224,26 @@ class _WorkCard extends StatelessWidget {
           if (_playAll)
             const PopupMenuItem(value: 'playAll', child: Text('播放全部', style: TextStyle(fontSize: 13))),
           if (_playExternal)
-            const PopupMenuItem(value: 'playExternal', child: Text('用外部播放器播放', style: TextStyle(fontSize: 13))),
-          const PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
-          const PopupMenuItem(value: 'cover', child: Text('设置封面', style: TextStyle(fontSize: 13))),
+            const PopupMenuItem(
+              value: 'playExternal',
+              child: Text('用外部播放器播放', style: TextStyle(fontSize: 13)),
+            ),
+          const PopupMenuItem(
+            value: 'rename',
+            child: Text('重命名', style: TextStyle(fontSize: 13)),
+          ),
+          const PopupMenuItem(
+            value: 'cover',
+            child: Text('设置封面', style: TextStyle(fontSize: 13)),
+          ),
+          const PopupMenuItem(
+            value: 'tags',
+            child: Text('添加标签...', style: TextStyle(fontSize: 13)),
+          ),
+          const PopupMenuItem(
+            value: 'untag',
+            child: Text('移除标签...', style: TextStyle(fontSize: 13)),
+          ),
           const PopupMenuDivider(),
           const PopupMenuItem(
               value: 'delete',
@@ -217,6 +273,12 @@ class _WorkCard extends StatelessWidget {
       case 'cover':
         await showImportCoverDialog(context, work.id!);
         break;
+      case 'tags':
+        await _editWorkTags(context, appState, add: true);
+        break;
+      case 'untag':
+        await _editWorkTags(context, appState, add: false);
+        break;
       case 'delete':
         final count = await appState.countMediaUnderWork(work.id!);
         if (!context.mounted) return;
@@ -230,5 +292,50 @@ class _WorkCard extends StatelessWidget {
         }
         break;
     }
+  }
+
+  /// 作品层标签增删：一次作用于这个作品下所有媒体（含子文件夹）。
+  ///
+  /// 作品层没有「只标作品」这个概念——标签本来就挂在媒体行上，所以这里直接
+  /// 批量写全部媒体；先把已有标签收窄成可选集合，避免给没标签的东西移除。
+  Future<void> _editWorkTags(
+    BuildContext context,
+    AppState appState, {
+    required bool add,
+  }) async {
+    final ids = await appState.mediaIdsUnderWork(work.id!);
+    if (!context.mounted) return;
+    if (ids.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('这个作品里还没有媒体，先导入再看标签')));
+      return;
+    }
+    Set<int>? current;
+    if (!add) {
+      current = await appState.getTagIdsOnMedia(ids);
+      if (!context.mounted) return;
+      if (current.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('这个作品里的媒体还没有标签')));
+        return;
+      }
+    }
+    final tags = await showTagPickerDialog(
+      context,
+      title: add ? '为作品添加标签（${ids.length} 条媒体）' : '移除作品标签',
+      filterTagIds: add ? null : current,
+    );
+    if (tags == null || tags.isEmpty) return;
+    if (add) {
+      await appState.addTagsToMedia(ids, tags);
+    } else {
+      await appState.removeTagsFromMedia(ids, tags);
+    }
+    logInfo(
+      'WorksGrid',
+      '${add ? '添加' : '移除'}作品标签 ${tags.length} 个 → ${ids.length} 条媒体',
+    );
   }
 }

@@ -1024,3 +1024,55 @@
 - 用 `MediaItem.toMap()` 直接插库时枚举要给 `.value`（`'media_type': MediaType.image.value`），给枚举本身会被 sqflite 拒掉。
 - 本机 `dart format`（Dart 3.13.4 / Flutter 3.47.5）已换成 tall 样式，跑一次 `dart format lib test` 会重排 108 个文件、6213 加 / 3144 减，看着像把整个仓库改了一遍；HEAD 是旧 short 样式，在新工具链下复现不出来（`--language-version` 与 `--trailing-commas` 都试过）。清理办法：`git checkout` 回 HEAD，再只重放这一轮的功能改动，最后用「去掉空白与逗号后比较」的规范化脚本验证一条功能都没漏；判定「没有空白噪音」的硬指标是每个文件 `git diff --numstat` 等于 `git diff -w --numstat`。
 - 用脚本批量替换 `_cacheDir` 时把 `_requireDir()` 自己的函数体也改成了 `_requireDir()`（无限递归）；批量替换必须先断言命中次数，不满足就整文件不落盘。
+
+## 2026-09-28 九项缺陷与需求：窄栏适配、标签增删、封面选图、批量导入与缩略图补齐（`1.4.0+21`）
+
+用户报九项（按条转述，原话见当轮对话）：①P2 工具栏溢出要修，P1 先放。②手机端上方多选栏超出长度，适配很差。③看图模式的选项栏左右余量不足，曲面侧边屏点不到关闭。④三个竖点里没有删除标签的选项，文件夹标签删不掉，也无法递归删子标签。⑤图片详情还是打不开（空白或占位）。⑥电脑端图片第一次导入没有缩略图，重启才有。⑦手机端选封面要直接从这个文件夹的图片里选。⑧支持批量导入文件夹，每个文件夹按作品导入。⑨图片与视频无法快捷回到「作品」显示方式。
+
+用户口径：④ 左栏文件夹与中间磁贴同样处理，并为「作品」层级也加标签增删；⑨ 工具栏或面包屑加一个「作品」按钮；⑤ 页面打得开，但里面是空白或只有占位。
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| ① 工具栏溢出 | `lib/pages/home_page.dart:393` 起，`_VisualToolbar` 新增 `tiny = maxWidth < 220`（宽版布局加详情面板时中间列只有 138），图标按钮收到 30 见方、图标 16 见方；排序按钮包进 `if (!tiny)`，`tiny` 时排序项挪进「更多」菜单（值 `sort:<key>` 与 `sortDir`，见 :554 与 :638） |
+| ② 多选栏 | 同文件 `_SelectionBar`（:806）改用 `LayoutBuilder`：`narrow = maxWidth < 520` 时动作改图标按钮并留提示气泡，`tight = maxWidth < 300` 时收到 30 见方、标签只留「N 项」，动作区套一层横向滚动。键值不变 |
+| ③ 查看器安全区 | `lib/widgets/image_viewer.dart:885` 与 :1073 的顶栏与底栏除上下内边距外，再让开 `viewPadding.left` 与 `.right`：曲面侧边屏上「关闭」与翻页按钮不贴边 |
+| ④ 标签增删 | 文件夹 ⋮ 菜单加「移除标签...」（`lib/widgets/folder_browser.dart:381`，处理在 :429，走 `_confirmSync` 询问是否递归到子文件夹）；磁贴 ⋮ 菜单加「添加标签...」与「移除标签...」（`lib/widgets/image_grid.dart:91` 的 `_editMediaTags`，移除时先取这条媒体已有的标签收窄候选）；作品卡片菜单加同一对（`lib/widgets/works_grid.dart:227` 起，一次作用于整个作品） |
+| ⑤ 图片详情空白 | `lib/state/app_state.dart:102` 把 `reportVisibleMediaIds(List<int>)` 换成 `reportVisibleMedia(List<MediaItem>)`，媒体行并进 `_imageIndex`；新增 `ensureDetailSelection()`（:639）在打开详情前兜底选中查看器当前图或列表第一张，一张都没有就提示先导入。它只写 `_selectedImageId` 与 `_anchorImageId`，不动多选集合 |
+| ⑥ 缩略图补齐 | `AppState.backfillThumbnails`（`lib/state/app_state.dart:1561`）后台逐张补 300 像素缩略图，每补 8 张 `thumbEpoch` 加一；导入结束把新路径丢进队列（:1545）；`lib/widgets/image_grid.dart:207` 每次进入新的库 / 文件夹 / 作品上下文也补一次。口径见第 7.6 节 |
+| ⑦ 封面选图 | 新增 `lib/widgets/cover_pick.dart`（图墙与 `showCoverImagePicker`，:95）。作品封面先列作品里的图片（`lib/widgets/dialogs.dart:65`），卷封面先列本文件夹（含子文件夹）的图片（`lib/widgets/volume_cover_dialog.dart:106`），系统选图留作出口 |
+| ⑧ 批量导入 | `AppState.importSubdirectoriesAsWorks`（`lib/state/app_state.dart:1911`）把含该库媒体的直接子目录各建一个作品，子目录都没有时退回单目录导入；入口在左栏（`lib/widgets/folder_panel.dart:469`）与作品层空状态（`lib/widgets/works_grid.dart:132`） |
+| ⑨ 回作品层 | 面包屑加「作品」按钮（`lib/pages/home_page.dart:696`，调 `goHome()`）；`_BreadcrumbBar` 的显示条件从「有当前文件夹」改成 `breadcrumb.isNotEmpty`（:215）；删掉原来循环 `goUp` 的 `_goRoot` |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 图墙还是系统选图 | 先图墙。手机上系统选图要一层层点目录，而封面图本来就在库里，列出来最快；系统选图留作「都不合适」的出口 |
+| 兜底选中要不要动多选集合 | 不动。详情面板只读 `selectedImage`，多选集合是用户的框选结果；旧的 `selectImage()` 会把框选清掉，一开详情就丢选择 |
+| 批量导入怎么算一个作品 | 一个直接子目录算一个作品，名字取目录名。音频库不适用（那边一个目录是一家，子目录是卷），调用时直接拒绝并记日志 |
+| 标签移除要不要先收窄候选 | 要。否则用户能从全库标签里挑一个根本不在这张图上的标签来「移除」，操作完没有任何反馈 |
+| 小磁贴的 ⋮ 多大 | 26 见方。Material 3 默认 48 见方，手机上磁贴只有 80 到 90 像素，⋮ 会盖住整张磁贴并吃掉单击与长按 |
+| 窄窗用滚动还是继续缩 | 先缩到 30 见方，再套横向滚动兜底。两者都做才能在 218 宽下不溢出，用户仍能摸到全部动作 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error（都是既有项：`import_service.dart:45-47` 的 `prefer_initializing_formals`、`cover_image.dart:34` 的 `unnecessary_underscores`）。
+- `flutter test`：462 用例全过（上一版基线 454）。新增 8 例：`test/state/app_state_images_test.dart` 3 例（『作品层的可见媒体要登记进索引，详情才有兜底的选中项』、『批量导入：每个含媒体的子文件夹各建一个作品』、『导入后后台补齐缩略图，并让已建的占位卡片重新检查』）；`test/widget/home_page_test.dart` 5 例（『视觉库工具栏：窄窗口 + 打开详情面板也不溢出（回归：800 宽溢出 30 像素）』、『极窄工具栏：连排序也收进「更多」菜单（详情面板占剩的 218 宽）』、『手机宽度下的多选栏改成图标按钮，不再溢出』、『作品层一键回「作品」：面包屑上的作品按钮』、『作品卡片菜单能添加/移除标签（作用于整个作品）』）。
+- 界面层核对：多选栏 5 个键值未变，桌面端文字按钮照旧；`viewPadding` 为 0 时查看器顶栏与底栏尺寸不变；批量导入第二次调用返回 0。
+- `git diff --numstat`：11 个文件、1318 加 / 190 减，没有混进空白噪音（清理过程见踩坑）。
+
+未完成事项：Windows 与 Android 上没有跑过这一轮界面（本机只有 Linux 桌面与单元 / widget 测试）；批量导入只在测试里验证，真机选目录与扫大目录的耗时未测；真机曲面屏的安全区留白只按 `viewPadding` 推算。
+
+踩坑（格式与工具）：
+
+- `dart format lib test` 一次重排 108 个文件。第一次分类错了：把 HEAD 版本拷到包外 `/tmp` 再格式化，语言版本与包内不同（`pubspec.yaml:33` 是 `sdk: ^3.12.2`），把纯格式文件误判成有改动。正确办法是把 HEAD 版本拷进仓库内的临时目录再格式化、`cmp`。结果 24 个纯格式文件回退，只剩 11 个真改动。
+- 本机 Dart 3.13 只出 tall 样式，`--language-version=3.6` 被忽略，旧 short 样式复现不出来。清理用三方合并：`git merge-file -p --theirs <HEAD 版本> <format(HEAD 版本)> <工作区>`，再用「去空白加去尾逗号」的规范化脚本逐文件比对，11 个全部一致。
+
+踩坑（定位与测试）：
+
+- 218 宽那 20 像素溢出不在工具栏，而在多选栏；多选栏出现的原因又是打开详情时的兜底选中往 `_selectedImageIds` 里塞了一项。用 `FlutterError.onError` 打印 `debugCreator` 才看出是 `_SelectionBar`。
+- widget 测试里 380 宽长按磁贴不进多选，最后查到是小磁贴上 ⋮ 的 48 见方触摸区盖住了 `getCenter` 那个点。
+- `find.text('修改时间')` 在窄屏详情里同时命中菜单项与详情信息，改用 `find.ancestor(of: find.text(...), matching: find.byType(CheckedPopupMenuItem<String>))`；`CheckedPopupMenuItem` 必须带类型参数，`byType` 比对运行时类型。
+- 用 200 宽窗口测 `tiny` 时，点「更多」的偏移打不到按钮，命中链顶端是关着的 Drawer 边缘拖拽层。改用 800 宽加详情面板制造 `tiny`。

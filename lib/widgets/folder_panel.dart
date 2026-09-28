@@ -294,61 +294,99 @@ class _FolderPanelState extends State<FolderPanel> {
   Widget _buildImportButtons(AppState appState) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: SizedBox(
-              height: 32,
-              child: OutlinedButton.icon(
-                key: const ValueKey('folder-panel-add-folder'),
-                onPressed:
-                    appState.importing ? null : () => _pickFolder(appState),
-                icon: Icon(
-                  appState.importing
-                      ? Icons.hourglass_empty
-                      : Icons.create_new_folder,
-                  size: 14,
-                ),
-                label: Text(
-                  appState.importing ? '导入中...' : '添加文件夹',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.accent,
-                  side:  BorderSide(color: AppColors.surfaceAltOf(context)),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: SizedBox(
-              height: 32,
-              child: OutlinedButton.icon(
-                onPressed:
-                    appState.importing ? null : () => _pickFiles(appState),
-                icon: Icon(
-                  Icons.image_outlined,
-                  size: 14,
-                  color: appState.importing
-                      ? AppColors.mutedLightOf(context)
-                      : AppColors.teal,
-                ),
-                label: Text(
-                  '浏览文件',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: appState.importing
-                        ? AppColors.mutedLightOf(context)
-                        : AppColors.textPrimaryOf(context),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('folder-panel-add-folder'),
+                    onPressed: appState.importing
+                        ? null
+                        : () => _pickFolder(appState),
+                    icon: Icon(
+                      appState.importing
+                          ? Icons.hourglass_empty
+                          : Icons.create_new_folder,
+                      size: 14,
+                    ),
+                    label: Text(
+                      appState.importing ? '导入中...' : '添加文件夹',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.accent,
+                      side: BorderSide(color: AppColors.surfaceAltOf(context)),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                    ),
                   ),
                 ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.teal,
-                  side:  BorderSide(color: AppColors.surfaceAltOf(context)),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: SizedBox(
+                  height: 32,
+                  child: OutlinedButton.icon(
+                    onPressed: appState.importing
+                        ? null
+                        : () => _pickFiles(appState),
+                    icon: Icon(
+                      Icons.image_outlined,
+                      size: 14,
+                      color: appState.importing
+                          ? AppColors.mutedLightOf(context)
+                          : AppColors.teal,
+                    ),
+                    label: Text(
+                      '浏览文件',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: appState.importing
+                            ? AppColors.mutedLightOf(context)
+                            : AppColors.textPrimaryOf(context),
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.teal,
+                      side: BorderSide(color: AppColors.surfaceAltOf(context)),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                    ),
+                  ),
                 ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: double.infinity,
+            height: 32,
+            child: OutlinedButton.icon(
+              key: const ValueKey('folder-panel-batch-import'),
+              onPressed: appState.importing
+                  ? null
+                  : () => _pickBatchFolder(appState),
+              icon: Icon(
+                Icons.library_add_outlined,
+                size: 14,
+                color: appState.importing
+                    ? AppColors.mutedLightOf(context)
+                    : AppColors.accent,
+              ),
+              label: Text(
+                '批量导入（每个子文件夹一个作品）',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: appState.importing
+                      ? AppColors.mutedLightOf(context)
+                      : AppColors.textPrimaryOf(context),
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.accent,
+                side: BorderSide(color: AppColors.surfaceAltOf(context)),
+                padding: const EdgeInsets.symmetric(horizontal: 6),
               ),
             ),
           ),
@@ -423,6 +461,29 @@ class _FolderPanelState extends State<FolderPanel> {
     if (result != null && mounted) {
       await appState.importDirectory(result, library: widget.library);
     }
+  }
+
+  /// 批量导入：选父目录，里面的每个子文件夹各建一个作品。
+  ///
+  /// 一个子文件夹 = 一个作品，比一个个目录点进去导入快得多。
+  Future<void> _pickBatchFolder(AppState appState) async {
+    if (!await ensureScanAccessOrPrompt(context)) return;
+    final result = await FilePicker.getDirectoryPath(
+      dialogTitle: _isVideo ? '选择父文件夹（每个子文件夹一个视频作品）' : '选择父文件夹（每个子文件夹一个图片作品）',
+    );
+    if (result == null || !mounted) return;
+    final created = await appState.importSubdirectoriesAsWorks(
+      result,
+      library: widget.library,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          created > 0 ? '批量导入完成：新建 $created 个作品' : '没有发现可导入的子文件夹（或里面的媒体都已在库里）',
+        ),
+      ),
+    );
   }
 
   Future<void> _pickFiles(AppState appState) async {

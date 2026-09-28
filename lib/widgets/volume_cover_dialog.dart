@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../utils/crop_math.dart';
 import '../utils/log_util.dart';
 import 'cover_crop_editor.dart';
+import 'cover_pick.dart';
 
 /// 卷封面选择与裁剪（BUILD_GUIDE 第 19.2、21.4 节）。
 ///
@@ -62,6 +63,10 @@ class VolumeCoverDialog extends StatefulWidget {
 
 class _VolumeCoverDialogState extends State<VolumeCoverDialog> {
   List<VolumeCoverCandidate> _candidates = const [];
+
+  /// 本文件夹（含子文件夹）里的图片：候选之外想手动指定时直接从这里挑，
+  /// 不用走系统文件选择框。
+  List<String> _folderImages = const [];
   String? _cover;
   Rect? _crop;
   Size? _imageSize;
@@ -82,6 +87,7 @@ class _VolumeCoverDialogState extends State<VolumeCoverDialog> {
     final candidates = await widget.state.volumeCoverCandidates(widget.folderId);
     final cover = await widget.state.volumeCover(widget.folderId);
     final crop = await widget.state.volumeCoverCrop(widget.folderId);
+    final folderImages = await _loadFolderImages();
     Size? size;
     if (cover != null) size = await _readSize(cover);
     if (!mounted) return;
@@ -91,9 +97,21 @@ class _VolumeCoverDialogState extends State<VolumeCoverDialog> {
       _autoCover = candidates.isEmpty ? null : candidates.first.path;
       _cover = cover;
       _crop = crop;
+      _folderImages = folderImages;
       _imageSize = size;
       _loading = false;
     });
+  }
+
+  /// 本文件夹里的图片路径（自然序）。库里查不到时退回空表——候选那条路仍在。
+  Future<List<String>> _loadFolderImages() async {
+    try {
+      final items = await widget.state.imagesInFolder(widget.folderId);
+      return items.map((m) => m.path).toList(growable: false);
+    } catch (e) {
+      logDebug('CoverDialog', '列文件夹图片失败: $e');
+      return const [];
+    }
   }
 
   Future<void> _pickCandidate(String path) async {
@@ -287,13 +305,66 @@ class _VolumeCoverDialogState extends State<VolumeCoverDialog> {
       ));
     }
     if (rows.isEmpty) {
-      rows.add(Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Text('没有找到候选图片，可以用「从文件选择」指定',
-            style: TextStyle(fontSize: 12, color: AppColors.mutedLight)),
-      ));
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            '没有找到候选图片，可以从下面的文件夹图片或「从文件选择」指定',
+            style: TextStyle(fontSize: 12, color: AppColors.mutedLight),
+          ),
+        ),
+      );
     }
+    rows.addAll(_folderImageRows(manual));
     return ListView(children: rows);
+  }
+
+  /// 「本文件夹的图片」一节：候选之外的全部图片，点一下就设为封面。
+  ///
+  /// 手机上没有系统文件浏览器的便利（要一层层点进去找 DCIM），这里直接把
+  /// 这个文件夹里的图铺出来，省掉原生选图那一步。
+  List<Widget> _folderImageRows(String? manual) {
+    final listed = <String>{?manual, for (final c in _candidates) c.path};
+    final extra = _folderImages
+        .where((p) => !listed.contains(p))
+        .toList(growable: false);
+    if (extra.isEmpty) return const [];
+    return [
+      const Divider(height: 18),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(
+          '本文件夹的图片（${extra.length} 张，点一下设为封面）',
+          key: const ValueKey('cover-folder-images-header'),
+          style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
+        ),
+      ),
+      Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (var i = 0; i < extra.length; i++)
+            InkWell(
+              key: ValueKey('cover-folder-image-$i'),
+              onTap: () => _pickCandidate(extra[i]),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: _cover == extra[i]
+                        ? AppColors.accent
+                        : Colors.white.withValues(alpha: 0.08),
+                    width: _cover == extra[i] ? 2 : 1,
+                  ),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: CoverImageThumb(path: extra[i], size: 56),
+              ),
+            ),
+        ],
+      ),
+      const SizedBox(height: 8),
+    ];
   }
 
   Widget _candidateTile({

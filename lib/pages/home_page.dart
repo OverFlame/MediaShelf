@@ -212,7 +212,7 @@ class _HomePageState extends State<HomePage> {
           onToggleDetail: () => _openDetail(context, isWide),
         ),
         const Divider(height: 1),
-        if (appState.currentFolder != null) const _BreadcrumbBar(),
+        if (appState.breadcrumb.isNotEmpty) const _BreadcrumbBar(),
         if (appState.hasAdvancedFilter) const _AdvancedFilterBar(),
         if (appState.selectedIds.isNotEmpty)
           _SelectionBar(library: _library),
@@ -244,6 +244,18 @@ class _HomePageState extends State<HomePage> {
 
   /// 详情入口：宽屏开右侧面板（可收），窄屏推一个独立页面
   void _openDetail(BuildContext context, bool isWide) {
+    // 面板已经开着时这个按钮是「关闭」，不必管选中项。要打开时先兜底选中
+    // 当前图/列表第一张：详情只画选中项，没有选中就是一片空白。
+    final opening = !isWide || !_detailOpen;
+    if (opening) {
+      final appState = context.read<AppState>();
+      if (!appState.ensureDetailSelection()) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('这个位置还没有图片，先导入或进入作品再看详情')));
+        return;
+      }
+    }
     if (!isWide) {
       Navigator.of(context).push(
         MaterialPageRoute(
@@ -378,13 +390,40 @@ class _VisualToolbar extends StatelessWidget {
           // 否则 Row 会 RenderFlex overflow（800 宽窗口 + 详情面板时只剩约 220）。
           // 500 = 原先的 430 加上排序按钮的宽度再留点余量：非紧凑态实测要约 477。
           final compact = constraints.maxWidth < 500;
+          // 720~830 是「宽版布局 + 详情面板」同时成立的最窄区段：中间列只有
+          // 720 - 260 - 1 - 320 - 1 = 138，连排序按钮都放不下，于是排序也收进
+          // 「更多」，并把图标按钮压到 30 见方（4 个按钮约 128）。
+          final tiny = constraints.maxWidth < 220;
+          final side = tiny ? 30.0 : (compact ? 36.0 : 40.0);
+          final sideStyle = IconButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: Size.square(side),
+            maximumSize: Size.square(side),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          );
+          IconButton iconButton({
+            required Key key,
+            required String tooltip,
+            required IconData icon,
+            Color? color,
+            required VoidCallback onPressed,
+          }) => IconButton(
+            key: key,
+            tooltip: tooltip,
+            icon: Icon(icon, size: tiny ? 16 : 18, color: color),
+            onPressed: onPressed,
+            style: sideStyle,
+          );
           return Row(
             children: [
               const SizedBox(width: 4),
               PopupMenuButton<int>(
                 key: ValueKey('$library-toolbar-columns'),
                 tooltip: '网格列数',
-                icon: const Icon(Icons.grid_on_outlined, size: 18),
+                icon: Icon(Icons.grid_on_outlined, size: tiny ? 16 : 18),
+                padding: EdgeInsets.zero,
+                style: sideStyle,
                 onSelected: (v) => appState.setGridColumns(v),
                 itemBuilder: (_) => [
                   for (var c = 2; c <= 8; c++)
@@ -395,63 +434,66 @@ class _VisualToolbar extends StatelessWidget {
                 ],
               ),
               if (!compact)
-                Text('${appState.gridColumns} 列',
-                    style: TextStyle(
-                        fontSize: 12, color: AppColors.mutedLightOf(context))),
-              IconButton(
-                key: ValueKey('$library-toolbar-viewmode'),
-                tooltip:
-                    appState.viewMode == 'grid' ? '切换为列表视图' : '切换为网格视图',
-                icon: Icon(
-                  appState.viewMode == 'grid'
-                      ? Icons.view_list_outlined
-                      : Icons.grid_view,
-                  size: 18,
-                ),
-                onPressed: () => appState
-                    .setViewMode(appState.viewMode == 'grid' ? 'list' : 'grid'),
-              ),
-              PopupMenuButton<String>(
-                key: ValueKey('$library-toolbar-sort'),
-                tooltip: '排序',
-                icon: const Icon(Icons.sort, size: 18),
-                onSelected: (v) {
-                  if (v == 'toggle') {
-                    appState.setVisualSortDescending(
-                        !appState.visualSortDescending);
-                  } else {
-                    appState.setVisualSortKey(v);
-                  }
-                },
-                itemBuilder: (_) => [
-                  for (final entry in AppState.visualSortLabels.entries)
-                    CheckedPopupMenuItem(
-                      value: entry.key,
-                      checked: appState.visualSortKey == entry.key,
-                      child:
-                          Text(entry.value, style: const TextStyle(fontSize: 13)),
-                    ),
-                  const PopupMenuDivider(),
-                  PopupMenuItem(
-                    value: 'toggle',
-                    child: Text(
-                      appState.visualSortDescending ? '改为升序' : '改为降序',
-                      style: const TextStyle(fontSize: 13),
-                    ),
+                Text(
+                  '${appState.gridColumns} 列',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.mutedLightOf(context),
                   ),
-                ],
+                ),
+              iconButton(
+                key: ValueKey('$library-toolbar-viewmode'),
+                tooltip: appState.viewMode == 'grid' ? '切换为列表视图' : '切换为网格视图',
+                icon: appState.viewMode == 'grid'
+                    ? Icons.view_list_outlined
+                    : Icons.grid_view,
+                onPressed: () => appState.setViewMode(
+                  appState.viewMode == 'grid' ? 'list' : 'grid',
+                ),
               ),
-              IconButton(
+              if (!tiny)
+                PopupMenuButton<String>(
+                  key: ValueKey('$library-toolbar-sort'),
+                  tooltip: '排序',
+                  icon: Icon(Icons.sort, size: tiny ? 16 : 18),
+                  padding: EdgeInsets.zero,
+                  style: sideStyle,
+                  onSelected: (v) {
+                    if (v == 'toggle') {
+                      appState.setVisualSortDescending(
+                        !appState.visualSortDescending,
+                      );
+                    } else {
+                      appState.setVisualSortKey(v);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    for (final entry in AppState.visualSortLabels.entries)
+                      CheckedPopupMenuItem(
+                        value: entry.key,
+                        checked: appState.visualSortKey == entry.key,
+                        child: Text(
+                          entry.value,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                    const PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: 'toggle',
+                      child: Text(
+                        appState.visualSortDescending ? '改为升序' : '改为降序',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              iconButton(
                 key: ValueKey('$library-toolbar-select'),
                 tooltip: appState.visualSelectionMode ? '退出多选' : '多选',
-                icon: Icon(
-                  appState.visualSelectionMode
-                      ? Icons.check_box
-                      : Icons.check_box_outline_blank,
-                  size: 18,
-                  color:
-                      appState.visualSelectionMode ? AppColors.accent : null,
-                ),
+                icon: appState.visualSelectionMode
+                    ? Icons.check_box
+                    : Icons.check_box_outline_blank,
+                color: appState.visualSelectionMode ? AppColors.accent : null,
                 onPressed: () => appState.visualSelectionMode
                     ? appState.exitVisualSelectionMode()
                     : appState.enterVisualSelectionMode(),
@@ -504,9 +546,41 @@ class _VisualToolbar extends StatelessWidget {
                 PopupMenuButton<String>(
                   key: ValueKey('$library-toolbar-more'),
                   tooltip: '更多操作',
-                  icon: const Icon(Icons.more_horiz, size: 18),
+                  icon: Icon(Icons.more_horiz, size: tiny ? 16 : 18),
+                  padding: EdgeInsets.zero,
+                  style: sideStyle,
                   onSelected: (v) => _onMore(context, v),
                   itemBuilder: (_) => [
+                    // 极窄（宽版布局 + 详情面板）时排序按钮也放不下，挪进这里
+                    if (tiny) ...[
+                      PopupMenuItem(
+                        enabled: false,
+                        child: Text(
+                          '排序',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.mutedLightOf(context),
+                          ),
+                        ),
+                      ),
+                      for (final entry in AppState.visualSortLabels.entries)
+                        CheckedPopupMenuItem(
+                          value: 'sort:${entry.key}',
+                          checked: appState.visualSortKey == entry.key,
+                          child: Text(
+                            entry.value,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      PopupMenuItem(
+                        value: 'sortDir',
+                        child: Text(
+                          appState.visualSortDescending ? '改为升序' : '改为降序',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                    ],
                     PopupMenuItem(
                         key: ValueKey('$library-toolbar-refresh'),
                         value: 'refresh',
@@ -561,6 +635,14 @@ class _VisualToolbar extends StatelessWidget {
       case 'detail':
         onToggleDetail();
         break;
+      case 'sortDir':
+        appState.setVisualSortDescending(!appState.visualSortDescending);
+        break;
+      default:
+        // 极窄时排序项挂在「更多」里，值形如 sort:name
+        if (action.startsWith('sort:')) {
+          appState.setVisualSortKey(action.substring(5));
+        }
     }
   }
 
@@ -596,7 +678,7 @@ class _VisualToolbar extends StatelessWidget {
   }
 }
 
-/// 面包屑：上一级 + 「全部图片/全部视频」+ 逐级文件夹
+/// 面包屑：回作品层 + 上一级 + 「全部图片/全部视频」+ 逐级文件夹
 class _BreadcrumbBar extends StatelessWidget {
   const _BreadcrumbBar();
 
@@ -611,6 +693,14 @@ class _BreadcrumbBar extends StatelessWidget {
       height: 32,
       child: Row(
         children: [
+          // 作品层（文件夹与作品的卡片列表）的一键入口：进入作品后这里也看得见，
+          // 不用再靠「全部图片」返回（那条路以前只在文件夹层级里有效）。
+          TextButton.icon(
+            key: const ValueKey('breadcrumb-works'),
+            onPressed: () => appState.goHome(),
+            icon: const Icon(Icons.grid_view, size: 14),
+            label: const Text('作品', style: TextStyle(fontSize: 12)),
+          ),
           IconButton(
             icon: const Icon(Icons.arrow_upward, size: 16),
             tooltip: '上一级',
@@ -622,7 +712,7 @@ class _BreadcrumbBar extends StatelessWidget {
               children: [
                 TextButton(
                   key: const ValueKey('breadcrumb-root'),
-                  onPressed: () => _goRoot(appState),
+                  onPressed: () => appState.goHome(),
                   child: Text(rootLabel, style: const TextStyle(fontSize: 12)),
                 ),
                 for (final f in crumb) ...[
@@ -648,14 +738,6 @@ class _BreadcrumbBar extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  /// AppState 没有 goRoot，用 goUp 循环回到顶层
-  Future<void> _goRoot(AppState appState) async {
-    var guard = 0;
-    while (appState.currentFolderId != null && guard++ < 64) {
-      await appState.goUp();
-    }
   }
 }
 
@@ -717,41 +799,127 @@ class _SelectionBar extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       color: AppColors.surfaceOf(context),
-      child: Row(
-        children: [
-          Text('已选 ${ids.length} 项',
-              style:  TextStyle(
-                  fontSize: 12, color: AppColors.textPrimaryOf(context))),
-          const Spacer(),
-          TextButton.icon(
-            key: const ValueKey('selection-select-all'),
-            onPressed: appState.selectAllImages,
-            icon: const Icon(Icons.select_all, size: 16),
-            label: const Text('全选', style: TextStyle(fontSize: 12)),
-          ),
-          TextButton.icon(
-            onPressed: () => _addTags(context, appState, ids),
-            icon: const Icon(Icons.label_outline, size: 16),
-            label: const Text('添加标签', style: TextStyle(fontSize: 12)),
-          ),
-          TextButton.icon(
-            onPressed: () => _removeTags(context, appState, ids),
-            icon: const Icon(Icons.label_off_outlined, size: 16),
-            label: const Text('移除标签', style: TextStyle(fontSize: 12)),
-          ),
-          TextButton.icon(
-            key: const ValueKey('selection-delete'),
-            onPressed: () => _removeRecords(context, appState, ids),
-            icon: const Icon(Icons.playlist_remove, size: 16),
-            label: Text('移除记录',
-                style: TextStyle(fontSize: 12, color: AppColors.danger)),
-          ),
-          TextButton.icon(
-            onPressed: appState.clearSelection,
-            icon: const Icon(Icons.deselect, size: 16),
-            label: const Text('清除选择', style: TextStyle(fontSize: 12)),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 手机竖屏放不下 5 个带文字的按钮（连「已选 N 项」一起实测要 470 以上），
+          // 窄屏改成图标按钮 + 提示气泡；键值保持不变，桌面端与测试照旧。
+          final narrow = constraints.maxWidth < 520;
+          // 再窄（宽版布局打开详情面板后中间列只有 218）连 5 个 36 见方图标都放不
+          // 下，缩到 30 见方、标签只留数量，并给动作区套一层横向滚动兜底。
+          final tight = constraints.maxWidth < 300;
+          final side = tight ? 30.0 : 36.0;
+          final iconStyle = IconButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: Size.square(side),
+            maximumSize: Size.square(side),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          );
+          Widget action({
+            required Key key,
+            required String tooltip,
+            required IconData icon,
+            required VoidCallback onPressed,
+            required String label,
+            Color? color,
+          }) {
+            if (!narrow) {
+              return TextButton.icon(
+                key: key,
+                onPressed: onPressed,
+                icon: Icon(icon, size: 16),
+                label: Text(
+                  label,
+                  style: TextStyle(fontSize: 12, color: color),
+                ),
+              );
+            }
+            return IconButton(
+              key: key,
+              tooltip: tooltip,
+              icon: Icon(icon, size: tight ? 16 : 18, color: color),
+              onPressed: onPressed,
+              style: iconStyle,
+            );
+          }
+
+          final actions = <Widget>[
+            action(
+              key: const ValueKey('selection-select-all'),
+              tooltip: '全选',
+              icon: Icons.select_all,
+              onPressed: appState.selectAllImages,
+              label: '全选',
+            ),
+            action(
+              key: const ValueKey('selection-add-tags'),
+              tooltip: '添加标签',
+              icon: Icons.label_outline,
+              onPressed: () => _addTags(context, appState, ids),
+              label: '添加标签',
+            ),
+            action(
+              key: const ValueKey('selection-remove-tags'),
+              tooltip: '移除标签',
+              icon: Icons.label_off_outlined,
+              onPressed: () => _removeTags(context, appState, ids),
+              label: '移除标签',
+            ),
+            action(
+              key: const ValueKey('selection-delete'),
+              tooltip: '移除记录',
+              icon: Icons.playlist_remove,
+              onPressed: () => _removeRecords(context, appState, ids),
+              label: '移除记录',
+              color: AppColors.danger,
+            ),
+            action(
+              key: const ValueKey('selection-clear'),
+              tooltip: '清除选择',
+              icon: Icons.deselect,
+              onPressed: appState.clearSelection,
+              label: '清除选择',
+            ),
+          ];
+
+          if (!narrow) {
+            return Row(
+              children: [
+                Text(
+                  '已选 ${ids.length} 项',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textPrimaryOf(context),
+                  ),
+                ),
+                const Spacer(),
+                ...actions,
+              ],
+            );
+          }
+
+          // 窄屏：数量标签 + 图标按钮，动作区可横向滚动，再窄也不会溢出。
+          // reverse 让内容贴右，和宽屏 Spacer 的观感一致。
+          return Row(
+            children: [
+              Text(
+                tight ? '${ids.length} 项' : '已选 ${ids.length} 项',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textPrimaryOf(context),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  reverse: true,
+                  child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

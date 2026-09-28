@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,11 @@ class _FakePathProvider extends PathProviderPlatform {
   @override
   Future<String?> getApplicationSupportPath() async => root;
 }
+
+/// 1×1 的合法 PNG：缩略图生成器要真能解码原图。
+final _pngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -447,5 +453,110 @@ void main() {
       reason: '缓存目录跟着数据目录走',
     );
     expect(Directory(ThumbnailService.instance.cacheDir).existsSync(), isTrue);
+  });
+
+  test('作品层的可见媒体要登记进索引，详情才有兜底的选中项', () async {
+    final (work, _) = await makeImageLibrary();
+    final first = await addImage('a.jpg');
+    await addImage('b.jpg');
+
+    final app = AppState(player: PlayerController());
+    await app.enterWork(work.id!);
+
+    // 作品层的行是 ImageGrid 自己查的，AppState 一开始完全不知道它们
+    expect(app.ensureDetailSelection(), isFalse, reason: '一条可见媒体都没登记过时没有可兜底的图');
+    expect(app.selectedImage, isNull);
+
+    // 网格渲染后把可见媒体报上来（这正是修「详情一片空白」的那一步）
+    final visible = await mediaDao.queryByDirs(
+      [photoDir],
+      type: MediaType.image,
+      orderBy: MediaDao.naturalOrderBy,
+    );
+    app.reportVisibleMedia(visible);
+
+    expect(app.selectedImage, isNull, reason: '登记可见媒体不该顺手改选中项');
+    expect(app.ensureDetailSelection(), isTrue);
+    expect(app.selectedImage?.id, first.id);
+    expect(app.selectedIds, isEmpty, reason: '兜底只挑「详情看哪张」，不该把多选框选清掉或塞进一项');
+  });
+
+  test('批量导入：每个含媒体的子文件夹各建一个作品', () async {
+    final parent = Directory(p.join(tmp.path, '批量'));
+    final one = Directory(p.join(parent.path, '作品一'))
+      ..createSync(recursive: true);
+    final two = Directory(p.join(parent.path, '作品二'))
+      ..createSync(recursive: true);
+    Directory(p.join(parent.path, '空目录')).createSync(recursive: true);
+    File(p.join(one.path, '1.png')).writeAsBytesSync(_pngBytes);
+    File(p.join(two.path, '2.png')).writeAsBytesSync(_pngBytes);
+    // 父目录自己也有图：批量导入只管子目录，父目录那张不该进任何作品
+    File(p.join(parent.path, '封面.png')).writeAsBytesSync(_pngBytes);
+
+    final app = AppState(player: PlayerController());
+    await app.init();
+
+    final created = await app.importSubdirectoriesAsWorks(
+      parent.path,
+      library: 'image',
+    );
+    expect(created, 2);
+
+    final works = await workDao.listAll(library: 'image');
+    expect(works.map((w) => w.name).toSet(), {
+      '作品一',
+      '作品二',
+    }, reason: '一个子目录一个作品，父目录自己不成作品');
+    for (final work in works) {
+      final images = await app.imagesUnderWork(work.id!);
+      expect(images.length, 1, reason: '每个作品只收自己子目录里的图: ${work.name}');
+    }
+
+    // 再导一次：媒体都已在库里，不该重复建作品
+    expect(
+      await app.importSubdirectoriesAsWorks(parent.path, library: 'image'),
+      0,
+    );
+    expect((await workDao.listAll(library: 'image')).length, 2);
+
+    // 子目录里没有媒体时退回按单目录导入
+    final solo = Directory(p.join(tmp.path, '单目录'))
+      ..createSync(recursive: true);
+    File(p.join(solo.path, 'x.png')).writeAsBytesSync(_pngBytes);
+    expect(
+      await app.importSubdirectoriesAsWorks(solo.path, library: 'image'),
+      1,
+    );
+  });
+
+  test('导入后后台补齐缩略图，并让已建的占位卡片重新检查', () async {
+    Directory(photoDir).createSync(recursive: true);
+    final pathA = p.join(photoDir, 'a.png');
+    final pathB = p.join(photoDir, 'b.png');
+    File(pathA).writeAsBytesSync(_pngBytes);
+    File(pathB).writeAsBytesSync(_pngBytes);
+
+    final app = AppState(player: PlayerController());
+    await app.init();
+    final before = app.thumbEpoch;
+
+    await app.backfillThumbnails([pathA, pathB]);
+
+    final service = ThumbnailService.instance;
+    expect(
+      File(service.thumbPath(pathA, size: 300)).existsSync(),
+      isTrue,
+      reason: '进库后要按 README 的承诺后台补齐缩略图，不该等下次启动',
+    );
+    expect(File(service.thumbPath(pathB, size: 300)).existsSync(), isTrue);
+    expect(
+      app.thumbEpoch,
+      greaterThan(before),
+      reason: '补出来的图要让网格里已建的占位卡片重新检查',
+    );
+
+    // 已经有了就不重复生成
+    await app.backfillThumbnails([pathA]);
+    expect(File(service.thumbPath(pathA, size: 300)).existsSync(), isTrue);
   });
 }
