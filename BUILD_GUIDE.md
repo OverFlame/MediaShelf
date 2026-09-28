@@ -984,7 +984,7 @@ flutter build apk --release
 | 左侧文件夹面板 | 待定 |
 | 右侧标签面板 | 待定 |
 | 底部播放条 | 待定 |
-| 图片查看器 | 待定 |
+| 图片查看器 | 见第 22 节漫画阅读模式 |
 | 视频卡片与播放按钮 | 待定 |
 | 设置页与关于页 | 待定 |
 
@@ -1351,7 +1351,7 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 | 类型 | 补进来的 | 依据 |
 | --- | --- | --- |
 | 音频 | `.flac` `.m4a` `.aac` `.ogg` `.opus` | 无损与常见压缩格式，见 `lib/services/file_scanner.dart:9` |
-| 图片 | `.heic` `.avif` | 手机相册与网页常见格式 |
+| 图片 | `.heic` `.avif` | 手机相册与网页常见格式，显示口径见第 22.10 节 |
 | 视频 | 保持 12 个 | 见第 9.1 节 |
 
 ### 20.4 作品与条目并存
@@ -1373,16 +1373,16 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 
 | 阶段 | 内容 |
 | --- | --- |
-| 阶段 4 | `works.library` 加 `image`、`media.sort_key`、扩展名白名单、图片侧系列与卷 |
+| 阶段 4 | `works.library` 加 `image`、`media.sort_key`、扩展名白名单、图片侧系列与卷、阅读器核心与 v6 增量 |
 | 阶段 6 | 统一 AppState 接作品平铺条目、卷封面与卷内图片区 |
 
 ### 20.7 后置与不做
 
-后置：压缩包识别、EXIF 拍摄日期列、阅读与观看进度、特典名字表可配。
+后置：压缩包识别、EXIF 拍摄日期列、特典名字表可配。阅读与观看进度改到第 22.6 节。
 
 压缩包指 CBZ、CBR 与 ZIP，先只当一条条目。
 
-不做：整轨 cue 分轨、BDMV 原盘折叠、跨页合并显示、跨媒体系列、古典乐多创作者元数据。
+不做：整轨 cue 分轨、BDMV 原盘折叠、画集扫描的自动跨页拼接、跨媒体系列、古典乐多创作者元数据。阅读器的并排页对见第 22.5 节。
 
 ## 21 封面与裁剪（定稿）
 
@@ -1428,3 +1428,133 @@ Android 与 Windows 上的 FTS5 可用性没验。Android 走系统 SQLite，版
 阶段 4 做存储与算法，阶段 6 做交互与显示。
 
 后置：按显示位置存多套裁剪参数。
+
+## 22 漫画阅读模式（定稿）
+
+2026-09-27 定稿。基础是 PictureViewer2 的图片查看器。本节记录改造成漫画阅读模式的决定。
+
+### 22.1 复用与新增
+
+基础文件 `lib/widgets/image_viewer.dart`（754 行）随阶段 4 原样迁入。缩放、键盘、预载与降采样逻辑不动。
+
+| 能力 | 现状 | 位置 |
+| --- | --- | --- |
+| 缩放平移 | 0.05 倍到 50 倍 | `PictureViewer2/lib/widgets/image_viewer.dart:358` |
+| 键盘 | 方向键、Esc、加减号、0、F、I | 同文件 `:275` |
+| 相邻预载 | 前后各一张 | 同文件 `:246` |
+| 大图降采样 | 按屏幕物理宽解码 | 同文件 `:118` |
+| 缓存上限 | 默认 2048MB，可调 256 到 8192 | `lib/state/app_state.dart:139`、`:667` |
+
+新增五项：阅读方向、适应模式、无干扰全屏、并排页对存储、阅读进度。
+
+键位在阅读模式下固定如下。方向键语义随阅读方向翻转。
+
+| 键 | 作用 |
+| --- | --- |
+| 方向键左右 | 翻页，语义随 `reading_direction` |
+| Esc | 退出阅读模式 |
+| 加减号与 0 | 缩放与复位 |
+| F | 全屏开关，沿用现状 |
+| S | 适应模式循环 |
+| I | 详情面板开关，沿用现状 |
+
+### 22.2 阅读方向
+
+方向记在卷，即 `folders` 加一列。
+
+```sql
+reading_direction TEXT NOT NULL DEFAULT 'rtl' CHECK (reading_direction IN ('rtl', 'ltr'))
+```
+
+- `rtl` 指日漫右到左。此时左方向键前进，右方向键后退。
+- `ltr` 与之相反。
+- 翻页按钮与触控滑动跟着这一列走。
+- 阅读器内可切换，切换后立即写回该卷。
+
+### 22.3 适应模式
+
+适应模式同样记在卷。
+
+```sql
+reading_fit TEXT NOT NULL DEFAULT 'page' CHECK (reading_fit IN ('page', 'height', 'width'))
+```
+
+| 取值 | 画面 | BoxFit |
+| --- | --- | --- |
+| `page` | 整页可见 | `contain` |
+| `height` | 铺满高度，横向可拖 | `fitHeight` |
+| `width` | 铺满宽度，纵向可拖 | `fitWidth` |
+
+S 键按整页、适高、适宽循环，切换后写回该卷。
+
+### 22.4 无干扰全屏
+
+- 进入阅读模式后隐藏顶栏、底栏与 EXIF 面板。
+- 点击画面切换显隐，鼠标静止 3 秒后自动隐藏。
+- Esc 退出阅读模式。
+- v1 不做缩略图导航条。
+
+### 22.5 并排页对的存储（预留）
+
+v1 不做双页并排显示，先把存储建好，免去后置时再改表结构。
+
+```sql
+CREATE TABLE reading_spreads (
+  volume_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+  left_media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+  right_media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+  PRIMARY KEY (volume_id, left_media_id)
+)
+```
+
+- v1 建表，不写入，不读取显示，界面不提供标记入口。
+- 后置实现时按此表显示并排。右到左时第 1 页单独占右侧。
+- 本节按预留存储理解用户的持久化要求。若要在 v1 就支持单对页并排显示，落点需要调整。
+
+### 22.6 阅读进度
+
+按用户决定随阶段 6 一起做。
+
+```sql
+CREATE TABLE reading_progress (
+  volume_id INTEGER PRIMARY KEY REFERENCES folders(id) ON DELETE CASCADE,
+  media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+  page_index INTEGER NOT NULL DEFAULT 0,
+  finished INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+)
+```
+
+- 进入阅读器时从该卷上次的 `media_id` 与 `page_index` 开始。
+- 翻页更新本行，写入做 1 秒节流。
+- 视频与音频的观看进度可复用同一张表，等卷换成作品主键那一刻再议。
+
+### 22.7 入口
+
+- 卷即一级文件夹的工具栏加「阅读」按钮。
+- 网格中双击一张图片，从该张进入阅读器。
+- 音频库卷详情的「本卷图片」区双击走同一入口，见第 19.4 节。
+
+### 22.8 不做的
+
+- 上下连续滚动即条漫模式，后置。
+- 双页并排显示，后置，存储已在 22.5 预留。
+- 画集扫描的自动跨页拼接，与第 20.7 节一致。
+- 压缩包内直接阅读，与第 20.7 节一致。
+
+### 22.9 落点
+
+| 阶段 | 做什么 |
+| --- | --- |
+| 阶段 4 | `tables.dart` v6 增量（`folders` 两列、`reading_spreads` 表）、查看器改造、阅读器入口 |
+| 阶段 6 | `reading_progress` 表与读写、卷层入口、本卷图片区联动 |
+
+### 22.10 HEIC 与 AVIF 的显示口径
+
+第 20.3 节把 HEIC 与 AVIF 补进白名单。这两类格式的解码能力要单独说明。
+
+- 实测 `~/.pub-cache/hosted/pub.dev/image-4.10.1/lib/src/formats/` 无解码器，目录里只有 bmp、gif、ico、jpeg、png、pnm、psd、pvr、tga、tiff、webp、exr。
+- Flutter 侧对这两类格式的支持按平台而异，本机未验证。
+- 按用户决定，文件照常入库并显示条目，界面标注「不可预览」。
+- 落地做法：显示处捕获解码失败，落到占位卡并给出格式提示。阅读器遇到该类页可跳过。
+- 建议加运行时探针。用 `instantiateImageCodec` 试解一张样本，成功才启用预览，避免硬编码平台名单。

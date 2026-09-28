@@ -68,9 +68,9 @@ flutter test
 | 1 | 依赖合并 | 已完成，提交 `c2ec53c` |
 | 2 | 数据层统一 | 已完成，提交 `5b36a64` |
 | 3 | 迁移服务 | 待开始 |
-| 4 | 图片栈迁入 | 待开始 |
+| 4 | 图片栈迁入 | 待开始（含阅读器核心） |
 | 5 | 视频识别与外链 | 待开始 |
-| 6 | 统一 AppState | 待开始 |
+| 6 | 统一 AppState | 待开始（含阅读进度与入口） |
 | 7 | 设置、主题与页面 | 待开始 |
 | 8 | 打包与 CI | 待开始 |
 | 9 | Android 验收 | 延后 |
@@ -167,6 +167,7 @@ dart run tool/migrate_check.dart --src-a <老库 A> --src-b <老库 B> --dst <�
 2. 保持 `lib/services/data_dir_service.dart` 仍用 AudioShelf 版为底。
 3. 做系列、卷与封面：`folders.cover_path` 与 `cover_crop` 增量、卷封面与手动指定。自定义裁剪、系列导入入口与特典自动标签见 BUILD_GUIDE 第 19 与 21 节。
 4. 做自然排序与扩展名：`media.sort_key`、音频补 FLAC／M4A／AAC／OGG／OPUS、图片补 HEIC／AVIF，见 BUILD_GUIDE 第 20 节。
+5. 做阅读器核心：`folders.reading_direction` 与 `reading_fit`、`reading_spreads` 表、查看器改造与阅读入口，见 BUILD_GUIDE 第 22 节。
 
 验收：
 
@@ -210,6 +211,7 @@ flutter test test/services/video_launcher_test.dart
 2. 并入 AudioShelf 的作品集、字幕、播放队列、选择集。
 3. 删掉第 7.4 节的过渡视图。
 4. 改按 `tracks` 表名清理的那段删除逻辑。
+5. 做阅读进度：`reading_progress` 表与节流写入、卷层「阅读」入口、本卷图片区联动，见 BUILD_GUIDE 第 22.6 与 22.7 节。
 
 验收：
 
