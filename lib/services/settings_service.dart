@@ -125,6 +125,39 @@ class SettingsService {
     await _save();
   }
 
+  // ── 图片 / 视频库排序 ──
+  //
+  // 字段：`name`（自然序）/ `mtime` / `size` / `added`。与音频的 `sort_key`
+  // 分开存：三个库的关注点不一样，改视频的顺序不该动图片的顺序。
+
+  String get imageSortKey => (_data['image_sort_key'] as String?) ?? 'name';
+
+  Future<void> setImageSortKey(String key) async {
+    _data['image_sort_key'] = key;
+    await _save();
+  }
+
+  bool get imageSortDescending => (_data['image_sort_desc'] as bool?) ?? false;
+
+  Future<void> setImageSortDescending(bool desc) async {
+    _data['image_sort_desc'] = desc;
+    await _save();
+  }
+
+  String get videoSortKey => (_data['video_sort_key'] as String?) ?? 'name';
+
+  Future<void> setVideoSortKey(String key) async {
+    _data['video_sort_key'] = key;
+    await _save();
+  }
+
+  bool get videoSortDescending => (_data['video_sort_desc'] as bool?) ?? false;
+
+  Future<void> setVideoSortDescending(bool desc) async {
+    _data['video_sort_desc'] = desc;
+    await _save();
+  }
+
   // ── 高级筛选表达式历史 ──
   List<String> get expressionHistory {
     final raw = _data['expr_history'];

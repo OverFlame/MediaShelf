@@ -17,6 +17,7 @@ import 'package:mediashelf/db/tag_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/pages/home_page.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
+import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/services/thumbnail_cache.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
@@ -466,5 +467,67 @@ void main() {
     await switchLibrary(tester, kAudioLibrary);
     expect(find.byType(TagPanel), findsOneWidget);
     expect(find.byKey(const ValueKey('audio-left-tab-tags')), findsNothing);
+  });
+
+  testWidgets('视觉库排序菜单：选反序后网格顺序真的跟着变', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    double xOf(int id) => tester.getTopLeft(tile(id)).dx;
+    expect(
+      xOf(imageIds[0]),
+      lessThan(xOf(imageIds[1])),
+      reason: '默认自然序 a.png 在前',
+    );
+
+    // 工具栏的排序入口：四个字段 + 反序
+    await tester.tap(find.byKey(const ValueKey('image-toolbar-sort')));
+    await tester.pumpAndSettle();
+    expect(find.text('文件名'), findsOneWidget);
+    expect(find.text('修改时间'), findsOneWidget);
+    expect(find.text('文件大小'), findsOneWidget);
+    expect(find.text('加入时间'), findsOneWidget);
+
+    await tester.tap(find.text('改为降序'));
+    await tester.pumpAndSettle();
+    await settleIo(tester);
+
+    expect(app.visualSortDescending, isTrue);
+    expect(SettingsService.instance.imageSortDescending, isTrue, reason: '要落盘');
+    expect(
+      xOf(imageIds[0]),
+      greaterThan(xOf(imageIds[1])),
+      reason: '反序后 b.png 在前',
+    );
+
+    // 视频库有自己的排序入口
+    await switchLibrary(tester, kVideoLibrary);
+    expect(
+      find.byKey(const ValueKey('video-toolbar-sort')),
+      findsOneWidget,
+      reason: '视频库也要能排序',
+    );
+  });
+
+  testWidgets('视觉库工具栏：窄窗口下不会 RenderFlex 溢出', (tester) async {
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await pumpHome(tester);
+    await switchLibrary(tester, kImageLibrary);
+
+    // 500 是工具栏收进「更多」菜单的阈值，排序按钮加进来后阈值附近最容易溢出
+    for (final width in [420.0, 440.0, 500.0, 560.0, 820.0]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await tester.pump();
+      await settleIo(tester);
+      expect(tester.takeException(), isNull, reason: '$width 宽下工具栏不该溢出');
+    }
   });
 }

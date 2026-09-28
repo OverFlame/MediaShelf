@@ -1,13 +1,17 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/db/media_dao.dart';
 import 'package:mediashelf/db/tables.dart';
 import 'package:mediashelf/db/tag_dao.dart';
 import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
+import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/utils/filter_expression.dart';
 
 /// 建一个空的 v5 库。
@@ -506,4 +510,78 @@ void main() {
 
     await db.close();
   });
+
+  test('DatabaseManager.init 给老行回填 sort_key（补零，修自然序）', () async {
+    PathProviderPlatform.instance = _FakePathProvider(
+      p.join(dir.path, 'support'),
+    );
+    DataDirService.instance.resetCache();
+
+    // 先建库并塞一批「老行」：sort_key 为 NULL（v7 的 ALTER TABLE 只加列不回填）
+    await DatabaseManager.instance.init();
+    final names = ['第1话.jpg', '第10话.jpg', '第2话.jpg'];
+    for (var i = 0; i < names.length; i++) {
+      await DatabaseManager.instance.db.insert('media', {
+        'path': p.join(dir.path, 'pics', names[i]),
+        'media_type': MediaType.image.value,
+        'filename': names[i],
+        'added_at': i,
+        'sort_key': null,
+      });
+    }
+    expect(
+      (await DatabaseManager.instance.db.query(
+        'media',
+      )).every((r) => r['sort_key'] == null),
+      isTrue,
+      reason: '前提：老行没有 sort_key',
+    );
+    await DatabaseManager.instance.close();
+
+    // 重开：init 里那一步回填应该把补零后的键写回去
+    await DatabaseManager.instance.init();
+    final rows = await DatabaseManager.instance.db.query(
+      'media',
+      columns: ['filename', 'sort_key'],
+    );
+    String keyOf(String filename) =>
+        rows.firstWhere((r) => r['filename'] == filename)['sort_key'] as String;
+    expect(keyOf('第1话.jpg'), '第0001话.jpg');
+    expect(keyOf('第2话.jpg'), '第0002话.jpg');
+    expect(keyOf('第10话.jpg'), '第0010话.jpg');
+
+    // 自然序因此恢复：字符串序会把 10 排到 2 前面
+    final items = await MediaDao(
+      DatabaseManager.instance.db,
+    ).queryAll(type: MediaType.image);
+    expect(items.map((m) => m.filename).toList(), [
+      '第1话.jpg',
+      '第2话.jpg',
+      '第10话.jpg',
+    ]);
+
+    // 幂等：都补完了，再开一次不再改动
+    final before = {for (final r in rows) r['filename']: r['sort_key']};
+    await DatabaseManager.instance.close();
+    await DatabaseManager.instance.init();
+    final after = {
+      for (final r in await DatabaseManager.instance.db.query(
+        'media',
+        columns: ['filename', 'sort_key'],
+      ))
+        r['filename']: r['sort_key'],
+    };
+    expect(after, before);
+    await DatabaseManager.instance.close();
+  });
+}
+
+/// 把 getApplicationSupportDirectory() 指到临时目录（回填用例要真开库）。
+class _FakePathProvider extends PathProviderPlatform {
+  _FakePathProvider(this.root);
+
+  final String root;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => root;
 }

@@ -12,6 +12,7 @@ import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
+import 'package:mediashelf/services/thumbnail_cache.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 
@@ -72,13 +73,21 @@ void main() {
   }
 
   /// 往图片库插入一张图，返回落库后的行（含 id）。
-  Future<MediaItem> addImage(String name, {String? alias}) async {
+  Future<MediaItem> addImage(
+    String name, {
+    String? alias,
+    int addedAt = 0,
+    int? size,
+    int? mtime,
+  }) async {
     final path = p.join(photoDir, name);
     await mediaDao.insertRow(MediaItem(
       path: path,
       filename: name,
       mediaType: MediaType.image,
-      addedAt: 0,
+      addedAt: addedAt,
+      fileSize: size,
+      fileMtime: mtime,
       width: 100,
       height: 80,
       alias: alias,
@@ -334,5 +343,109 @@ void main() {
     expect(app.gridColumns, 2);
     await app.setViewMode('weird');
     expect(app.viewMode, 'grid');
+  });
+
+  test('视觉库排序：默认自然序，可切大小/修改时间/加入时间与反序', () async {
+    final (work, folder) = await makeImageLibrary();
+    // 文件名故意让「字符串序」与自然序相反（"10" < "2"），三个字段各给不同值
+    await addImage('10.jpg', size: 100, mtime: 300, addedAt: 30);
+    await addImage('2.jpg', size: 300, mtime: 100, addedAt: 10);
+    await addImage('1.jpg', size: 200, mtime: 200, addedAt: 20);
+
+    final app = AppState(player: PlayerController());
+    await app.enterWork(work.id!);
+    await app.enterFolder(folder.id!);
+    await settle();
+
+    List<String> names() => app.images.map((i) => i.filename).toList();
+
+    expect(app.visualSortKey, 'name');
+    expect(app.visualSortDescending, isFalse);
+    expect(names(), [
+      '1.jpg',
+      '2.jpg',
+      '10.jpg',
+    ], reason: '默认自然序：sort_key 补零后 2 排在 10 前面');
+
+    await app.setVisualSortKey('size');
+    await settle();
+    expect(names(), ['10.jpg', '1.jpg', '2.jpg'], reason: '按文件大小升序');
+
+    await app.setVisualSortDescending(true);
+    await settle();
+    expect(names(), ['2.jpg', '1.jpg', '10.jpg'], reason: '反序');
+
+    await app.setVisualSortKey('mtime');
+    await settle();
+    expect(names(), [
+      '10.jpg',
+      '1.jpg',
+      '2.jpg',
+    ], reason: '降序还开着：mtime 300/200/100');
+
+    await app.setVisualSortDescending(false);
+    await app.setVisualSortKey('added');
+    await settle();
+    expect(names(), ['2.jpg', '1.jpg', '10.jpg'], reason: '加入时间升序');
+
+    // 落盘：设置项写进 SettingsService，重开也能读回
+    expect(SettingsService.instance.imageSortKey, 'added');
+    expect(SettingsService.instance.imageSortDescending, isFalse);
+    final app2 = AppState(player: PlayerController());
+    await app2.loadSettings();
+    expect(app2.visualSortKey, 'added');
+    expect(app2.visualSortDescending, isFalse);
+
+    // 视频库单存一份，互不干扰
+    expect(SettingsService.instance.videoSortKey, 'name');
+    await SettingsService.instance.setVideoSortKey('mtime');
+    expect(SettingsService.instance.videoSortKey, 'mtime');
+    expect(SettingsService.instance.imageSortKey, 'added');
+
+    // 未知字段被忽略，不会把界面带进无排序状态
+    await app.setVisualSortKey('nonsense');
+    expect(app.visualSortKey, 'added');
+  });
+
+  test('查看器翻页时「图片详情」跟着走', () async {
+    final (work, folder) = await makeImageLibrary();
+    for (var i = 0; i < 3; i++) {
+      await addImage('img_$i.jpg');
+    }
+
+    final app = AppState(player: PlayerController());
+    await app.enterWork(work.id!);
+    await app.enterFolder(folder.id!);
+    await settle();
+
+    app.openViewer(app.images, 1);
+    expect(app.selectedImage?.filename, 'img_1.jpg', reason: '打开查看器即选中当前页');
+
+    app.navigateViewer(1);
+    expect(
+      app.selectedImage?.filename,
+      'img_2.jpg',
+      reason: '详情面板读的是 selectedImage，不同步就会停在上一次选中的图',
+    );
+    expect(app.selectedId, app.images[2].id);
+
+    app.navigateViewer(-1);
+    expect(app.selectedImage?.filename, 'img_1.jpg');
+  });
+
+  test('AppState.init() 初始化缩略图服务（回归：漏掉这步一张缩略图都不出）', () async {
+    ThumbnailService.instance.resetForTest();
+    expect(ThumbnailService.instance.isInitialized, isFalse);
+
+    final app = AppState(player: PlayerController());
+    await app.init();
+
+    expect(ThumbnailService.instance.isInitialized, isTrue);
+    expect(
+      ThumbnailService.instance.cacheDir,
+      contains('thumbnails'),
+      reason: '缓存目录跟着数据目录走',
+    );
+    expect(Directory(ThumbnailService.instance.cacheDir).existsSync(), isTrue);
   });
 }

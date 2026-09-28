@@ -299,4 +299,57 @@ void main() {
     await tester.pumpAndSettle();
     expect(app.viewerIndex, 1, reason: 'ltr 向左滑是前进');
   });
+
+  testWidgets('触控滑动翻页：慢慢拖够距离也算，画面不会被拖出视口', (tester) async {
+    final items = (await tester.runAsync(() => seedImages(3)))!;
+    app.openViewer(items, 0);
+
+    await pumpViewer(tester);
+    await settleIo(tester);
+
+    // 适应窗口时图与视口同大：无限边界会让每次滑动都把画面推走并留在那儿。
+    final viewer = tester.widget<InteractiveViewer>(
+      find.byType(InteractiveViewer),
+    );
+    expect(viewer.boundaryMargin, EdgeInsets.zero);
+    expect(viewer.minScale, 1.0, reason: '下限就是适应窗口，不该缩得比视口还小');
+    expect(viewer.maxScale, 20.0);
+
+    // 慢速拖动（速度接近 0）过去只看甩动速度，什么都不发生。
+    final area = find.byKey(const ValueKey('viewer-image-area'));
+    await tester.timedDrag(
+      area,
+      const Offset(400, 0),
+      const Duration(milliseconds: 800),
+    );
+    await tester.pumpAndSettle();
+    expect(app.viewerIndex, 1, reason: 'rtl 下慢拖向右足够远应前进');
+  });
+
+  testWidgets('系统栏留白：顶栏让开状态栏、底栏让开导航条', (tester) async {
+    final items = (await tester.runAsync(() => seedImages(2)))!;
+    app.openViewer(items, 0);
+
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.viewPadding = const FakeViewPadding(top: 24, bottom: 48);
+    await pumpViewer(tester);
+    await settleIo(tester);
+
+    expect(
+      tester.getSize(find.byKey(const ValueKey('viewer-top-bar'))).height,
+      52 + 24,
+      reason: '顶栏要给状态栏让出高度，否则按钮被盖住点不到',
+    );
+    expect(
+      tester.getSize(find.byKey(const ValueKey('viewer-bottom-bar'))).height,
+      52 + 48,
+      reason: '底栏要给系统导航条让出高度',
+    );
+
+    // 关闭按钮真的落在状态栏下方，能点到
+    final close = tester.getCenter(
+      find.byKey(const ValueKey('viewer-close-button')),
+    );
+    expect(close.dy, greaterThanOrEqualTo(24));
+  });
 }

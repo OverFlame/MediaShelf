@@ -974,3 +974,53 @@
 - `AppState.createTag` 会把空命名空间归成 `general`，测试里要造真正的「无命名空间」标签得直接 `TagDao.insert(Tag(namespace: ''))` 再 `app.loadTags()`。
 - `ListView.builder` 的 `maxScrollExtent` 是估出来的：`jumpTo` 到估出来的最大值会被重新算出的范围夹回去（实测 6285 被夹到 2051），测试改用 `jumpTo(600)` 这种确定值。
 - 懒构建滚动后不一定回收已构建的分组，别拿「某个 key 还在不在」当「有没有滚」的证据，要拿坐标或 `position.pixels`。
+
+## 2026-09-28 看图模式：滑动漂移、系统栏遮挡、缩略图不生成与视觉库排序（`1.3.0+20`）
+
+用户报：「安卓端看图模式有严重问题，图片会随着滑动而移动导致根本无法操作和观看，上方 UI 顶着屏幕最顶端也点不到。对于图片模式来说，扫描进入的时候没有缩略图生成，图片详情也没用，也没有做到承诺的前置补零，图片和视频的排序也不知道在哪里。」
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| 缩略图服务启动 | `lib/state/app_state.dart` 的 `init()` 开头补 `await ThumbnailService.instance.init();`。此前 `ThumbnailService.instance.init()` 在整个 `lib/` 里一次都没被调用（只有 3 个测试调过），而 `lib/services/thumbnail_cache.dart` 用的是 `late String _cacheDir`，`thumbPath()` 一读就抛 `LateInitializationError` |
+| 缩略图服务容错 | `lib/services/thumbnail_cache.dart` 把 `_cacheDir` 改成可空 `String? _cacheDir` 加 `_initialized` 标志，`cacheDir` 走 `_requireDir()`（未初始化给 `StateError('ThumbnailService 未初始化：先 await ThumbnailService.instance.init()')`），`init({String? cacheDir})` 幂等（不传目录时重复调用直接返回，传了目录总是重设，保住测试各自的临时目录），另加 `resetForTest()` |
+| 网格不吞异常 | `lib/widgets/image_grid.dart` 的 `_checkAndGenerate` 把 `File? thumbFile;` 提到 `try` 外、`thumbPath` 调用挪进 `try`：缓存目录没准备好时只该落成「没有缩略图」，不该让异常从 post-frame 的 Future 里逃出去（那样 `_thumbFile` 永远是 null，网格只剩占位图） |
+| 查看器不再被拖走 | `lib/widgets/image_viewer.dart` 的 `InteractiveViewer` 把 `boundaryMargin` 从 `EdgeInsets.all(double.infinity)` 改成 `EdgeInsets.zero`、`minScale` 从 0.05 提到 1.0、`maxScale` 从 50 收到 20；新增 `_dragDx` 累计手势横向位移（`onInteractionStart` 清零、`onInteractionUpdate` 里 `details.pointerCount <= 1` 时累加）；`_onInteractionEnd` 改成「松手速度 ≥200 或拖够屏宽 18%」都翻页；`_applyScale` 缩到 1 倍时直接 `Matrix4.identity()` 归位 |
+| 系统栏留白 | 同文件的 `_buildTopBar` / `_buildBottomBar` / `_buildExifPanel` 全部读 `MediaQuery.viewPaddingOf(context)`：顶栏高 `52 + topInset`、底栏 `52 + bottomInset`、EXIF 面板 `top: 64 + top`，渐变仍铺到屏幕边 |
+| sort_key 回填 | `lib/db/database.dart` 的 `init()` 在 `PRAGMA journal_mode=WAL` 之后调 `_backfillSortKeys(db)`：查 `sort_key IS NULL OR sort_key = ''` 的行，逐行用 `sortKeyOfPath(path)` 写回（`batch` 提交）。`sort_key` 是 v7 用 `ALTER TABLE` 加的，而迁移表是纯 SQL 列表、没有 Dart 侧钩子，老库全是 NULL，自然序因此退化成文件名字符串序 |
+| 作品层排序 | `lib/widgets/image_grid.dart` 的 `_loadWorkItems` 原来自己 `..sort((a, b) => a.filename.compareTo(b.filename))`，把库里的自然序覆盖掉了；改成由外部传入 `int Function(MediaItem, MediaItem) sort`，调用处用 `appState.visualSortComparator` |
+| 视觉库排序 | `lib/state/app_state.dart` 加图片 / 视频两套排序状态（`_imageSortKey` / `_imageSortDesc` / `_videoSortKey` / `_videoSortDesc`，键 `name` / `mtime` / `size` / `added`，`visualSortLabels` 给中文名），`visualSortComparator` 按当前库取一套、非文件名排序相等时回落 `MediaDao.compareNatural`、降序取负；`lib/services/settings_service.dart` 落 `image_sort_key` / `image_sort_desc` / `video_sort_key` / `video_sort_desc`；`lib/pages/home_page.dart` 的 `_VisualToolbar` 在视图模式按钮后加 `PopupMenuButton`（key `'$library-toolbar-sort'`，tooltip「排序」） |
+| 图片详情跟页 | `AppState` 加 `_syncSelectedToViewer()`（把 `_viewerImages[_viewerIndex].id` 写进 `_selectedImageId`），`openViewer` / `navigateViewer` 都调用：翻大图时详情面板跟着走 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 缩略图服务在哪初始化 | 放 `AppState.init()` 的日志行之后。`lib/main.dart` 的启动序列没有它，而界面一建卡片就会调 `thumbPath()`，放在服务层上游最省事；同时把「没初始化就读目录」从 `LateInitializationError` 换成能读懂的错误 |
+| 缩略图目录可空还是兜底 | 不用临时目录兜底：兜底会把缩略图写进一个下次启动就找不到的地方，静静地白写一堆文件；宁可明确报错、并让网格降级成占位图 |
+| 查看器边界 | 零边界：适应窗口时图与视口同大，无限边界会让任何一次滑动把画面拖出视口并停在那里（用户看到的「图片随着滑动而移动」）；零边界下适应窗口拖不动，放大后仍能在图内平移 |
+| 缩到最小是否归位 | 归位。按焦点缩放会留下平移量，而零边界下适应窗口时拖不动，留着偏移就再也摆不正 |
+| 翻页触发条件 | 速度与距离取或：只看松手速度的话，慢慢拖到底什么都不发生；距离阈值取屏宽 18%，避免误触 |
+| 老库怎么补零 | 在 `DatabaseManager.init()` 打完 WAL 后跑一次 Dart 回填，而不是加一条迁移。`Tables.migrations` 是纯 SQL 列表，回填要读路径算 `sortKeyOfPath`，SQL 写不出来；回填只碰 `sort_key` 为空的行，重复启动是空操作 |
+| 视觉库排序状态放哪 | 放 `AppState`（按库一套），不放各个界面：工具栏、网格、作品层排序都要读同一份，设置还要持久化 |
+| 降序怎么实现 | 比较器里对结果取负，相等时仍先按自然序回落再取负，保证同值里的相对顺序稳定 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error（都是既有项：`import_service.dart:45-47` 的 `prefer_initializing_formals`、`cover_image.dart:34` 的 `unnecessary_underscores`）。
+- `flutter test`：454 用例全过（上一版基线 444）。新增 10 例：`test/services/thumbnail_cache_test.dart` 2 例（未初始化给 `StateError`、不传目录的 `init` 幂等）；`test/db_migration_test.dart` 1 例（`DatabaseManager.init` 给老行回填 `sort_key`，`第10话.jpg` 的键是 `第0010话.jpg`、查询顺序 1/2/10，并验幂等）；`test/state/app_state_images_test.dart` 3 例（默认自然序与四种排序字段、降序；`AppState.init()` 真的初始化了缩略图服务；查看器翻页时 `_selectedImageId` 跟着走）；`test/widget/image_viewer_test.dart` 2 例（慢慢拖够距离也翻页且画面没被拖走、顶栏让开状态栏 / 底栏让开导航条）；`test/widget/home_page_test.dart` 2 例（排序菜单选反序后网格顺序真的变、窄窗口下工具栏不再 `RenderFlex` 溢出）。
+- 界面层核对：查看器滑动后的变换矩阵回到单位阵、EXIF 面板跟着顶栏下移；图片库与视频库的排序各记各的，切库回来不串。
+- `git diff --numstat` 与 `git diff -w --numstat` 每个文件都相等（12 个文件、643 加 / 34 减），确认改动里没有混进空白噪音。
+
+未完成事项：Windows 与 Android 上没有跑过这一轮界面（本机没有安卓设备，只有 Linux 桌面与单元 / widget 测试）；查看器的滑动只在 widget 测试里模拟指针，真机手感仍需人确认。
+
+踩坑：
+
+- `ThumbnailService.instance.init()` 从没被调用，症状却是「扫描进去没有缩略图」：`late` 字段的 `LateInitializationError` 从 post-frame 的 Future 里逃出去不会红屏，只是那张卡片永远没有缩略图，所以查了半天界面层。教训：先 grep 一遍「某个单例的 init 到底有没有人调」。
+- 同类问题一起受损：图片详情预览（`image_detail.dart` 的 `ensureThumbnail`）与设置页的缓存占用 / 清理（`home_page.dart`、`settings_page.dart`）都读同一个目录，服务没初始化时它们也全是坏的。
+- `InteractiveViewer` 给了无限边界后，第 1 张到第 20 张「翻页」的手势其实全被它吃成平移；把边界收掉之前，翻页逻辑怎么写都测不出效果。
+- widget 测试里的 `tester.takeException()` 只给一句摘要，拿不到出错的是哪个 widget；把 `FlutterError.onError` 临时换成 `FlutterError.dumpErrorToConsole` 才打出 `The relevant error-causing widget was: Row ... home_page.dart:387:18`，顺着 creator 链才确定是工具栏自己溢出（440 宽溢出 37 像素）。修法是紧凑阈值从 430 提到 500。
+- 用 `MediaItem.toMap()` 直接插库时枚举要给 `.value`（`'media_type': MediaType.image.value`），给枚举本身会被 sqflite 拒掉。
+- 本机 `dart format`（Dart 3.13.4 / Flutter 3.47.5）已换成 tall 样式，跑一次 `dart format lib test` 会重排 108 个文件、6213 加 / 3144 减，看着像把整个仓库改了一遍；HEAD 是旧 short 样式，在新工具链下复现不出来（`--language-version` 与 `--trailing-commas` 都试过）。清理办法：`git checkout` 回 HEAD，再只重放这一轮的功能改动，最后用「去掉空白与逗号后比较」的规范化脚本验证一条功能都没漏；判定「没有空白噪音」的硬指标是每个文件 `git diff --numstat` 等于 `git diff -w --numstat`。
+- 用脚本批量替换 `_cacheDir` 时把 `_requireDir()` 自己的函数体也改成了 `_requireDir()`（无限递归）；批量替换必须先断言命中次数，不满足就整文件不落盘。

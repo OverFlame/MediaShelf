@@ -203,5 +203,31 @@ void main() {
           .toList();
       expect(after, isEmpty);
     });
+
+    test('未初始化时 thumbPath 给的是可读的 StateError', () async {
+      // 回归：这里原来是 late 字段，抛 LateInitializationError，
+      // 堆栈指不到「谁忘了 init」，线上表现为网格一张缩略图都不出。
+      service.resetForTest();
+      expect(
+        () => service.thumbPath('/tmp/whatever.jpg'),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('ThumbnailService.instance.init()'),
+          ),
+        ),
+      );
+      // 之后再 init 仍要能正常工作
+      await service.init(cacheDir: cacheDir.path);
+      expect(service.isInitialized, isTrue);
+    });
+
+    test('不给 cacheDir 的 init 幂等：重复调用不换目录', () async {
+      await service.init();
+      final first = service.cacheDir;
+      await service.init();
+      expect(service.cacheDir, first);
+    });
   });
 }

@@ -52,7 +52,11 @@ class ThumbnailMemoryCache {
 class ThumbnailService {
   static ThumbnailService? _instance;
   final ThumbnailMemoryCache _memoryCache = ThumbnailMemoryCache();
-  late String _cacheDir;
+  String? _cacheDir;
+  bool _initialized = false;
+
+  /// 缓存目录是否已经就绪。未就绪时 [thumbPath] 等同步接口无目录可用。
+  bool get isInitialized => _initialized;
 
   /// 同时解码的原图数量上限。
   ///
@@ -74,15 +78,42 @@ class ThumbnailService {
   }
 
   /// 缓存根目录路径
-  String get cacheDir => _cacheDir;
+  String get cacheDir => _requireDir();
 
-  /// [cacheDir] 只给测试用：跳过 DataDirService 直接指定缓存根目录
+  /// 取缓存目录；未初始化时给一条能读懂的错误，而不是 late 字段的
+  /// LateInitializationError（那个堆栈指不到「谁忘了 init」）。
+  String _requireDir() {
+    final dir = _cacheDir;
+    if (dir == null) {
+      throw StateError(
+        'ThumbnailService 未初始化：先 await ThumbnailService.instance.init()',
+      );
+    }
+    return dir;
+  }
+
+  /// [cacheDir] 只给测试用：跳过 DataDirService 直接指定缓存根目录。
+  ///
+  /// 幂等：应用启动路径（不给 cacheDir）重复调用直接返回；测试显式传目录时
+  /// 按新目录重设，这样同一个测试进程里每个用例仍各用各的临时目录。
   Future<void> init({String? cacheDir}) async {
+    if (cacheDir == null && _initialized) return;
     // 缩略图随数据目录走（可迁移）
-    _cacheDir =
+    final dir =
         cacheDir ?? p.join(await DataDirService.instance.dataDir, 'thumbnails');
-    await Directory(_cacheDir).create(recursive: true);
-    logInfo('Thumbnail', 'Cache dir: $_cacheDir');
+    await Directory(dir).create(recursive: true);
+    _cacheDir = dir;
+    _initialized = true;
+    logInfo('Thumbnail', 'Cache dir: $dir');
+  }
+
+  /// 还原成「没初始化过」：测试要验证初始化路径本身时才需要。
+  ///
+  /// 只复位目录状态，不动内存缓存：里面的 `ui.Image` 是各用例自己
+  /// `dispose()` 的，这里再清一遍会二次释放。
+  void resetForTest() {
+    _cacheDir = null;
+    _initialized = false;
   }
 
   /// 获取缩略图路径（不生成，仅返回路径）。
@@ -96,7 +127,7 @@ class ThumbnailService {
     final stamp = mtimeMs ?? _mtimeMs(originalPath);
     final hash = _hashKey(originalPath);
     final subDir = hash.substring(0, 2);
-    return p.join(_cacheDir, subDir, '$hash.$stamp.t$size');
+    return p.join(_requireDir(), subDir, '$hash.$stamp.t$size');
   }
 
   /// 原图路径的哈希（不含 mtime，用于按前缀清理）
@@ -116,7 +147,7 @@ class ThumbnailService {
 
   /// 缩略图缓存目录下，该原图所属的子目录
   Directory _subDirOf(String originalPath) =>
-      Directory(p.join(_cacheDir, _hashKey(originalPath).substring(0, 2)));
+      Directory(p.join(_requireDir(), _hashKey(originalPath).substring(0, 2)));
 
   /// 占用一个解码名额（超过上限时排队等待）
   Future<void> _acquireSlot() async {
@@ -143,7 +174,7 @@ class ThumbnailService {
 
   /// 确保磁盘缓存目录存在
   Future<void> _ensureSubDir(String subDir) async {
-    await Directory(p.join(_cacheDir, subDir)).create(recursive: true);
+    await Directory(p.join(_requireDir(), subDir)).create(recursive: true);
   }
 
   /// 生成缩略图并写入磁盘缓存
@@ -213,7 +244,7 @@ class ThumbnailService {
   /// 删除 [_subDirOf] 里同一原图、同一尺寸、非 [keepName] 的历史缩略图
   Future<void> _removeOtherVariants(String hash, int size,
       {required String keepName}) async {
-    final dir = Directory(p.join(_cacheDir, hash.substring(0, 2)));
+    final dir = Directory(p.join(_requireDir(), hash.substring(0, 2)));
     if (!dir.existsSync()) return;
     final suffix = '.t$size';
     // 先收名字再删，避免边遍历目录流边删文件
@@ -282,7 +313,7 @@ class ThumbnailService {
   /// 扫描与删除都放到后台 isolate：缓存目录里通常有几万个小文件，
   /// 在 UI isolate 上同步遍历会直接卡住启动。
   Future<int> evictDiskCache({int maxSizeMB = 2048}) async {
-    final dir = _cacheDir;
+    final dir = _requireDir();
     if (!Directory(dir).existsSync()) return 0;
     final maxBytes = maxSizeMB * 1024 * 1024;
     try {

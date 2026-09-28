@@ -22,6 +22,7 @@ import '../services/segment_service.dart';
 import '../services/settings_service.dart';
 import '../services/subtitle_parser.dart';
 import '../services/subtitle_service.dart';
+import '../services/thumbnail_cache.dart';
 import '../services/video_launcher.dart';
 import '../services/volume_cover_service.dart';
 import '../utils/filter_expression.dart';
@@ -242,6 +243,94 @@ class AppState extends ChangeNotifier {
   bool _sortDescending = false;
   bool get sortDescending => _sortDescending;
 
+  // ── 图片 / 视频库排序 ──
+  //
+  // 音频那套是单份 `_sortKey`；视觉库按库各存一份：图片与视频的行数、
+  // 关心的字段都不一样（视频常按大小/时间，图片常按文件名自然序）。
+
+  /// 视觉库排序字段：`name`（自然序，默认）/ `mtime` / `size` / `added`。
+  static const Map<String, String> visualSortLabels = {
+    'name': '文件名',
+    'mtime': '修改时间',
+    'size': '文件大小',
+    'added': '加入时间',
+  };
+
+  String _imageSortKey = 'name';
+  bool _imageSortDesc = false;
+  String _videoSortKey = 'name';
+  bool _videoSortDesc = false;
+
+  /// 当前是不是视频库（排序设置按库分开存）。
+  bool get _isVideoLibrary => currentLibrary == 'video';
+
+  /// 当前视觉库的排序字段。
+  String get visualSortKey => _isVideoLibrary ? _videoSortKey : _imageSortKey;
+
+  /// 当前视觉库是否降序。
+  bool get visualSortDescending =>
+      _isVideoLibrary ? _videoSortDesc : _imageSortDesc;
+
+  /// 当前视觉库的排序比较器。
+  ///
+  /// `name` 走自然序（`sort_key` 补零，见 BUILD_GUIDE 第 20.2 节），其余字段
+  /// 比完再按自然序兜底，保证同一时间戳的行不会每次刷新换位置。
+  int Function(MediaItem, MediaItem) get visualSortComparator {
+    final key = visualSortKey;
+    final desc = visualSortDescending;
+    return (a, b) {
+      int cmp;
+      switch (key) {
+        case 'mtime':
+          cmp = (a.fileMtime ?? 0).compareTo(b.fileMtime ?? 0);
+          break;
+        case 'size':
+          cmp = (a.fileSize ?? 0).compareTo(b.fileSize ?? 0);
+          break;
+        case 'added':
+          cmp = a.addedAt.compareTo(b.addedAt);
+          break;
+        default:
+          cmp = MediaDao.compareNatural(a, b);
+          break;
+      }
+      if (cmp == 0 && key != 'name') cmp = MediaDao.compareNatural(a, b);
+      return desc ? -cmp : cmp;
+    };
+  }
+
+  Future<void> setVisualSortKey(String key) async {
+    if (!visualSortLabels.containsKey(key)) return;
+    final ss = SettingsService.instance;
+    if (_isVideoLibrary) {
+      _videoSortKey = key;
+      await ss.setVideoSortKey(key);
+    } else {
+      _imageSortKey = key;
+      await ss.setImageSortKey(key);
+    }
+    await _afterVisualSortChanged();
+  }
+
+  Future<void> setVisualSortDescending(bool desc) async {
+    final ss = SettingsService.instance;
+    if (_isVideoLibrary) {
+      _videoSortDesc = desc;
+      await ss.setVideoSortDescending(desc);
+    } else {
+      _imageSortDesc = desc;
+      await ss.setImageSortDescending(desc);
+    }
+    await _afterVisualSortChanged();
+  }
+
+  /// 排序一变：中间栏重排，作品层的网格靠 [mediaRevision] 知道要重查。
+  Future<void> _afterVisualSortChanged() async {
+    _mediaRevision++;
+    notifyListeners();
+    await refresh();
+  }
+
   // ── 字幕缓存 ──
   final Map<String, SubtitleDocument> _subtitleCache = {};
 
@@ -260,6 +349,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     logInfo('AppState', 'Initializing...');
+    // 缩略图服务必须在这里初始化：界面一建卡片就会调 thumbPath()，
+    // 漏掉这一步时缩略图一张都生成不出来（网格只剩占位图标）。
+    await ThumbnailService.instance.init();
     player.onTrackStarted = _onTrackStarted;
     player.onRepeatModeChanged = _persistRepeatMode;
     player.onShuffleChanged = _persistShuffle;
@@ -367,6 +459,10 @@ class AppState extends ChangeNotifier {
       _themeMode = ss.themeMode;
       _sortKey = ss.sortKey;
       _sortDescending = ss.sortDescending;
+      _imageSortKey = ss.imageSortKey;
+      _imageSortDesc = ss.imageSortDescending;
+      _videoSortKey = ss.videoSortKey;
+      _videoSortDesc = ss.videoSortDescending;
       _gridColumns = ss.gridColumns;
       _viewMode = ss.viewMode;
       player.setRepeatMode(_repeatModeFromName(ss.repeatModeName));
@@ -594,6 +690,7 @@ class AppState extends ChangeNotifier {
         ? 0
         : startIndex.clamp(0, _viewerImages.length - 1);
     _showViewer = true;
+    _syncSelectedToViewer();
     notifyListeners();
   }
 
@@ -613,8 +710,19 @@ class AppState extends ChangeNotifier {
     if (newIndex >= 0 && newIndex < _viewerImages.length) {
       _viewerIndex = newIndex;
       _recordReading();
+      _syncSelectedToViewer();
       notifyListeners();
     }
+  }
+
+  /// 查看器里的当前页同步成单选目标。
+  ///
+  /// 「图片详情」面板读的是 [selectedImage]，不同步的话在大图里翻页时
+  /// 详情仍停在进查看器之前那张图。
+  void _syncSelectedToViewer() {
+    if (_viewerImages.isEmpty) return;
+    final id = _viewerImages[_viewerIndex].id;
+    if (id != null) _selectedImageId = id;
   }
 
   // ═══════════════ 刷新 / 中间栏加载 ═══════════════
@@ -846,10 +954,11 @@ class AppState extends ChangeNotifier {
     return sorted;
   }
 
-  /// 图片按自然顺序排序，与 [MediaDao.naturalOrderBy] 的 SQL 顺序一致。
+  /// 图片/视频按当前视觉库的排序方式排；默认 `name` 是自然序，
+  /// 与 [MediaDao.naturalOrderBy] 的 SQL 顺序一致（BUILD_GUIDE 第 20.2 节）。
   List<MediaItem> _sortImages(List<MediaItem> list) {
     final sorted = List<MediaItem>.from(list);
-    sorted.sort(MediaDao.compareNatural);
+    sorted.sort(visualSortComparator);
     return sorted;
   }
 

@@ -86,7 +86,11 @@ class _ImageGridState extends State<ImageGrid> {
 
   /// 作品层的媒体行自己查：`FolderDao.getPathsByWork` 拿作品的目录，
   /// 再按库的类型取这些目录里的直接媒体（与 `playWorkExternal` 同一套取法）。
-  Future<void> _loadWorkItems(int workId) async {
+  ///
+  /// [sort] 是 AppState 当前视觉库的排序比较器：默认的自然序让 `第2话` 排在
+  /// `第10话` 前面（按文件名字符串比会把 10 排到 2 前面）。
+  Future<void> _loadWorkItems(
+      int workId, int Function(MediaItem, MediaItem) sort) async {
     final key = '${widget.library}:$workId';
     try {
       final dirs =
@@ -95,7 +99,7 @@ class _ImageGridState extends State<ImageGrid> {
           ? <MediaItem>[]
           : await MediaDao(DatabaseManager.instance.db)
               .queryByDirs(dirs, type: _mediaType);
-      final items = [...rows]..sort((a, b) => a.filename.compareTo(b.filename));
+      final items = [...rows]..sort(sort);
       if (!mounted || _loadedKey != key) return;
       setState(() => _workItems = items);
     } catch (e) {
@@ -145,8 +149,9 @@ class _ImageGridState extends State<ImageGrid> {
       _workItems = null;
       if (key != null) {
         final workId = work!.id!;
+        final sort = appState.visualSortComparator;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _loadWorkItems(workId);
+          if (mounted) _loadWorkItems(workId, sort);
         });
       }
     }
@@ -428,10 +433,12 @@ class _ThumbnailCardState extends State<_ThumbnailCard> {
     if (_generating) return;
     _generating = true;
     final path = widget.image.path;
-    // thumbPath 内部要 stat 源文件拿 mtime，所以只在异步路径上算
-    final thumbPath = ThumbnailService.instance.thumbPath(path, size: 300);
-    final thumbFile = File(thumbPath);
+    // thumbPath 内部要 stat 源文件拿 mtime，所以只在异步路径上算。
+    // 放在 try 里：缓存目录没准备好时也要落成「没有缩略图」，
+    // 不能让异常从 initState 发起的 Future 里逃出去。
+    File? thumbFile;
     try {
+      thumbFile = File(ThumbnailService.instance.thumbPath(path, size: 300));
       if (!await thumbFile.exists()) {
         await ThumbnailService.instance.ensureThumbnail(path, size: 300);
       }

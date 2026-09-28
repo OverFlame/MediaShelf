@@ -376,7 +376,8 @@ class _VisualToolbar extends StatelessWidget {
         builder: (context, constraints) {
           // 中间区被左栏和详情面板挤窄时，尾部按钮收进「更多」菜单，
           // 否则 Row 会 RenderFlex overflow（800 宽窗口 + 详情面板时只剩约 220）。
-          final compact = constraints.maxWidth < 430;
+          // 500 = 原先的 430 加上排序按钮的宽度再留点余量：非紧凑态实测要约 477。
+          final compact = constraints.maxWidth < 500;
           return Row(
             children: [
               const SizedBox(width: 4),
@@ -409,6 +410,36 @@ class _VisualToolbar extends StatelessWidget {
                 ),
                 onPressed: () => appState
                     .setViewMode(appState.viewMode == 'grid' ? 'list' : 'grid'),
+              ),
+              PopupMenuButton<String>(
+                key: ValueKey('$library-toolbar-sort'),
+                tooltip: '排序',
+                icon: const Icon(Icons.sort, size: 18),
+                onSelected: (v) {
+                  if (v == 'toggle') {
+                    appState.setVisualSortDescending(
+                        !appState.visualSortDescending);
+                  } else {
+                    appState.setVisualSortKey(v);
+                  }
+                },
+                itemBuilder: (_) => [
+                  for (final entry in AppState.visualSortLabels.entries)
+                    CheckedPopupMenuItem(
+                      value: entry.key,
+                      checked: appState.visualSortKey == entry.key,
+                      child:
+                          Text(entry.value, style: const TextStyle(fontSize: 13)),
+                    ),
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'toggle',
+                    child: Text(
+                      appState.visualSortDescending ? '改为升序' : '改为降序',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
               ),
               IconButton(
                 key: ValueKey('$library-toolbar-select'),

@@ -121,6 +121,11 @@ class _ImageViewerState extends State<ImageViewer> {
   bool _showExif = false;
   double _zoomLevel = 1.0;
   bool _isFitToWindow = true;
+
+  /// 本次手势累计的横向位移。判断「慢慢拖够了距离也算翻页」用，
+  /// 只看松手瞬间的速度会让慢速拖动什么都不发生。
+  double _dragDx = 0;
+
   bool _isImageLoading = true;
   int _prevViewerIndex = -1;
   int _displayedImageId = -1;
@@ -397,12 +402,23 @@ class _ImageViewerState extends State<ImageViewer> {
   }
 
   /// Apply a scale factor centered on a given viewport point (or center).
-  /// `factor` > 1 = zoom in, < 1 = zoom out.  Clamped to [0.05, 50].
+  /// `factor` > 1 = zoom in, < 1 = zoom out.  Clamped to [1, 20]。
   void _applyScale(double factor, {Offset? focal}) {
     final matrix = _getMatrix().clone();
     final current = matrix.getMaxScaleOnAxis();
-    final target = (current * factor).clamp(0.05, 50.0);
+    final target = (current * factor).clamp(1.0, 20.0);
     if ((target - current).abs() < 1e-6) return;
+
+    // 缩回适应窗口就彻底归位：按焦点缩放会留下平移量，而零边界下
+    // 适应窗口时拖不动，留着偏移就再也摆不正了。
+    if (target <= 1.0 + 1e-6) {
+      _transformCtrl.value = Matrix4.identity();
+      setState(() {
+        _zoomLevel = 1.0;
+        _isFitToWindow = true;
+      });
+      return;
+    }
 
     final size = context.size ?? const Size(1, 1);
     final focalPt = focal ?? Offset(size.width / 2, size.height / 2);
@@ -475,12 +491,17 @@ class _ImageViewerState extends State<ImageViewer> {
   /// 触控滑动翻页。画面跟随手指：左到右是向左推走当前页，
   /// 右到左是向右推走当前页（BUILD_GUIDE 22.2）。
   ///
+  /// 两个判定：松手速度够快（跟手一甩），或者本次手势累计拖够了屏宽的
+  /// 18%（慢慢拖到底也认）。只看速度的话慢拖会解不出任何结果。
   /// 放大状态下的横向拖动是平移，不翻页。
   void _onInteractionEnd(ScaleEndDetails details) {
     if (!_isFitToWindow) return;
     final vx = details.velocity.pixelsPerSecond.dx;
-    if (vx.abs() < 200) return;
-    final forward = _direction == ReadingDirection.ltr ? vx < 0 : vx > 0;
+    final width = MediaQuery.sizeOf(context).width;
+    final draggedEnough = width > 0 && _dragDx.abs() > width * 0.18;
+    if (vx.abs() < 200 && !draggedEnough) return;
+    final dx = draggedEnough && vx.abs() < 200 ? _dragDx : vx;
+    final forward = _direction == ReadingDirection.ltr ? dx < 0 : dx > 0;
     if (forward) {
       _next();
     } else {
@@ -659,12 +680,21 @@ class _ImageViewerState extends State<ImageViewer> {
       child: LayoutBuilder(
         builder: (context, viewport) => InteractiveViewer(
           transformationController: _transformCtrl,
-          minScale: 0.05,
-          maxScale: 50.0,
-          boundaryMargin: const EdgeInsets.all(double.infinity),
+          // 下限就是「适应窗口」：再往外缩只会得到一张比视口还小的图。
+          minScale: 1.0,
+          maxScale: 20.0,
+          // 边界不能给无限：适应窗口时图与视口同大，无限边界会让任何一次
+          // 滑动都把画面拖出视口并停在那里，触屏上等于看不到图。
+          // 零边界下适应窗口时拖不动，放大后仍能在图内平移。
+          boundaryMargin: EdgeInsets.zero,
           panEnabled: true,
           scaleEnabled: true,
+          onInteractionStart: (_) => _dragDx = 0,
           onInteractionUpdate: (details) {
+            // 双指缩放不算翻页位移。
+            if (details.pointerCount <= 1) {
+              _dragDx += details.focalPointDelta.dx;
+            }
             setState(() {
               _zoomLevel = _getCurrentScale();
               _isFitToWindow = _zoomLevel <= 1.01;
@@ -849,13 +879,16 @@ class _ImageViewerState extends State<ImageViewer> {
   }
 
   Widget _buildTopBar(MediaItem img) {
+    // 安卓边到边显示时状态栏会压在顶栏上，按钮点不到：把状态栏高度让出来，
+    // 渐变仍铺到屏幕最顶端。
+    final topInset = MediaQuery.viewPaddingOf(context).top;
     return Positioned(
       key: const ValueKey('viewer-top-bar'),
       top: 0,
       left: 0,
       right: 0,
       child: Container(
-        height: 52,
+        height: 52 + topInset,
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -867,7 +900,7 @@ class _ImageViewerState extends State<ImageViewer> {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: EdgeInsets.only(left: 12, right: 12, top: topInset),
           child: Row(
             children: [
               Expanded(
@@ -1029,6 +1062,8 @@ class _ImageViewerState extends State<ImageViewer> {
   Widget _buildBottomBar(bool isFirst, bool isLast) {
     final rtl = _direction == ReadingDirection.rtl;
     final leftIsAdvance = rtl;
+    // 安卓手势条同理：底部留出系统导航条的高度，否则按钮点不到。
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return Positioned(
       key: const ValueKey('viewer-bottom-bar'),
@@ -1036,7 +1071,8 @@ class _ImageViewerState extends State<ImageViewer> {
       left: 0,
       right: 0,
       child: Container(
-        height: 52,
+        height: 52 + bottomInset,
+        padding: EdgeInsets.only(bottom: bottomInset),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
@@ -1103,11 +1139,13 @@ class _ImageViewerState extends State<ImageViewer> {
 
   Widget _buildExifPanel() {
     final exif = _currentExif;
+    // 顶栏现在被状态栏顶下来，面板也跟着让开，免得叠在一起。
+    final top = 64 + MediaQuery.viewPaddingOf(context).top;
     if (exif == null || !exif.hasData) {
       return Positioned(
         key: const ValueKey('viewer-exif-panel'),
         right: 16,
-        top: 64,
+        top: top,
         child: _exifCard([_exifRow(exif == null ? '加载中...' : '无 EXIF 数据', '')]),
       );
     }
@@ -1149,7 +1187,7 @@ class _ImageViewerState extends State<ImageViewer> {
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOutCubic,
       right: 16,
-      top: 64,
+      top: top,
       child: _exifCard(rows),
     );
   }

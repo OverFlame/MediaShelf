@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'
     show sqfliteFfiInit, databaseFactoryFfi;
 
 import '../services/data_dir_service.dart';
+import '../services/media_rules.dart';
 import '../utils/log_util.dart';
 import 'tables.dart';
 
@@ -75,7 +76,33 @@ class DatabaseManager {
     // journal_mode=WAL 会返回一行结果，Android 端 execSQL 不允许，需用 rawQuery。
     // （Android 8+ 本身默认 WAL，此处桌面端开启；Android 端该语句会被安全执行。）
     await _db!.rawQuery('PRAGMA journal_mode=WAL');
+    await _backfillSortKeys(_db!);
     logInfo('Database', 'Initialized OK (WAL+FK enabled)');
+  }
+
+  /// 补齐 `media.sort_key`。这一列是 v7 用 ALTER TABLE 加的，纯 SQL 迁移
+  /// 没法按 Dart 侧的补零规则回填，老库里全是 NULL：自然排序会退化成按
+  /// 文件名字符串比，`10.jpg` 就排到 `2.jpg` 前面（BUILD_GUIDE 20.2）。
+  ///
+  /// 只补缺的行，补完这次查询就一直是空的，每次启动接近零成本。
+  static Future<void> _backfillSortKeys(Database db) async {
+    final rows = await db.query(
+      'media',
+      columns: ['id', 'path'],
+      where: "sort_key IS NULL OR sort_key = ''",
+    );
+    if (rows.isEmpty) return;
+    logInfo('Database', 'Backfilling sort_key for ${rows.length} media rows');
+    final batch = db.batch();
+    for (final row in rows) {
+      batch.update(
+        'media',
+        {'sort_key': sortKeyOfPath(row['path'] as String? ?? '')},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
+    await batch.commit(noResult: true);
   }
 
   Future<void> close() async {
