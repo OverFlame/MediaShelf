@@ -1,24 +1,16 @@
 @echo off
-rem MediaShelf Windows build script
+rem MediaShelf Windows 构建（薄包装：真正逻辑在 build_windows.ps1）
+rem 用法：scripts\build_windows.bat [release^|debug^|profile]
 setlocal
-cd /d "%~dp0.."
+set MODE=%~1
+if "%MODE%"=="" set MODE=release
 
-rem China mirrors
-set PUB_HOSTED_URL=https://pub.flutter-io.cn
-set FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn
+where pwsh >nul 2>nul
+if errorlevel 1 (
+  echo 找不到 pwsh（PowerShell 7+）。可改用系统自带 powershell：
+  echo   powershell -ExecutionPolicy Bypass -File "%~dp0build_windows.ps1" -Mode %MODE%
+  exit /b 1
+)
 
-echo ==^> flutter pub get
-call flutter --no-version-check --suppress-analytics pub get
-if errorlevel 1 goto :err
-
-echo ==^> flutter build windows --release
-call flutter --no-version-check --suppress-analytics build windows --release
-if errorlevel 1 goto :err
-
-echo.
-echo Build done: build\windows\x64\runner\Release\
-goto :eof
-
-:err
-echo Build failed (exit code %errorlevel%)
-exit /b 1
+pwsh -NoLogo -ExecutionPolicy Bypass -File "%~dp0build_windows.ps1" -Mode %MODE%
+exit /b %errorlevel%

@@ -154,6 +154,13 @@ String _padDigits(String input) {
 /// 路径对应的自然排序键，落 `media.sort_key` 用。
 String sortKeyOfPath(String path) => naturalSortKey(baseNameOfPath(path));
 
+/// Dart 侧的自然序比较（BUILD_GUIDE 第 20.2 节）。
+///
+/// `folders` 与 `works` 数量在百级，不加 sort_key 列，比较时即时算。
+/// 所以「第10卷」排在「第2卷」后面。
+int naturalCompare(String a, String b) =>
+    naturalSortKey(a).compareTo(naturalSortKey(b));
+
 bool _hasAny(String path, Set<String> exts) {
   final lower = path.toLowerCase();
   return exts.any((e) => lower.endsWith(e));

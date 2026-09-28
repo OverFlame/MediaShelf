@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../utils/format.dart';
 import 'dialogs.dart';
 import 'launch_result_snack.dart';
+import 'subtitle_assign_dialog.dart';
 
 /// 中间栏：作品/文件夹浏览（面包屑 + 子文件夹 + 曲目列表）
 class FolderBrowser extends StatelessWidget {
@@ -465,6 +466,7 @@ class _TrackTile extends StatelessWidget {
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'play', child: Text('播放', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'subtitle', child: Text('替换字幕...', style: TextStyle(fontSize: 13))),
+                PopupMenuItem(value: 'subtitle_assign', child: Text('字幕归属...', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'clear_subtitle', child: Text('清除字幕', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'tags', child: Text('添加标签...', style: TextStyle(fontSize: 13))),
               ],
@@ -483,6 +485,14 @@ class _TrackTile extends StatelessWidget {
       case 'subtitle':
         if (track.id != null) {
           await showReplaceSubtitleDialog(context, track.id!);
+        }
+        break;
+      case 'subtitle_assign':
+        if (track.id != null) {
+          await SubtitleAssignDialog.show(context,
+              state: appState,
+              audioId: track.id!,
+              audioLabel: track.title ?? track.filename);
         }
         break;
       case 'clear_subtitle':

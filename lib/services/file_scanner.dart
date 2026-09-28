@@ -18,11 +18,26 @@ class ScanResult {
   final Map<String, List<String>> subtitleByAudio;
   final List<String> coverFiles;
 
+  /// 图片文件（含封面图，封面图同时出现在 [coverFiles] 与这里）
+  final List<String> imagePaths;
+
+  /// 视频文件（BUILD_GUIDE 第 9.1 节白名单）
+  final List<String> videoPaths;
+
   ScanResult({
     required this.audioPaths,
     required this.subtitleByAudio,
     required this.coverFiles,
+    this.imagePaths = const [],
+    this.videoPaths = const [],
   });
+
+  /// 图片与视频合计条数，导入时用来判断目录类型。
+  int get visualCount => imagePaths.length + videoPaths.length;
+
+  /// 三种媒体都为空时返回 true，调用方据此提示「目录内没有可导入的媒体」。
+  bool get isEmpty =>
+      audioPaths.isEmpty && imagePaths.isEmpty && videoPaths.isEmpty;
 }
 
 /// 语言后缀词表，参与字幕匹配（BUILD_GUIDE 第 23.5 节）
@@ -44,6 +59,15 @@ const subtitleRegionTokens = {
 const _chineseLanguageTokens = {
   'zh', 'chs', 'cht', 'chi', 'sc', 'tc', '简', '繁',
 };
+
+/// 特典目录名（BUILD_GUIDE 第 19.3 节）。
+///
+/// 卷文件夹下命中这七个写法之一的子目录，里面的条目在导入时自动打「特典」标签。
+/// 比较前统一转小写，所以 `SP`、`Sp`、`sp` 都算。
+const bonusDirNames = {'特典', 'sp', 'bonus'};
+
+/// 这个目录名算不算特典目录
+bool isBonusDirName(String name) => bonusDirNames.contains(name.toLowerCase());
 
 /// 文件系统扫描器 — 递归遍历目录，返回音频 + 匹配的字幕 + 封面图
 class FileScanner {
@@ -68,6 +92,8 @@ class FileScanner {
     final audio = <String>[];
     final subtitles = <String>[];
     final covers = <String>[];
+    final images = <String>[];
+    final videos = <String>[];
     final dir = Directory(dirPath);
     if (!dir.existsSync()) {
       logWarn('Scanner', 'Directory not found: $dirPath');
@@ -83,8 +109,12 @@ class FileScanner {
           audio.add(path);
         } else if (isSubtitleFile(path)) {
           subtitles.add(path);
-        } else if (_isCoverImage(path)) {
-          covers.add(path);
+        } else if (isVideoFile(path)) {
+          videos.add(path);
+        } else if (isImageFile(path)) {
+          // 封面图既进图片列表，也进封面列表（BUILD_GUIDE 第 21.1 节）。
+          images.add(path);
+          if (_isCoverImage(path)) covers.add(path);
         }
       }
     } catch (e) {
@@ -95,11 +125,18 @@ class FileScanner {
     audio.sort();
     subtitles.sort();
     covers.sort();
+    images.sort();
+    videos.sort();
     final map = _matchSubtitles(audio, subtitles);
     logInfo('Scanner',
-        'scanDirectory "$dirPath" → ${audio.length} audio, ${map.length} subtitles, ${covers.length} covers');
+        'scanDirectory "$dirPath" → ${audio.length} audio, ${map.length} subtitles, ${covers.length} covers, ${images.length} images, ${videos.length} videos');
     return ScanResult(
-        audioPaths: audio, subtitleByAudio: map, coverFiles: covers);
+      audioPaths: audio,
+      subtitleByAudio: map,
+      coverFiles: covers,
+      imagePaths: images,
+      videoPaths: videos,
+    );
   }
 
   /// 为每首音频匹配同目录字幕，一个音频可以挂多条（BUILD_GUIDE 第 23.5 节）。

@@ -304,20 +304,19 @@ class _TagPanelState extends State<TagPanel> {
         return a.compareTo(b);
       });
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _tagHeader(appState),
-        const Divider(height: 1),
-        _tagSearchBar(),
-        if (activeIds.isNotEmpty) _activeFilterBar(appState),
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            itemCount: sortedNs.length,
-            itemBuilder: (ctx, i) => _namespaceGroup(
-                sortedNs[i], namespaces[sortedNs[i]]!, appState, filter),
-          ),
+    // 表头、搜索框与「已选筛选」条跟标签列表一起滚动：
+    // 面板在矮窗口里被压扁时，固定行不会再顶出溢出条。
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(child: _tagHeader(appState)),
+        const SliverToBoxAdapter(child: Divider(height: 1)),
+        SliverToBoxAdapter(child: _tagSearchBar()),
+        if (activeIds.isNotEmpty)
+          SliverToBoxAdapter(child: _activeFilterBar(appState)),
+        SliverList.builder(
+          itemCount: sortedNs.length,
+          itemBuilder: (ctx, i) => _namespaceGroup(
+              sortedNs[i], namespaces[sortedNs[i]]!, appState, filter),
         ),
       ],
     );

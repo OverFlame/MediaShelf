@@ -82,6 +82,20 @@ class SettingsService {
     await _save();
   }
 
+  // ── 默认排除的标签 ──
+
+  /// 用户排除（NOT）的标签 id。返回 null 表示还没写过，首次启动按规则填。
+  List<int>? get excludedTagIds {
+    final raw = _data['excluded_tag_ids'];
+    if (raw is! List) return null;
+    return raw.whereType<int>().toList();
+  }
+
+  Future<void> setExcludedTagIds(List<int> ids) async {
+    _data['excluded_tag_ids'] = ids;
+    await _save();
+  }
+
   // ── 曲目排序 ──
   String get sortKey => (_data['sort_key'] as String?) ?? 'filename';
 
@@ -137,6 +151,24 @@ class SettingsService {
 
   Future<void> setCoverCacheLimitMB(int mb) async {
     _data['cover_cache_mb'] = mb.clamp(0, 8192);
+    await _save();
+  }
+
+  // ── 图片视图 ──
+
+  /// 网格列数，默认 4
+  int get gridColumns => (_data['grid_columns'] as int?) ?? 4;
+
+  Future<void> setGridColumns(int cols) async {
+    _data['grid_columns'] = cols.clamp(2, 10);
+    await _save();
+  }
+
+  /// 图片视图模式：grid / list，默认 grid
+  String get viewMode => (_data['view_mode'] as String?) ?? 'grid';
+
+  Future<void> setViewMode(String mode) async {
+    _data['view_mode'] = mode == 'list' ? 'list' : 'grid';
     await _save();
   }
 

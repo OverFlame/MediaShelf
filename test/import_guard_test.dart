@@ -73,13 +73,27 @@ void main() {
     return rows.first['n'] as int;
   }
 
-  test('目录内没有音频时不创建作品', () async {
-    final dir = await makeDir('novideo', ['readme.txt', 'cover.png']);
+  test('目录内没有可导入的媒体时不创建作品', () async {
+    // 阶段 4 起判定口径变成「音频 > 图片 > 视频」推断库归属（BUILD_GUIDE 第 18.2 节）：
+    // 只有一张封面图也算图片库，所以要真的没有任何白名单媒体才不建作品。
+    final dir = await makeDir('nothing', ['readme.txt', 'notes.md']);
 
     final work = await state.importDirectory(dir.path);
 
-    expect(work, isNull, reason: '没有音频就不该有作品');
+    expect(work, isNull, reason: '没有可导入的媒体就不该有作品');
     expect(await WorkDao(db).listAll(), isEmpty);
+    expect(state.importing, isFalse);
+  });
+
+  test('只有封面图的目录按图片库建作品', () async {
+    final dir = await makeDir('coveronly', ['readme.txt', 'cover.png']);
+
+    final work = await state.importDirectory(dir.path);
+
+    expect(work, isNotNull, reason: '封面图是图片，目录该进图片库');
+    expect(work!.library, 'image');
+    final rows = await db.query('media', where: 'media_type = ?', whereArgs: ['image']);
+    expect(rows, hasLength(1));
     expect(state.importing, isFalse);
   });
 

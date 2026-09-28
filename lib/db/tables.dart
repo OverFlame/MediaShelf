@@ -5,7 +5,7 @@
 class Tables {
   Tables._();
 
-  static const int version = 7;
+  static const int version = 8;
 
   static const List<String> createStatements = [
     // 作品集：音频侧是系列，视频侧是剧集，图片侧是漫画系列
@@ -46,7 +46,10 @@ class Tables {
       subtitle_path TEXT,
       cover_path    TEXT,
       -- 自然排序键：文件名里的连续数字补零，见 BUILD_GUIDE 第 20.2 节
-      sort_key      TEXT
+      sort_key      TEXT,
+      -- 多字幕归属：字幕行指回它所属的音频行，见 BUILD_GUIDE 第 23.6 节
+      subtitle_of         INTEGER REFERENCES media(id) ON DELETE SET NULL,
+      is_default_subtitle INTEGER NOT NULL DEFAULT 0
     )
     ''',
     'CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type)',
@@ -56,6 +59,7 @@ class Tables {
     'CREATE INDEX IF NOT EXISTS idx_media_added_at ON media(added_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_media_title ON media(title)',
     'CREATE INDEX IF NOT EXISTS idx_media_sort_key ON media(sort_key)',
+    'CREATE INDEX IF NOT EXISTS idx_media_subtitle_of ON media(subtitle_of)',
 
     // 虚拟文件夹（镜像磁盘目录树）。卷封面、裁剪与阅读方向都记在这一行。
     '''
@@ -158,6 +162,17 @@ class Tables {
     )
     ''',
 
+    // 阅读进度：一卷一条，见 BUILD_GUIDE 第 22.6 节
+    '''
+    CREATE TABLE reading_progress (
+      volume_id  INTEGER PRIMARY KEY REFERENCES folders(id) ON DELETE CASCADE,
+      media_id   INTEGER REFERENCES media(id) ON DELETE SET NULL,
+      page_index INTEGER NOT NULL DEFAULT 0,
+      finished   INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    )
+    ''',
+
     // 过渡视图：只读，阶段 6 结束前删掉（BUILD_GUIDE 第 7.4 节）。
     // 老查询按 tracks / images 读，写入一律走 MediaDao。
     'CREATE VIEW IF NOT EXISTS tracks AS '
@@ -232,6 +247,27 @@ class Tables {
         left_media_id  INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
         right_media_id INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
         PRIMARY KEY (volume_id, left_media_id)
+      )
+      ''',
+    ],
+
+    // v8：多字幕归属与阅读进度（BUILD_GUIDE 第 22.6、23.6 节）
+    8: [
+      // 字幕行指回它所属的音频行；音频被删时字幕行不跟着删，只摘掉归属。
+      'ALTER TABLE media ADD COLUMN '
+          'subtitle_of INTEGER REFERENCES media(id) ON DELETE SET NULL',
+      'ALTER TABLE media ADD COLUMN '
+          'is_default_subtitle INTEGER NOT NULL DEFAULT 0',
+      'CREATE INDEX IF NOT EXISTS idx_media_subtitle_of ON media(subtitle_of)',
+
+      // 阅读进度：一卷一条，写入由 ReadingProgressService 做 1 秒节流
+      '''
+      CREATE TABLE reading_progress (
+        volume_id  INTEGER PRIMARY KEY REFERENCES folders(id) ON DELETE CASCADE,
+        media_id   INTEGER REFERENCES media(id) ON DELETE SET NULL,
+        page_index INTEGER NOT NULL DEFAULT 0,
+        finished   INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
       )
       ''',
     ],

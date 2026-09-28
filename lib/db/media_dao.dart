@@ -175,6 +175,29 @@ class MediaDao {
     return _db.insert('media', rowWithDerived(row), conflictAlgorithm: conflict);
   }
 
+  /// 一个事务里插入多行，返回真正落库的行数。
+  ///
+  /// 图片与视频一次导入几百到几千行，逐条 insert 会各自开一次事务，
+  /// 在 Android 上慢得明显。这里统一走一个事务；冲突策略默认 ignore，
+  /// 重复导入不会报错也不会产生重复行（media.path 有 UNIQUE）。
+  Future<int> insertRows(
+    Iterable<Map<String, Object?>> rows, {
+    ConflictAlgorithm conflict = ConflictAlgorithm.ignore,
+  }) async {
+    final list = rows.toList();
+    if (list.isEmpty) return 0;
+    var inserted = 0;
+    await _db.transaction((txn) async {
+      for (final row in list) {
+        final id = await txn.insert('media', rowWithDerived(row),
+            conflictAlgorithm: conflict);
+        if (id > 0) inserted++;
+      }
+    });
+    logInfo('MediaDao', 'insertRows 落库 $inserted/${list.length} 行');
+    return inserted;
+  }
+
   /// 按 id 更新。给了 type 就顺带校验这一行的类型，避免跨类型误改。
   Future<int> updateRow(int id, Map<String, Object?> fields,
       {MediaType? type}) async {
@@ -277,6 +300,71 @@ class MediaDao {
     return out;
   }
 
+  /// 某目录下「直接包含」的媒体行（不含更深层子目录）。
+  ///
+  /// 图片浏览用：文件夹里只平铺本层的图片，子目录另行展示。
+  Future<List<MediaItem>> queryDirectInDir(String dirPath,
+      {MediaType? type, String orderBy = naturalOrderBy}) async {
+    final (prefix, sep) = _directPrefix(dirPath);
+    final head = _escapeLike(prefix);
+    final conditions = <String>[
+      "path LIKE ? ESCAPE '\\'",
+      "path NOT LIKE ? ESCAPE '\\'",
+    ];
+    final args = <Object?>['$head%', '$head%${_escapeLike(sep)}%'];
+    if (type != null) {
+      conditions.add('media_type = ?');
+      args.add(type.value);
+    }
+    final rows = await _db.query('media',
+        where: conditions.join(' AND '), whereArgs: args, orderBy: orderBy);
+    return rows.map(MediaItem.fromMap).toList();
+  }
+
+  /// 按文件名 / 标题 / 艺术家 / 专辑 / 别名模糊搜索。
+  ///
+  /// 图片侧靠 filename 与 alias 命中，音频侧另有 TrackDao.searchByName。
+  Future<List<MediaItem>> searchByName(String q,
+      {MediaType? type, int limit = 100000, String orderBy = naturalOrderBy}) async {
+    final like = '%${_escapeLike(q)}%';
+    final args = <Object?>[like, like, like, like, like];
+    final search =
+        "filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' "
+        "OR artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\' "
+        "OR alias LIKE ? ESCAPE '\\'";
+    final where = type == null ? search : "($search) AND media_type = ?";
+    if (type != null) args.add(type.value);
+    final rows = await _db.query('media',
+        where: where, whereArgs: args, orderBy: orderBy, limit: limit);
+    return rows.map(MediaItem.fromMap).toList();
+  }
+
+  /// 查询一批媒体 id 对应的路径（图片筛选时用来反查命中路径）
+  Future<List<String>> pathsByIds(Set<int> ids, {MediaType? type}) async {
+    if (ids.isEmpty) return [];
+    final list = ids.toList();
+    final out = <String>[];
+    final typeSql = type == null ? '' : ' AND media_type = ?';
+    final typeArg = type == null ? const <Object?>[] : <Object?>[type.value];
+    for (var i = 0; i < list.length; i += _batchSize) {
+      final batch = list.sublist(
+          i, i + _batchSize > list.length ? list.length : i + _batchSize);
+      final ph = List.filled(batch.length, '?').join(',');
+      final rows = await _db.query('media',
+          columns: ['path'],
+          where: 'id IN ($ph)$typeSql',
+          whereArgs: [...batch, ...typeArg],
+          orderBy: 'id');
+      out.addAll(rows.map((r) => r['path'] as String));
+    }
+    return out;
+  }
+
+  /// 设置别名（图片侧的用户命名）。
+  Future<void> setAlias(int id, String? alias) async {
+    await updateRow(id, {'alias': alias});
+  }
+
   /// 跨批次合并后的自然顺序比较：先比 sort_key，再比文件名，都不区分大小写。
   static int compareNatural(MediaItem a, MediaItem b) {
     final ka = (a.sortKey == null || a.sortKey!.isEmpty)
@@ -294,6 +382,18 @@ class MediaDao {
       .replaceAll('\\', r'\\')
       .replaceAll('%', r'\%')
       .replaceAll('_', r'\_');
+
+  /// 归一化目录路径，返回 (带分隔符的前缀, 分隔符)。
+  ///
+  /// 分隔符必须在剥掉尾部分隔符之前判断：`C:\` 剥成 `C:` 后再判断会误判成 `/`。
+  static (String, String) _directPrefix(String dirPath) {
+    final sep = (dirPath.contains('\\') || dirPath.endsWith(':')) ? '\\' : '/';
+    var base = dirPath;
+    while (base.endsWith('\\') || base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    return ('$base$sep', sep);
+  }
 
   Future<int> count({MediaType? type}) async {
     final args = <Object?>[];
