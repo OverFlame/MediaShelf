@@ -1076,3 +1076,4 @@
 - widget 测试里 380 宽长按磁贴不进多选，最后查到是小磁贴上 ⋮ 的 48 见方触摸区盖住了 `getCenter` 那个点。
 - `find.text('修改时间')` 在窄屏详情里同时命中菜单项与详情信息，改用 `find.ancestor(of: find.text(...), matching: find.byType(CheckedPopupMenuItem<String>))`；`CheckedPopupMenuItem` 必须带类型参数，`byType` 比对运行时类型。
 - 用 200 宽窗口测 `tiny` 时，点「更多」的偏移打不到按钮，命中链顶端是关着的 Drawer 边缘拖拽层。改用 800 宽加详情面板制造 `tiny`。
+- 改 `pubspec.yaml` 的版本号时漏了 `lib/pages/about_page.dart` 的 `appVersion` 常量。全量测试在版本号改之前跑过，所以是提交后才发现的（`test/widget/settings_page_test.dart` 的「关于页写死的版本号与 pubspec.yaml 同步」把它拦住）。教训：版本号属于最后一步，改完要重跑全量测试再提交。
