@@ -1595,6 +1595,15 @@ class AppState extends ChangeNotifier {
     return List<Tag>.unmodifiable(_imageTags[imageId]!);
   }
 
+  /// 图片与视频通用：读单个媒体已绑定的标签（视频卡片菜单用）。
+  Future<List<Tag>> getTagsForMedia(int mediaId) async {
+    final cached = _imageTags[mediaId];
+    if (cached != null) return List<Tag>.unmodifiable(cached);
+    final tags = await _tagDao.getTagsForTrack(mediaId);
+    _imageTags[mediaId] = List<Tag>.of(tags);
+    return List<Tag>.unmodifiable(_imageTags[mediaId]!);
+  }
+
   /// 切换曲目标签。同一曲目的多次调用按顺序串行执行。
   ///
   /// 连点两次同一个标签时，第二次必须在第一次写库并更新缓存之后才读当前状态；
@@ -1845,6 +1854,32 @@ class AppState extends ChangeNotifier {
     }
     return result;
   }
+
+  /// 覆盖设置单个媒体的标签集（视频卡片菜单用）。
+  ///
+  /// 媒体行不分类型，图片与视频都存 `media_tags`，所以这里复用曲目的写入口。
+  Future<void> setMediaTags(int mediaId, List<Tag> tags) async {
+    await _tagDao.setTrackTags(mediaId, [
+      for (final t in tags)
+        if (t.id != null) t.id!,
+    ]);
+    _imageTags.clear();
+    if (_tagFilter.active || hasAdvancedFilter) {
+      await refresh();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  /// 图片与视频通用的批量标签入口，媒体行统一存 `media_tags`。
+  Future<void> addTagsToMedia(Iterable<int> mediaIds, List<Tag> tags) =>
+      addTagsToImages(mediaIds, tags);
+
+  Future<void> removeTagsFromMedia(Iterable<int> mediaIds, List<Tag> tags) =>
+      removeTagsFromImages(mediaIds, tags);
+
+  Future<Set<int>> getTagIdsOnMedia(Iterable<int> mediaIds) =>
+      getTagIdsOnImages(mediaIds);
 
   /// 当前标签筛选（AND ∪ OR ∪ NOT）里出现的全部标签 id。
   Set<int> get activeTagIds => {

@@ -13,6 +13,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/db/folder_dao.dart';
 import 'package:mediashelf/db/media_dao.dart';
+import 'package:mediashelf/db/tag_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/pages/home_page.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
@@ -294,6 +295,62 @@ void main() {
     expect(app.currentFolderId, videoFolderId);
     expect(find.byKey(ValueKey('video-tile-$videoId')), findsOneWidget,
         reason: '文件夹层要能列出本层视频，而不是走曲目查询');
+  });
+
+  testWidgets('视频库：工具栏给标签筛选，卡片菜单能给视频打标签', (tester) async {
+    late Tag trip;
+    await tester.runAsync(() async {
+      trip = await TagDao(db).insert(const Tag(name: '旅行', color: '#89b4fa'));
+      // setUp 里的 init 已经读过标签，这里补一次，界面才看得到新标签
+      await app.loadTags();
+    });
+    await pumpHome(tester);
+    await switchLibrary(tester, kVideoLibrary);
+
+    // 工具栏入口此前只给图片库，视频库现在也有
+    await tester.tap(find.byKey(const ValueKey('video-toolbar-tags')));
+    await tester.pumpAndSettle();
+    expect(find.text('全部作品'), findsNothing,
+        reason: '筛选对话框只给标签区，不露音频专用的导入与作品集');
+    expect(find.text('搜索标签...'), findsOneWidget, reason: '筛选对话框应已打开');
+    expect(find.text('选择包含音频的文件夹'), findsNothing,
+        reason: '筛选对话框不露音频专用的导入段');
+    expect(find.text('还没有标签'), findsNothing);
+
+    // 命名空间为空的标签排在列表最后，懒构建下要先搜索
+    await tester.enterText(find.byType(TextField).last, '旅行');
+    await tester.pumpAndSettle();
+    final tagRow = find.widgetWithText(InkWell, '旅行');
+    expect(tagRow, findsOneWidget, reason: '搜索后标签行应可见');
+    await tester.tap(tagRow);
+    await tester.pumpAndSettle();
+    expect(app.tagFilter.andTagIds, contains(trip.id));
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(find.text('搜索标签...'), findsNothing, reason: '筛选对话框应已关闭');
+
+    // 视频卡片的「标签...」走同一条 media_tags 通道
+    await tester.tap(find.byKey(ValueKey('work-card-$videoWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+    // 磁贴上挂着双击手势，单击要等双击判定超时（约 300ms）后才发出
+    await tester.tap(find.byKey(ValueKey('video-menu-$videoId')));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('video-tags-menu-$videoId')));
+    await tester.pump();
+    // 打标签入口要先读一次已有标签（真实 I/O），再弹对话框
+    await settleIo(tester);
+    expect(find.text('为视频选择标签'), findsOneWidget);
+
+    await tester.tap(find.text('旅行'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '确定'));
+    await settleIo(tester);
+
+    final tags =
+        await tester.runAsync(() => TagDao(db).getTagsForTrack(videoId));
+    expect(tags!.map((t) => t.name).toList(), ['旅行']);
   });
 
   testWidgets('图片库空态出现「添加文件夹」入口，点击不抛异常', (tester) async {

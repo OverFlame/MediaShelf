@@ -10,22 +10,34 @@ import '../utils/color_util.dart';
 ///
 /// [filterTagIds] 非空时，仅显示这些 id 对应的标签（用于「移除标签」时只列
 /// 出已存在的标签）。
+///
+/// [selectedTagIds] 非空时，这些标签在打开时就是勾选状态（用于编辑单个媒体
+/// 已有标签的情形）。
 Future<List<Tag>?> showTagPickerDialog(
   BuildContext context, {
   String title = '选择标签',
   Set<int>? filterTagIds,
+  Set<int>? selectedTagIds,
 }) {
   return showDialog<List<Tag>>(
     context: context,
-    builder: (_) =>
-        _TagPickerDialog(title: title, filterTagIds: filterTagIds),
+    builder: (_) => _TagPickerDialog(
+      title: title,
+      filterTagIds: filterTagIds,
+      selectedTagIds: selectedTagIds,
+    ),
   );
 }
 
 class _TagPickerDialog extends StatefulWidget {
   final String title;
   final Set<int>? filterTagIds;
-  const _TagPickerDialog({required this.title, this.filterTagIds});
+  final Set<int>? selectedTagIds;
+  const _TagPickerDialog({
+    required this.title,
+    this.filterTagIds,
+    this.selectedTagIds,
+  });
 
   @override
   State<_TagPickerDialog> createState() => _TagPickerDialogState();
@@ -35,6 +47,12 @@ class _TagPickerDialogState extends State<_TagPickerDialog> {
   final _searchCtrl = TextEditingController();
   String _search = '';
   final Set<int> _selected = {};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.selectedTagIds != null) _selected.addAll(widget.selectedTagIds!);
+  }
 
   @override
   void dispose() {

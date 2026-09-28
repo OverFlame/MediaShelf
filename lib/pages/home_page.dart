@@ -357,9 +357,9 @@ class _VisualToolbar extends StatelessWidget {
                 onPressed: () => appState
                     .setViewMode(appState.viewMode == 'grid' ? 'list' : 'grid'),
               ),
-              if (_isImage && !compact) ...[
+              if (!compact) ...[
                 IconButton(
-                  key: const ValueKey('image-toolbar-tags'),
+                  key: ValueKey('$library-toolbar-tags'),
                   tooltip: '标签筛选',
                   icon: Icon(Icons.label_outline,
                       size: 18,
@@ -369,7 +369,7 @@ class _VisualToolbar extends StatelessWidget {
                   onPressed: () => _showTagFilter(context),
                 ),
                 IconButton(
-                  key: const ValueKey('image-toolbar-advanced-filter'),
+                  key: ValueKey('$library-toolbar-advanced-filter'),
                   tooltip: '高级筛选',
                   icon: Icon(Icons.filter_alt_outlined,
                       size: 18,
@@ -418,18 +418,16 @@ class _VisualToolbar extends StatelessWidget {
                         value: 'clearThumbs',
                         child: const Text('清理缩略图缓存',
                             style: TextStyle(fontSize: 13))),
-                    if (_isImage)
-                      const PopupMenuItem(
-                          key: ValueKey('image-toolbar-tags'),
-                          value: 'tags',
-                          child:
-                              Text('标签筛选', style: TextStyle(fontSize: 13))),
-                    if (_isImage)
-                      const PopupMenuItem(
-                          key: ValueKey('image-toolbar-advanced-filter'),
-                          value: 'advancedFilter',
-                          child: Text('高级筛选',
-                              style: TextStyle(fontSize: 13))),
+                    PopupMenuItem(
+                        key: ValueKey('$library-toolbar-tags'),
+                        value: 'tags',
+                        child: const Text('标签筛选',
+                            style: TextStyle(fontSize: 13))),
+                    PopupMenuItem(
+                        key: ValueKey('$library-toolbar-advanced-filter'),
+                        value: 'advancedFilter',
+                        child: const Text('高级筛选',
+                            style: TextStyle(fontSize: 13))),
                     if (_isImage)
                       PopupMenuItem(
                           key: const ValueKey('image-toolbar-detail'),
@@ -471,7 +469,11 @@ class _VisualToolbar extends StatelessWidget {
     showDialog<void>(
       context: context,
       builder: (_) => const Dialog(
-        child: SizedBox(width: 320, height: 480, child: TagPanel()),
+        child: SizedBox(
+          width: 320,
+          height: 480,
+          child: TagPanel(filterOnly: true),
+        ),
       ),
     );
   }
@@ -609,8 +611,6 @@ class _SelectionBar extends StatelessWidget {
 
   const _SelectionBar({required this.library});
 
-  bool get _isImage => library == kImageLibrary;
-
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
@@ -624,18 +624,16 @@ class _SelectionBar extends StatelessWidget {
               style: const TextStyle(
                   fontSize: 12, color: AppColors.textPrimary)),
           const Spacer(),
-          if (_isImage) ...[
-            TextButton.icon(
-              onPressed: () => _addTags(context, appState, ids),
-              icon: const Icon(Icons.label_outline, size: 16),
-              label: const Text('添加标签', style: TextStyle(fontSize: 12)),
-            ),
-            TextButton.icon(
-              onPressed: () => _removeTags(context, appState, ids),
-              icon: const Icon(Icons.label_off_outlined, size: 16),
-              label: const Text('移除标签', style: TextStyle(fontSize: 12)),
-            ),
-          ],
+          TextButton.icon(
+            onPressed: () => _addTags(context, appState, ids),
+            icon: const Icon(Icons.label_outline, size: 16),
+            label: const Text('添加标签', style: TextStyle(fontSize: 12)),
+          ),
+          TextButton.icon(
+            onPressed: () => _removeTags(context, appState, ids),
+            icon: const Icon(Icons.label_off_outlined, size: 16),
+            label: const Text('移除标签', style: TextStyle(fontSize: 12)),
+          ),
           TextButton.icon(
             onPressed: appState.clearSelection,
             icon: const Icon(Icons.deselect, size: 16),
@@ -650,17 +648,17 @@ class _SelectionBar extends StatelessWidget {
       BuildContext context, AppState appState, Set<int> ids) async {
     final tags = await showTagPickerDialog(context, title: '批量添加标签');
     if (tags == null || tags.isEmpty) return;
-    await appState.addTagsToImages(ids, tags);
+    await appState.addTagsToMedia(ids, tags);
   }
 
   Future<void> _removeTags(
       BuildContext context, AppState appState, Set<int> ids) async {
-    final current = await appState.getTagIdsOnImages(ids);
+    final current = await appState.getTagIdsOnMedia(ids);
     if (!context.mounted) return;
     final tags = await showTagPickerDialog(context,
         title: '批量移除标签', filterTagIds: current);
     if (tags == null || tags.isEmpty) return;
-    await appState.removeTagsFromImages(ids, tags);
+    await appState.removeTagsFromMedia(ids, tags);
   }
 }
 

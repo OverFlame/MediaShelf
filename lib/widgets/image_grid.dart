@@ -13,6 +13,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/log_util.dart';
 import 'launch_result_snack.dart';
+import 'tag_picker_dialog.dart';
 
 /// 中间栏：资源管理器式浏览（子文件夹 + 直接媒体），支持网格/列表视图与多选。
 ///
@@ -20,10 +21,9 @@ import 'launch_result_snack.dart';
 /// - `image`（默认）：文件夹层直接用 `AppState.images`（图片库由 AppState 装填）；
 ///   作品层（进了作品但还没进文件夹）AppState 只装填虚拟文件夹，这里自己补一次
 ///   按作品的媒体查询。
-/// - `video`：AppState 不装填视频（`app_state.dart:332` 的 `isImageLibrary` 只认
-///   `image`），媒体列表全部由本组件按当前作品/文件夹直查 `media` 表
-///   （`type: MediaType.video`）。视频卡片用 `Icons.movie` 与文件名，不做应用内
-///   解码；双击或卡片菜单走 `AppState.playFolderExternal` / `playWorkExternal`。
+/// - `video`：文件夹层与搜索由 AppState 按 `MediaType.video` 装填。视频卡片用
+///   `Icons.movie` 与文件名，不做应用内解码；双击或卡片菜单走
+///   `AppState.playFolderExternal` / `playWorkExternal`。
 ///
 /// 图片库的既有语义保持不变：`ValueKey('image-tile-$id')`、`ValueKey('folder-tile-$id')`
 /// 与单击/Ctrl/Shift/双击行为都不动。
@@ -62,6 +62,24 @@ class _ImageGridState extends State<ImageGrid> {
         ? await appState.playFolderExternal(folderId)
         : await appState.playWorkExternal(workId!);
     if (mounted) showLaunchResult(context, result);
+  }
+
+  /// 视频卡片的「标签...」：勾选状态为当前已绑定标签，确认后整集覆盖。
+  Future<void> _editVideoTags(AppState appState, MediaItem video) async {
+    final id = video.id;
+    if (id == null) return;
+    final existing = (await appState.getTagsForMedia(id))
+        .map((t) => t.id)
+        .whereType<int>()
+        .toSet();
+    if (!mounted) return;
+    final tags = await showTagPickerDialog(
+      context,
+      title: '为视频选择标签',
+      selectedTagIds: existing,
+    );
+    if (tags == null) return;
+    await appState.setMediaTags(id, tags);
   }
 
   /// 作品层的媒体行自己查：`FolderDao.getPathsByWork` 拿作品的目录，
@@ -176,6 +194,7 @@ class _ImageGridState extends State<ImageGrid> {
             onTap: () => _handleImageTap(appState, img.id!),
             onDoubleTap: () => _playExternal(appState),
             onPlayExternal: () => _playExternal(appState),
+            onEditTags: () => _editVideoTags(appState, img),
           );
         }
         return _ThumbnailCard(
@@ -216,6 +235,7 @@ class _ImageGridState extends State<ImageGrid> {
             onTap: () => _handleImageTap(appState, img.id!),
             onDoubleTap: () => _playExternal(appState),
             onPlayExternal: () => _playExternal(appState),
+            onEditTags: () => _editVideoTags(appState, img),
           );
         }
         return _ThumbnailCard(
@@ -519,6 +539,7 @@ class _VideoTile extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onDoubleTap;
   final VoidCallback onPlayExternal;
+  final VoidCallback onEditTags;
 
   const _VideoTile({
     super.key,
@@ -528,6 +549,7 @@ class _VideoTile extends StatelessWidget {
     required this.onTap,
     required this.onDoubleTap,
     required this.onPlayExternal,
+    required this.onEditTags,
   });
 
   String get _displayName => video.alias ?? video.filename;
@@ -551,6 +573,12 @@ class _VideoTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         fontSize: 13, color: AppColors.textPrimary)),
+              ),
+              IconButton(
+                key: ValueKey('video-tags-${video.id}'),
+                icon: const Icon(Icons.label_outline, size: 18),
+                tooltip: '标签...',
+                onPressed: onEditTags,
               ),
               IconButton(
                 icon: const Icon(Icons.play_circle_outline, size: 18),
@@ -589,14 +617,27 @@ class _VideoTile extends StatelessWidget {
                 color: Colors.black45,
                 borderRadius: BorderRadius.circular(4),
                 child: PopupMenuButton<String>(
+                  key: ValueKey('video-menu-${video.id}'),
                   icon: const Icon(Icons.more_vert, size: 14, color: Colors.white),
                   tooltip: '视频操作',
                   padding: EdgeInsets.zero,
-                  onSelected: (_) => onPlayExternal(),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
+                  onSelected: (v) {
+                    if (v == 'tags') {
+                      onEditTags();
+                    } else {
+                      onPlayExternal();
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
                       value: 'playExternal',
                       child: Text('用外部播放器播放',
+                          style: TextStyle(fontSize: 13)),
+                    ),
+                    PopupMenuItem(
+                      key: ValueKey('video-tags-menu-${video.id}'),
+                      value: 'tags',
+                      child: const Text('标签...',
                           style: TextStyle(fontSize: 13)),
                     ),
                   ],

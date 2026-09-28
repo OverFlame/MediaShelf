@@ -162,6 +162,50 @@ void main() {
     await settle();
   });
 
+  test('视频打标签后能被标签筛选命中，也能被 NOT 排除', () async {
+    final clipDir =
+        await Directory(p.join(tmp.path, 'clips')).create(recursive: true);
+    final work = await workDao.create('片库', library: 'video');
+    final folder =
+        await folderDao.create('片库', workId: work.id, library: 'video');
+    await folderDao.addPath(folder.id!, clipDir.path);
+    final tagged = await mediaDao.insertRow(MediaItem(
+      path: p.join(clipDir.path, 'a.mp4'),
+      filename: 'a.mp4',
+      mediaType: MediaType.video,
+      addedAt: 0,
+    ).toMap());
+    await mediaDao.insertRow(MediaItem(
+      path: p.join(clipDir.path, 'b.mp4'),
+      filename: 'b.mp4',
+      mediaType: MediaType.video,
+      addedAt: 1,
+    ).toMap());
+    final tag = await tagDao.insert(Tag(name: '旅行'));
+
+    final app = AppState(player: PlayerController());
+    await app.init();
+    // 视频与图片共用 media_tags，打标签走 media id
+    await app.setMediaTags(tagged, [tag]);
+    expect((await app.getTagsForMedia(tagged)).map((t) => t.name), ['旅行']);
+
+    await app.enterWork(work.id!);
+    await app.enterFolder(folder.id!);
+    await settle();
+    expect(app.images.length, 2);
+
+    app.toggleAndFilter(tag.id!);
+    await settle();
+    expect(app.images.map((i) => i.filename).toList(), ['a.mp4'],
+        reason: 'AND 筛选要按 MediaType.video 查 media_tags');
+
+    app.toggleAndFilter(tag.id!);
+    app.toggleNotFilter(tag.id!);
+    await settle();
+    expect(app.images.map((i) => i.filename).toList(), ['b.mp4'],
+        reason: 'NOT 筛选要能排除带标签的视频');
+  });
+
   test('图片标签筛选（AND）只保留命中图片', () async {
     final (work, folder) = await makeImageLibrary();
     final a = await addImage('a.jpg');

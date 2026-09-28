@@ -812,3 +812,37 @@
 - 新用例断言四件事。作品层只平铺本库媒体，入口文件夹磁贴不再出现。文件夹层列出本层视频，视频库搜索只命中视频。
 
 未完成事项：Windows 与 Android 未跑真机；视频库的标签筛选未做界面入口。
+
+## 2026-09-28 视频库标签入口（`0.8.3+16`）
+
+用户提出「要加标签」。此前只有音频库有标签面板。图片库靠图片详情与选择条打标签，视频库没有任何入口。
+
+动作：
+
+| 项 | 内容 |
+| --- | --- |
+| 媒体标签接口 | `AppState` 新增 `setMediaTags` 与 `getTagsForMedia`，另有 `addTagsToMedia` 等通用别名。图片与视频共用 `media_tags` 表 |
+| 标签选择框 | `showTagPickerDialog` 新增 `selectedTagIds`，打开时预勾选已有标签 |
+| 筛选面板 | `TagPanel` 新增 `filterOnly`。工具栏弹窗只显示标签区，不显示音频导入段与作品集 |
+| 视频卡片 | 视频磁贴菜单加「标签...」项，列表视图加同名图标按钮。点选后弹标签选择框 |
+| 工具栏 | 图片库与视频库都给出「标签筛选」与「高级筛选」入口，键名带库名 |
+| 批量操作 | 选择条的「添加标签」与「移除标签」对视频与图片都显示 |
+| 版本 | `pubspec.yaml` 升到 `0.8.3+16`，关于页常量同步 |
+
+关键决定：
+
+| 议题 | 决定与理由 |
+| --- | --- |
+| 共用 media_tags | 标签表按 media id 存，与媒体类型无关。视频与图片因此不需要新表 |
+| 筛选走通用方法 | `_computeMatchingIds` 已按当前库的 `MediaType` 查。视频标签筛选因此自动生效 |
+| 保留两个选择框 | `tag_picker_dialog` 与 `dialogs` 里的同名对话框参数不同。本轮只给前者加预勾选，避免动音频分支 |
+
+验证：
+
+- `flutter analyze --no-fatal-infos`：5 条 info，0 error。
+- `flutter test`：412 用例全过。新增 `test/widget/home_page_test.dart` 视频标签用例与 `test/state/app_state_images_test.dart` 视频筛选用例。
+- 新用例断言三件事。视频库工具栏能打开纯标签面板，卡片菜单能写入标签，AND 与 NOT 筛选对视频生效。
+
+未完成事项：Windows 与 Android 未跑真机。
+
+踩坑：视频磁贴挂着双击手势。测试里单击菜单按钮要等双击判定超时，单靠 `pumpAndSettle` 不会推进那段计时。

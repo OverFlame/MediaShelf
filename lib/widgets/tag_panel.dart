@@ -11,7 +11,11 @@ import 'dialogs.dart';
 class TagPanel extends StatefulWidget {
   /// 导航后回调（窄屏抽屉里用于关闭抽屉）
   final VoidCallback? onNavigate;
-  const TagPanel({super.key, this.onNavigate});
+
+  /// 只给标签区。图片与视频库的「标签筛选」对话框用这个模式，避免露出
+  /// 音频专用的导入与作品集两段。
+  final bool filterOnly;
+  const TagPanel({super.key, this.onNavigate, this.filterOnly = false});
 
   @override
   State<TagPanel> createState() => _TagPanelState();
@@ -32,6 +36,7 @@ class _TagPanelState extends State<TagPanel> {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
+    if (widget.filterOnly) return _tagSection(appState);
     return Column(
       children: [
         _importSection(appState),
