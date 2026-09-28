@@ -235,6 +235,41 @@ class MediaDao {
     return rows.map(MediaItem.fromMap).toList();
   }
 
+  /// 匹配多个路径前缀下的媒体行（作品与卷整树取用）
+  ///
+  /// 目录数可能上千，占位符在 SQLite 里有上限，所以分批查，再按 id 去重。
+  /// 跨越批次时按文件名排序，保证行序稳定。
+  Future<List<MediaItem>> queryByDirs(List<String> dirPaths,
+      {MediaType? type, String orderBy = 'filename'}) async {
+    if (dirPaths.isEmpty) return [];
+    final out = <MediaItem>[];
+    final seen = <int>{};
+    final typeSql = type == null ? '' : ' AND media_type = ?';
+    final typeArg = type == null ? const <Object?>[] : <Object?>[type.value];
+    for (var i = 0; i < dirPaths.length; i += _batchSize) {
+      final batch = dirPaths.sublist(
+          i, i + _batchSize > dirPaths.length ? dirPaths.length : i + _batchSize);
+      final conditions =
+          batch.map((_) => "path LIKE ? ESCAPE '\\'").join(' OR ');
+      final args = batch.map((p) => '${_escapeLike(p)}%').toList();
+      final rows = await _db.rawQuery(
+          'SELECT * FROM media WHERE ($conditions)$typeSql ORDER BY $orderBy',
+          [...args, ...typeArg]);
+      for (final row in rows) {
+        final item = MediaItem.fromMap(Map<String, dynamic>.from(row));
+        if (item.id == null || seen.add(item.id!)) out.add(item);
+      }
+    }
+    out.sort((a, b) => a.filename.toLowerCase().compareTo(
+        b.filename.toLowerCase()));
+    return out;
+  }
+
+  static String _escapeLike(String raw) => raw
+      .replaceAll('\\', r'\\')
+      .replaceAll('%', r'\%')
+      .replaceAll('_', r'\_');
+
   Future<int> count({MediaType? type}) async {
     final args = <Object?>[];
     final where = _typeWhere(type, args);

@@ -6,6 +6,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import 'cover_image.dart';
 import 'dialogs.dart';
+import 'launch_result_snack.dart';
 
 /// 主页作品集网格
 class WorksGrid extends StatelessWidget {
@@ -109,6 +110,7 @@ class _WorkCard extends StatelessWidget {
         onSelected: (v) => _onMenu(context, appState, v),
         itemBuilder: (_) => const [
           PopupMenuItem(value: 'playAll', child: Text('播放全部', style: TextStyle(fontSize: 13))),
+          PopupMenuItem(value: 'playExternal', child: Text('用外部播放器播放', style: TextStyle(fontSize: 13))),
           PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
           PopupMenuItem(value: 'cover', child: Text('设置封面', style: TextStyle(fontSize: 13))),
           PopupMenuDivider(),
@@ -125,6 +127,10 @@ class _WorkCard extends StatelessWidget {
     switch (v) {
       case 'playAll':
         await appState.playWorkAll(work.id!);
+        break;
+      case 'playExternal':
+        final r = await appState.playWorkExternal(work.id!);
+        if (context.mounted) showLaunchResult(context, r);
         break;
       case 'rename':
         final name = await promptText(context,

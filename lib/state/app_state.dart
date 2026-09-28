@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../db/database.dart';
 import '../db/folder_dao.dart';
+import '../db/media_dao.dart';
 import '../db/tag_dao.dart';
 import '../db/track_dao.dart';
 import '../db/work_dao.dart';
@@ -15,8 +16,10 @@ import '../services/cover_service.dart';
 import '../services/data_dir_service.dart';
 import '../services/file_scanner.dart';
 import '../services/import_service.dart';
+import '../services/playlist_writer.dart';
 import '../services/settings_service.dart';
 import '../services/subtitle_parser.dart';
+import '../services/video_launcher.dart';
 import '../utils/filter_expression.dart';
 import '../utils/log_util.dart';
 import 'player_controller.dart';
@@ -138,6 +141,7 @@ class AppState extends ChangeNotifier {
   FolderDao get _folderDao => FolderDao(DatabaseManager.instance.db);
   TrackDao get _trackDao => TrackDao(DatabaseManager.instance.db);
   TagDao get _tagDao => TagDao(DatabaseManager.instance.db);
+  MediaDao get _mediaDao => MediaDao(DatabaseManager.instance.db);
 
   AppState({required this.player});
 
@@ -1034,6 +1038,58 @@ class AppState extends ChangeNotifier {
     final tracks = await _trackDao.queryByDirs(paths);
     if (tracks.isEmpty) return;
     await playTracks(tracks, 0);
+  }
+
+  /// 用外部播放器播放这个卷（BUILD_GUIDE 第 24.2 节）
+  ///
+  /// 优先取卷内的视频行，没有视频时退回该卷的全部媒体行。
+  Future<LaunchResult> playFolderExternal(int folderId) async {
+    final folder = await _folderDao.getById(folderId);
+    final paths = await _collectFolderPaths(folderId);
+    return _launchExternal(folder?.name ?? '播放列表', paths);
+  }
+
+  /// 用外部播放器播放这个作品下的全部卷
+  Future<LaunchResult> playWorkExternal(int workId) async {
+    final work = await _workDao.getById(workId);
+    final paths = await _folderDao.getPathsByWork(workId);
+    return _launchExternal(work?.name ?? '播放列表', paths);
+  }
+
+  /// 收集一个卷及其全部子卷的目录路径
+  Future<List<String>> _collectFolderPaths(int folderId) async {
+    final paths = <String>[];
+    final queue = <int>[folderId];
+    while (queue.isNotEmpty) {
+      final fid = queue.removeAt(0);
+      for (final fp in await _folderDao.getPaths(fid)) {
+        paths.add(fp.path);
+      }
+      for (final c in await _folderDao.listChildren(fid)) {
+        if (c.id != null) queue.add(c.id!);
+      }
+    }
+    return paths;
+  }
+
+  /// 生成 m3u8 并交给系统默认播放器
+  Future<LaunchResult> _launchExternal(
+      String title, List<String> dirPaths) async {
+    if (dirPaths.isEmpty) return LaunchResult.failed;
+    var rows = await _mediaDao.queryByDirs(dirPaths, type: MediaType.video);
+    if (rows.isEmpty) rows = await _mediaDao.queryByDirs(dirPaths);
+    if (rows.isEmpty) return LaunchResult.failed;
+    final dir = await DataDirService.instance.dataDir;
+    final writer = PlaylistWriter(outputDir: p.join(dir, 'playlist'));
+    final file = await writer.write(
+      name: title,
+      entries: [
+        for (final m in rows)
+          PlaylistEntry(
+              path: m.path, title: m.title ?? m.filename, durationMs: m.durationMs),
+      ],
+    );
+    return VideoLauncher().open(file);
   }
 
   Future<void> playTrackAt(int index) async {

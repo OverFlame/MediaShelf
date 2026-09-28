@@ -9,6 +9,7 @@ import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
 import 'dialogs.dart';
+import 'launch_result_snack.dart';
 
 /// 中间栏：作品/文件夹浏览（面包屑 + 子文件夹 + 曲目列表）
 class FolderBrowser extends StatelessWidget {
@@ -270,6 +271,7 @@ class _FolderTile extends StatelessWidget {
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'open', child: Text('打开', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'playAll', child: Text('播放全部', style: TextStyle(fontSize: 13))),
+                PopupMenuItem(value: 'playExternal', child: Text('用外部播放器播放', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'move', child: Text('移动到作品...', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'tags', child: Text('添加标签...', style: TextStyle(fontSize: 13))),
@@ -292,6 +294,10 @@ class _FolderTile extends StatelessWidget {
         break;
       case 'playAll':
         await appState.playFolderAll(folder.id!);
+        break;
+      case 'playExternal':
+        final r = await appState.playFolderExternal(folder.id!);
+        if (context.mounted) showLaunchResult(context, r);
         break;
       case 'rename':
         final name = await promptText(context,
