@@ -165,6 +165,7 @@ dart run tool/migrate_check.dart --src-a <老库 A> --src-b <老库 B> --dst <�
 
 1. 按第 10.1 节的表迁入图片相关模块。
 2. 保持 `lib/services/data_dir_service.dart` 仍用 AudioShelf 版为底。
+3. 做音频系列与卷：`folders.cover_path` 增量、卷封面与手动指定、系列导入入口、特典自动标签，见 BUILD_GUIDE 第 19 节。
 
 验收：
 
