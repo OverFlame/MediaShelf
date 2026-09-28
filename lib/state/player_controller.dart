@@ -30,6 +30,11 @@ class PlayerController extends ChangeNotifier {
   RepeatMode _repeat = RepeatMode.all;
   bool _shuffle = false;
   double _volume = 1.0;
+  double _speed = 1.0;
+
+  /// 洗牌顺序：队列下标的一个排列。播放按 _order 走，一轮内不重复。
+  List<int> _order = [];
+  int _orderPos = -1;
 
   bool get initialized => _initialized;
   bool get playing => _playing;
@@ -38,13 +43,38 @@ class PlayerController extends ChangeNotifier {
   RepeatMode get repeatMode => _repeat;
   bool get shuffle => _shuffle;
   double get volume => _volume;
+  double get speed => _speed;
   bool get hasTrack => _index >= 0 && _index < _queue.length;
   TrackItem? get currentTrack =>
       hasTrack ? _queue[_index] : null;
   int get queueLength => _queue.length;
 
+  /// 当前队列的只读视图，供播放队列面板显示
+  List<TrackItem> get queue => List.unmodifiable(_queue);
+
+  /// 当前曲目在队列中的下标；无曲目时为 -1
+  int get index => _index;
+
+  /// 播放速度的下限、上限与步长
+  static const double minSpeed = 0.5;
+  static const double maxSpeed = 2.0;
+  static const double speedStep = 0.25;
+
+  /// 洗牌顺序的只读视图，仅供用例断言
+  @visibleForTesting
+  List<int> get shuffleOrder => List.unmodifiable(_order);
+
   /// 每首曲目开始播放时回调（用于记录播放历史）
   void Function(TrackItem track)? onTrackStarted;
+
+  /// 循环模式变化后回调（用于持久化设置）
+  void Function(RepeatMode mode)? onRepeatModeChanged;
+
+  /// 随机开关变化后回调（用于持久化设置）
+  void Function(bool shuffle)? onShuffleChanged;
+
+  /// 播放速度变化后回调（用于持久化设置）
+  void Function(double speed)? onSpeedChanged;
 
   Timer? _ticker;
 
@@ -82,10 +112,18 @@ class PlayerController extends ChangeNotifier {
     if (!_initialized) await init();
     _queue = List.from(tracks);
     _index = _queue.isEmpty ? -1 : startIndex.clamp(0, _queue.length - 1);
+    if (_shuffle) _rebuildOrder();
     await _loadAndPlay();
   }
 
   Future<void> _loadAndPlay() async {
+    if (!_initialized) {
+      // 未初始化时不触碰原生引擎，只同步队列状态。
+      // 这样用例能在没有原生库的环境里验证队列与洗牌逻辑。
+      _playing = false;
+      notifyListeners();
+      return;
+    }
     final gen = ++_loadGen; // 本次加载代际
     await _disposeCurrent();
     // 释放期间可能已有更新的请求，放弃本次
@@ -123,6 +161,7 @@ class PlayerController extends ChangeNotifier {
     _source = newSource;
     _duration = _engine.getLength(newSource);
     _handle = _engine.play(newSource, volume: _volume);
+    _applySpeed();
     _listenEnd();
     _playing = true;
     _position = Duration.zero;
@@ -206,7 +245,7 @@ class PlayerController extends ChangeNotifier {
   Future<void> next({bool auto = false}) async {
     if (_queue.isEmpty) return;
     if (_shuffle) {
-      _index = _randomIndex();
+      if (!await _advanceShuffle()) return; // 一轮走完且不循环：已停止
     } else if (_index < _queue.length - 1) {
       _index++;
     } else if (_repeat == RepeatMode.all) {
@@ -226,7 +265,16 @@ class PlayerController extends ChangeNotifier {
       return;
     }
     if (_shuffle) {
-      _index = _randomIndex();
+      if (_order.length != _queue.length) _rebuildOrder();
+      if (_orderPos > 0) {
+        _orderPos--;
+      } else if (_repeat == RepeatMode.all) {
+        _orderPos = _order.length - 1;
+      } else {
+        await seek(Duration.zero);
+        return;
+      }
+      _index = _order[_orderPos];
     } else if (_index > 0) {
       _index--;
     } else if (_repeat == RepeatMode.all) {
@@ -238,24 +286,93 @@ class PlayerController extends ChangeNotifier {
     await _loadAndPlay();
   }
 
-  int _randomIndex() {
-    if (_queue.length <= 1) return 0;
-    final rnd = Random();
-    int n = _index;
-    while (n == _index) {
-      n = rnd.nextInt(_queue.length);
+  /// 按洗牌顺序前进一步。
+  ///
+  /// 一轮走完时：RepeatMode.off 停止播放，其余模式重开一轮。
+  /// 返回 false 表示播放已停止，调用方不要再加载。
+  Future<bool> _advanceShuffle() async {
+    if (_order.length != _queue.length) _rebuildOrder();
+    _orderPos++;
+    if (_orderPos >= _order.length) {
+      if (_repeat == RepeatMode.off) {
+        await stop();
+        return false;
+      }
+      _rebuildOrder(anchorCurrent: false);
     }
-    return n;
+    _index = _order[_orderPos];
+    return true;
+  }
+
+  /// 重排洗牌顺序。
+  ///
+  /// [anchorCurrent] 为真时把当前曲目放到队首，随后的 next 不会立刻重复它。
+  void _rebuildOrder({bool anchorCurrent = true}) {
+    final n = _queue.length;
+    _order = List<int>.generate(n, (i) => i);
+    if (n > 1) {
+      final rnd = Random();
+      for (var i = n - 1; i > 0; i--) {
+        final j = rnd.nextInt(i + 1);
+        final tmp = _order[i];
+        _order[i] = _order[j];
+        _order[j] = tmp;
+      }
+      if (anchorCurrent && _index >= 0 && _index < n) {
+        final pos = _order.indexOf(_index);
+        if (pos > 0) {
+          final cur = _order.removeAt(pos);
+          _order.insert(0, cur);
+        }
+      }
+    }
+    _orderPos = 0;
   }
 
   void setRepeatMode(RepeatMode m) {
+    if (_repeat == m) return;
     _repeat = m;
+    onRepeatModeChanged?.call(m);
     notifyListeners();
   }
 
-  void toggleShuffle() {
-    _shuffle = !_shuffle;
+  void setShuffle(bool on) {
+    if (_shuffle == on) return;
+    _shuffle = on;
+    if (on) {
+      _rebuildOrder();
+    } else {
+      _order = [];
+      _orderPos = -1;
+    }
+    onShuffleChanged?.call(on);
     notifyListeners();
+  }
+
+  void toggleShuffle() => setShuffle(!_shuffle);
+
+  /// 设置播放速度，钳制在 [minSpeed] 与 [maxSpeed] 之间
+  Future<void> setSpeed(double v) async {
+    final next = v.clamp(minSpeed, maxSpeed).toDouble();
+    if (next == _speed) return;
+    _speed = next;
+    _applySpeed();
+    onSpeedChanged?.call(_speed);
+    notifyListeners();
+  }
+
+  /// 按步长调速，[steps] 为正加快、为负减慢
+  Future<void> stepSpeed(int steps) => setSpeed(_speed + speedStep * steps);
+
+  /// 把当前速度应用到正在播放的句柄
+  void _applySpeed() {
+    final h = _handle;
+    if (h == null) return;
+    try {
+      _engine.setRelativePlaySpeed(h, _speed);
+    } catch (e) {
+      logWarn('Player', '设置播放速度失败: $e');
+    }
   }
 
   Future<void> setVolume(double v) async {
@@ -267,6 +384,81 @@ class PlayerController extends ChangeNotifier {
       } catch (_) {}
     }
     notifyListeners();
+  }
+
+  // ── 队列编辑 ──
+
+  /// 把 [track] 插到当前曲目之后，作为下一首播放
+  Future<void> playNext(TrackItem track) async {
+    if (!hasTrack) {
+      await playQueue([track]);
+      return;
+    }
+    _queue.insert(_index + 1, track);
+    if (_shuffle) _rebuildOrder();
+    notifyListeners();
+  }
+
+  /// 从队列移除第 [i] 首。移除的是当前曲目时接着播放下一个。
+  Future<void> removeAt(int i) async {
+    if (i < 0 || i >= _queue.length) return;
+    final removingCurrent = i == _index;
+    _queue.removeAt(i);
+    if (_queue.isEmpty) {
+      await stop();
+      return;
+    }
+    if (i < _index) {
+      _index--; // 当前曲目前移一位，下标跟着走
+    } else if (removingCurrent && _index >= _queue.length) {
+      _index = _queue.length - 1; // 删的是最后一项，落到新的末尾
+    }
+    if (_shuffle) _rebuildOrder();
+    if (removingCurrent) {
+      await _loadAndPlay();
+      return;
+    }
+    notifyListeners();
+  }
+
+  /// 拖动排序。索引语义同 ReorderableListView：newIndex 是拖入前的目标位置。
+  /// 把队列第 [oldIndex] 首移到 [newIndex]（用移除之后的下标，与
+  /// ReorderableListView.onReorderItem 的口径一致）
+  void reorder(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= _queue.length) return;
+    var target = newIndex;
+    if (target < 0) target = 0;
+    if (target >= _queue.length) target = _queue.length - 1;
+    if (target == oldIndex) return;
+    final current = hasTrack ? _queue[_index] : null;
+    final moved = _queue.removeAt(oldIndex);
+    _queue.insert(target, moved);
+    if (current != null) {
+      final pos = _queue.indexWhere((e) => identical(e, current));
+      if (pos >= 0) _index = pos;
+    }
+    if (_shuffle) _rebuildOrder();
+    notifyListeners();
+  }
+
+  /// 跳到队列第 [i] 首播放
+  Future<void> jumpTo(int i) async {
+    if (i < 0 || i >= _queue.length) return;
+    _index = i;
+    if (_shuffle) {
+      if (_order.length != _queue.length) _rebuildOrder();
+      final pos = _order.indexOf(i);
+      _orderPos = pos >= 0 ? pos : 0;
+    }
+    await _loadAndPlay();
+  }
+
+  /// 直接把队列放进控制器，不触碰原生引擎。仅供用例。
+  @visibleForTesting
+  void debugSeedQueue(List<TrackItem> tracks, {int startIndex = 0}) {
+    _queue = List.from(tracks);
+    _index = _queue.isEmpty ? -1 : startIndex.clamp(0, _queue.length - 1);
+    if (_shuffle) _rebuildOrder();
   }
 
   Future<void> stop() async {

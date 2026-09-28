@@ -269,6 +269,7 @@ class _FolderTile extends StatelessWidget {
               onSelected: (v) => _onMenu(context, appState, v),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'open', child: Text('打开', style: TextStyle(fontSize: 13))),
+                PopupMenuItem(value: 'playAll', child: Text('播放全部', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'move', child: Text('移动到作品...', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'tags', child: Text('添加标签...', style: TextStyle(fontSize: 13))),
@@ -288,6 +289,9 @@ class _FolderTile extends StatelessWidget {
     switch (v) {
       case 'open':
         await appState.enterFolder(folder.id!);
+        break;
+      case 'playAll':
+        await appState.playFolderAll(folder.id!);
         break;
       case 'rename':
         final name = await promptText(context,

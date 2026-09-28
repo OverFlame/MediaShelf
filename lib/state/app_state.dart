@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+// RepeatMode 与 Flutter 的同名枚举冲突，隐藏框架那个
+import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:path/path.dart' as p;
 
 import '../db/database.dart';
@@ -143,6 +144,9 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     logInfo('AppState', 'Initializing...');
     player.onTrackStarted = _onTrackStarted;
+    player.onRepeatModeChanged = _persistRepeatMode;
+    player.onShuffleChanged = _persistShuffle;
+    player.onSpeedChanged = _persistSpeed;
     await loadSettings();
     await loadTags();
     await loadRecentTracks();
@@ -153,12 +157,50 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 设置 ═══════════════
 
+  /// 载入设置期间不回写，避免把刚读到的值又原样写一遍
+  bool _loadingSettings = false;
+
   Future<void> loadSettings() async {
     final ss = SettingsService.instance;
-    _themeMode = ss.themeMode;
-    _sortKey = ss.sortKey;
-    _sortDescending = ss.sortDescending;
+    _loadingSettings = true;
+    try {
+      _themeMode = ss.themeMode;
+      _sortKey = ss.sortKey;
+      _sortDescending = ss.sortDescending;
+      player.setRepeatMode(_repeatModeFromName(ss.repeatModeName));
+      player.setShuffle(ss.shuffle);
+      await player.setSpeed(ss.playSpeed);
+    } finally {
+      _loadingSettings = false;
+    }
     notifyListeners();
+  }
+
+  static RepeatMode _repeatModeFromName(String name) => switch (name) {
+        'off' => RepeatMode.off,
+        'one' => RepeatMode.one,
+        _ => RepeatMode.all,
+      };
+
+  static String _repeatModeName(RepeatMode mode) => switch (mode) {
+        RepeatMode.off => 'off',
+        RepeatMode.one => 'one',
+        RepeatMode.all => 'all',
+      };
+
+  Future<void> _persistRepeatMode(RepeatMode mode) async {
+    if (_loadingSettings) return;
+    await SettingsService.instance.setRepeatModeName(_repeatModeName(mode));
+  }
+
+  Future<void> _persistShuffle(bool on) async {
+    if (_loadingSettings) return;
+    await SettingsService.instance.setShuffle(on);
+  }
+
+  Future<void> _persistSpeed(double speed) async {
+    if (_loadingSettings) return;
+    await SettingsService.instance.setPlaySpeed(speed);
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
@@ -964,6 +1006,34 @@ class AppState extends ChangeNotifier {
     if (_tracks.isEmpty) return;
     _rememberQueueCover();
     await player.playQueue(_tracks, startIndex: 0);
+  }
+
+  /// 播放某个文件夹（含子文件夹）下的全部曲目
+  Future<void> playFolderAll(int folderId) async {
+    final paths = <String>[];
+    final queue = <int>[folderId];
+    while (queue.isNotEmpty) {
+      final fid = queue.removeAt(0);
+      for (final fp in await _folderDao.getPaths(fid)) {
+        paths.add(fp.path);
+      }
+      for (final c in await _folderDao.listChildren(fid)) {
+        if (c.id != null) queue.add(c.id!);
+      }
+    }
+    if (paths.isEmpty) return;
+    final tracks = await _trackDao.queryByDirs(paths);
+    if (tracks.isEmpty) return;
+    await playTracks(tracks, 0);
+  }
+
+  /// 播放某个作品全部卷下的曲目
+  Future<void> playWorkAll(int workId) async {
+    final paths = await _folderDao.getPathsByWork(workId);
+    if (paths.isEmpty) return;
+    final tracks = await _trackDao.queryByDirs(paths);
+    if (tracks.isEmpty) return;
+    await playTracks(tracks, 0);
   }
 
   Future<void> playTrackAt(int index) async {

@@ -139,4 +139,38 @@ class SettingsService {
     _data['cover_cache_mb'] = mb.clamp(0, 8192);
     await _save();
   }
+
+  // ── 播放设置 ──
+
+  /// 循环模式名：off / all / one
+  String get repeatModeName => (_data['repeat_mode'] as String?) ?? 'all';
+
+  Future<void> setRepeatModeName(String name) async {
+    _data['repeat_mode'] = switch (name) {
+      'off' => 'off',
+      'one' => 'one',
+      _ => 'all',
+    };
+    await _save();
+  }
+
+  /// 随机播放开关
+  bool get shuffle => (_data['shuffle'] as bool?) ?? false;
+
+  Future<void> setShuffle(bool on) async {
+    _data['shuffle'] = on;
+    await _save();
+  }
+
+  /// 播放速度，钳制在 0.5 与 2.0 之间
+  double get playSpeed {
+    final v = _data['play_speed'];
+    final d = v is num ? v.toDouble() : 1.0;
+    return d.clamp(0.5, 2.0).toDouble();
+  }
+
+  Future<void> setPlaySpeed(double speed) async {
+    _data['play_speed'] = speed.clamp(0.5, 2.0).toDouble();
+    await _save();
+  }
 }

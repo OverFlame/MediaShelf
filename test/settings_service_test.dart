@@ -103,4 +103,29 @@ void main() {
     expect(s.sortDescending, isTrue);
     expect(s.expressionHistory, ['tag:live']);
   });
+
+  test('播放设置：循环、随机与速度能写能读，非法值归一', () async {
+    final s = SettingsService.instance;
+    expect(s.repeatModeName, 'all', reason: '默认循环模式是列表循环');
+    expect(s.shuffle, isFalse);
+    expect(s.playSpeed, 1.0);
+
+    await s.setRepeatModeName('one');
+    await s.setShuffle(true);
+    await s.setPlaySpeed(1.25);
+
+    s.resetForTest();
+    await s.init();
+    expect(s.repeatModeName, 'one');
+    expect(s.shuffle, isTrue);
+    expect(s.playSpeed, 1.25);
+
+    // 越界与非法值都要收回来
+    await s.setRepeatModeName('loop');
+    expect(s.repeatModeName, 'all');
+    await s.setPlaySpeed(9);
+    expect(s.playSpeed, 2.0);
+    await s.setPlaySpeed(0.1);
+    expect(s.playSpeed, 0.5);
+  });
 }

@@ -108,6 +108,7 @@ class _WorkCard extends StatelessWidget {
         tooltip: '作品操作',
         onSelected: (v) => _onMenu(context, appState, v),
         itemBuilder: (_) => const [
+          PopupMenuItem(value: 'playAll', child: Text('播放全部', style: TextStyle(fontSize: 13))),
           PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
           PopupMenuItem(value: 'cover', child: Text('设置封面', style: TextStyle(fontSize: 13))),
           PopupMenuDivider(),
@@ -122,6 +123,9 @@ class _WorkCard extends StatelessWidget {
   Future<void> _onMenu(
       BuildContext context, AppState appState, String v) async {
     switch (v) {
+      case 'playAll':
+        await appState.playWorkAll(work.id!);
+        break;
       case 'rename':
         final name = await promptText(context,
             title: '重命名作品', initial: work.name);
