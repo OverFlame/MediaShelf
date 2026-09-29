@@ -443,6 +443,7 @@ class _TagPanelState extends State<TagPanel> {
                 size: 14, color: AppColors.mutedLightOf(context)),
             suffixIcon: _tagSearch.isNotEmpty
                 ? IconButton(
+                    tooltip: '清空搜索',
                     icon: Icon(Icons.clear,
                         size: 14, color: AppColors.mutedLightOf(context)),
                     onPressed: () {

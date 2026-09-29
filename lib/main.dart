@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
@@ -53,6 +54,17 @@ Future<void> main() async {
   }
 }
 
+/// 系统自带文案（返回、复制、取消等）的本地化配置，[MediaShelfApp] 用这套。
+const List<LocalizationsDelegate<dynamic>> appLocalizationsDelegates =
+    <LocalizationsDelegate<dynamic>>[
+  GlobalMaterialLocalizations.delegate,
+  GlobalWidgetsLocalizations.delegate,
+  GlobalCupertinoLocalizations.delegate,
+];
+
+/// 界面文案以中文为主，英文兜底。
+const List<Locale> appSupportedLocales = <Locale>[Locale('zh'), Locale('en')];
+
 class MediaShelfApp extends StatelessWidget {
   const MediaShelfApp({super.key});
 
@@ -65,6 +77,9 @@ class MediaShelfApp extends StatelessWidget {
       theme: AppColors.lightThemeData,
       darkTheme: AppColors.darkThemeData,
       themeMode: themeMode,
+      // 不加这段的话，返回、复制、取消这些系统自带的提示一律是英文
+      localizationsDelegates: appLocalizationsDelegates,
+      supportedLocales: appSupportedLocales,
       home: const HomePage(),
     );
   }

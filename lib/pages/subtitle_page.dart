@@ -115,6 +115,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
       child: Row(
         children: [
           IconButton(
+            tooltip: '收起',
             icon: const Icon(Icons.keyboard_arrow_down,
                 size: 28, color: Colors.white70),
             onPressed: () => Navigator.of(context).pop(),
@@ -292,10 +293,12 @@ class _SubtitlePageState extends State<SubtitlePage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               IconButton(
+                tooltip: '上一首',
                 icon: const Icon(Icons.skip_previous, color: Colors.white, size: 30),
                 onPressed: () => player.previous(),
               ),
               IconButton(
+                tooltip: player.playing ? '暂停' : '播放',
                 icon: Icon(
                   player.playing
                       ? Icons.pause_circle_filled
@@ -306,6 +309,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
                 onPressed: () => player.togglePlay(),
               ),
               IconButton(
+                tooltip: '下一首',
                 icon: const Icon(Icons.skip_next, color: Colors.white, size: 30),
                 onPressed: () => player.next(),
               ),

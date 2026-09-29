@@ -232,6 +232,22 @@ void main() {
     expect(app.allTags.any((t) => t.id == styleTag.id), isFalse);
   });
 
+  testWidgets('标签搜索框的清空按钮有 tooltip，点了能清空', (tester) async {
+    await pumpPanel(tester);
+    final search = find.byWidgetPredicate((w) =>
+        w is TextField && w.decoration?.hintText == '搜索标签...');
+    expect(search, findsOneWidget);
+    expect(find.byTooltip('清空搜索'), findsNothing, reason: '没输入时不显示清空按钮');
+
+    await tester.enterText(search, '风景');
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('清空搜索'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('清空搜索'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(search).controller?.text, '');
+  });
+
   testWidgets('滚动标签列表时表头与搜索框不跟着移动', (tester) async {
     await pumpPanel(tester);
 
