@@ -10,6 +10,7 @@ import '../services/media_rules.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/log_util.dart';
+import 'dialogs.dart';
 import 'move_folder_dialog.dart';
 import 'tag_picker_dialog.dart';
 import 'volume_panel.dart';
@@ -504,59 +505,8 @@ class _FolderPanelState extends State<FolderPanel> {
   }
 
   Future<String?> _promptFolderName(String title, {String? initial}) {
-    return showDialog<String>(
-      context: context,
-      builder: (_) => _PromptDialog(title: title, initial: initial ?? ''),
-    );
-  }
-}
-
-/// 文本输入对话框（自持 controller，生命周期随对话框，避免 use-after-dispose）
-class _PromptDialog extends StatefulWidget {
-  final String title;
-  final String initial;
-  const _PromptDialog({required this.title, this.initial = ''});
-
-  @override
-  State<_PromptDialog> createState() => _PromptDialogState();
-}
-
-class _PromptDialogState extends State<_PromptDialog> {
-  late final TextEditingController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = TextEditingController(text: widget.initial);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
-      content: TextField(
-        controller: _ctrl,
-        autofocus: true,
-        onSubmitted: (v) => Navigator.pop(context, v.trim()),
-        decoration: const InputDecoration(hintText: '文件夹名称'),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(context, _ctrl.text.trim()),
-          child: const Text('确定'),
-        ),
-      ],
-    );
+    return promptText(context,
+        title: title, initial: initial ?? '', hint: '文件夹名称');
   }
 }
 
@@ -723,10 +673,8 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
   }
 
   Future<String?> _promptName(String title, {String? initial}) {
-    return showDialog<String>(
-      context: context,
-      builder: (_) => _PromptDialog(title: title, initial: initial ?? ''),
-    );
+    return promptText(context,
+        title: title, initial: initial ?? '', hint: '文件夹名称');
   }
 
   @override
