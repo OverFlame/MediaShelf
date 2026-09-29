@@ -4,6 +4,7 @@ import 'dart:ui' show Rect;
 
 import 'package:sqflite/sqflite.dart';
 
+import '../db/sql_like.dart';
 import '../utils/crop_math.dart';
 import 'media_rules.dart';
 
@@ -308,8 +309,8 @@ class VolumeCoverService {
       final clauses = <String>[];
       final args = <Object?>[];
       for (final dir in slice) {
-        clauses.add("path LIKE ? ESCAPE '\\'");
-        args.add('${_escapeLike(_pathPrefix(dir))}%');
+        clauses.add("path LIKE ? $sqlLikeEscape");
+        args.add('${escapeLike(_pathPrefix(dir))}%');
       }
       final rows = await _db.query(
         'media',
@@ -336,8 +337,8 @@ class VolumeCoverService {
       final clauses = <String>[];
       final args = <Object?>[];
       for (final dir in slice) {
-        clauses.add("path LIKE ? ESCAPE '\\'");
-        args.add('${_escapeLike(_pathPrefix(dir))}%');
+        clauses.add("path LIKE ? $sqlLikeEscape");
+        args.add('${escapeLike(_pathPrefix(dir))}%');
       }
       final rows = await _db.query(
         'media',
@@ -364,9 +365,4 @@ class VolumeCoverService {
         (d.contains('\\') || RegExp(r'^[A-Za-z]:').hasMatch(d)) ? '\\' : '/';
     return d.endsWith(sep) ? d : '$d$sep';
   }
-
-  static String _escapeLike(String value) => value
-      .replaceAll(r'\', r'\\')
-      .replaceAll('%', r'\%')
-      .replaceAll('_', r'\_');
 }

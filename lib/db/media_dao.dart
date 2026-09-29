@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../services/media_rules.dart';
 import '../utils/log_util.dart';
+import 'sql_like.dart';
 
 /// 媒体类型。音频、图片、视频、字幕共用一张 media 表。
 enum MediaType {
@@ -314,8 +315,8 @@ class MediaDao {
       final batch = dirPaths.sublist(
           i, i + _batchSize > dirPaths.length ? dirPaths.length : i + _batchSize);
       final conditions =
-          batch.map((_) => "path LIKE ? ESCAPE '\\'").join(' OR ');
-      final args = batch.map((p) => '${_escapeLike(p)}%').toList();
+          batch.map((_) => "path LIKE ? $sqlLikeEscape").join(' OR ');
+      final args = batch.map((p) => '${escapeLike(p)}%').toList();
       final rows = await _db.rawQuery(
           'SELECT * FROM media WHERE ($conditions)$typeSql ORDER BY $orderBy',
           [...args, ...typeArg]);
@@ -334,12 +335,12 @@ class MediaDao {
   Future<List<MediaItem>> queryDirectInDir(String dirPath,
       {MediaType? type, String orderBy = naturalOrderBy}) async {
     final (prefix, sep) = _directPrefix(dirPath);
-    final head = _escapeLike(prefix);
+    final head = escapeLike(prefix);
     final conditions = <String>[
-      "path LIKE ? ESCAPE '\\'",
-      "path NOT LIKE ? ESCAPE '\\'",
+      "path LIKE ? $sqlLikeEscape",
+      "path NOT LIKE ? $sqlLikeEscape",
     ];
-    final args = <Object?>['$head%', '$head%${_escapeLike(sep)}%'];
+    final args = <Object?>['$head%', '$head%${escapeLike(sep)}%'];
     if (type != null) {
       conditions.add('media_type = ?');
       args.add(type.value);
@@ -354,12 +355,12 @@ class MediaDao {
   /// 图片侧靠 filename 与 alias 命中，音频侧另有 TrackDao.searchByName。
   Future<List<MediaItem>> searchByName(String q,
       {MediaType? type, int limit = 100000, String orderBy = naturalOrderBy}) async {
-    final like = '%${_escapeLike(q)}%';
+    final like = '%${escapeLike(q)}%';
     final args = <Object?>[like, like, like, like, like];
     final search =
-        "filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' "
-        "OR artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\' "
-        "OR alias LIKE ? ESCAPE '\\'";
+        "filename LIKE ? $sqlLikeEscape OR title LIKE ? $sqlLikeEscape "
+        "OR artist LIKE ? $sqlLikeEscape OR album LIKE ? $sqlLikeEscape "
+        "OR alias LIKE ? $sqlLikeEscape";
     final where = type == null ? search : "($search) AND media_type = ?";
     if (type != null) args.add(type.value);
     final rows = await _db.query('media',
@@ -406,10 +407,6 @@ class MediaDao {
     return a.filename.toLowerCase().compareTo(b.filename.toLowerCase());
   }
 
-  static String _escapeLike(String raw) => raw
-      .replaceAll('\\', r'\\')
-      .replaceAll('%', r'\%')
-      .replaceAll('_', r'\_');
 
   /// 归一化目录路径，返回 (带分隔符的前缀, 分隔符)。
   ///
