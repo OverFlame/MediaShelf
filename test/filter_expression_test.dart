@@ -29,11 +29,13 @@ void main() {
           throwsA(isA<FilterExpressionException>()));
     });
 
-    test('SQL 编译使用 track_tags', () {
+    test('SQL 编译使用 media_tags', () {
       final ast = FilterExpressionParser.parse('A&&B');
-      final sql = buildTrackIdSubquery(ast, (ref) => [1, 2]);
-      expect(sql, contains('track_id'));
-      expect(sql, contains('INTERSECT'));
+      final sql = buildTrackIdSubquery(ast, (ref) => tagIdsSubquery([1, 2]));
+      expect(sql, contains('media_id'));
+      expect(sql, contains('media_tags'));
+      expect(sql, contains("media_type = 'audio'"));
+      expect(sql, contains('AND id IN'));
     });
   });
 }

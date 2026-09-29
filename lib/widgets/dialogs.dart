@@ -6,6 +6,7 @@ import '../db/tag_dao.dart';
 import '../services/cover_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import 'cover_pick.dart';
 
 /// 未归类作品哨兵值
 const int kUnassignedWork = -1;
@@ -59,11 +60,27 @@ Future<String?> pickDirectoryPath({String? title}) async {
   return FilePicker.getDirectoryPath(dialogTitle: title ?? '选择文件夹');
 }
 
-/// 导入封面并设置到作品
+/// 设置作品封面：先把作品里的图片列出来让用户直接挑（手机上比系统选图省事
+/// 得多），作品里没有图或都不合适时再退回系统选图。
 Future<void> showImportCoverDialog(BuildContext context, int workId) async {
   final appState = context.read<AppState>();
-  final src = await pickImagePath();
-  if (src == null) return;
+  final items = await appState.imagesUnderWork(workId);
+  if (!context.mounted) return;
+  final paths = items.map((m) => m.path).toList(growable: false);
+  String? current;
+  for (final w in appState.works) {
+    if (w.id == workId) {
+      current = w.coverPath;
+      break;
+    }
+  }
+  final src = await showCoverImagePicker(
+    context,
+    title: paths.isEmpty ? '选择作品封面' : '选择作品封面（${paths.length} 张候选）',
+    paths: paths,
+    current: current,
+  );
+  if (src == null || src.isEmpty) return;
   final dest = await CoverService.importCover(src, workId);
   if (dest != null) {
     await appState.setWorkCover(workId, dest);

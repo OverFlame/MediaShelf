@@ -43,13 +43,15 @@ class CoverImage extends StatelessWidget {
   }
 
   Widget _placeholder(BuildContext context) {
+    // 调用方可能传 double.infinity（作品卡片就是这么用的），图标尺寸要收成有限值
+    final iconSize = width.isFinite ? width * 0.4 : 32.0;
     return Container(
       width: width,
       height: height,
       color: AppColors.surfaceOf(context),
       child: Icon(
         Icons.music_note,
-        size: width * 0.4,
+        size: iconSize,
         color: AppColors.mutedOf(context),
       ),
     );

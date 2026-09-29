@@ -7,6 +7,8 @@ import '../theme/app_theme.dart';
 import '../utils/format.dart';
 import '../pages/subtitle_page.dart';
 import 'cover_image.dart';
+import 'queue_panel.dart';
+import 'segment_panel.dart';
 
 /// 底部播放栏
 class PlayerBar extends StatelessWidget {
@@ -159,6 +161,45 @@ class PlayerBar extends StatelessWidget {
                       tooltip: '循环模式',
                       onPressed: () => _cycleRepeat(player),
                     ),
+                  if (isWide) ...[
+                    TextButton(
+                      onPressed: () => _showSpeedDialog(context, player),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(40, 32),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                      ),
+                      child: Text(
+                        '${_speedLabel(player.speed)}x',
+                        style: TextStyle(
+                            color: player.speed != 1.0
+                                ? AppColors.accent
+                                : AppColors.mutedLightOf(context),
+                            fontSize: 12),
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.queue_music,
+                          size: 18, color: AppColors.mutedLightOf(context)),
+                      tooltip: '播放队列',
+                      onPressed: () => QueuePanel.show(context),
+                    ),
+                    TextButton(
+                      key: const ValueKey('player-segment-button'),
+                      onPressed: () => SegmentPanel.show(context),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(40, 32),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                      ),
+                      child: Text(
+                        '选区',
+                        style: TextStyle(
+                            color: player.segmentLoopEnabled
+                                ? AppColors.accent
+                                : AppColors.mutedLightOf(context),
+                            fontSize: 12),
+                      ),
+                    ),
+                  ],
                   IconButton(
                     icon: const Icon(Icons.subtitles_outlined,
                         size: 20, color: AppColors.teal),
@@ -232,5 +273,70 @@ class PlayerBar extends StatelessWidget {
       RepeatMode.one => RepeatMode.off,
     };
     player.setRepeatMode(next);
+  }
+
+  /// 速度标签：整数不带小数点，其余按原值显示
+  String _speedLabel(double speed) {
+    if (speed == speed.roundToDouble()) return speed.toStringAsFixed(0);
+    return speed.toString();
+  }
+
+  /// 播放速度对话框：滑杆、常用档位与恢复 1x
+  Future<void> _showSpeedDialog(
+      BuildContext context, PlayerController player) {
+    const presets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+    final divisions = ((PlayerController.maxSpeed - PlayerController.minSpeed) /
+            PlayerController.speedStep)
+        .round();
+    return showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('播放速度'),
+        content: ListenableBuilder(
+          listenable: player,
+          builder: (ctx, _) => SizedBox(
+            width: 280,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Slider(
+                  value: player.speed,
+                  min: PlayerController.minSpeed,
+                  max: PlayerController.maxSpeed,
+                  divisions: divisions,
+                  activeColor: AppColors.accent,
+                  label: '${_speedLabel(player.speed)}x',
+                  onChanged: (v) => player.setSpeed(v),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  children: [
+                    for (final s in presets)
+                      ChoiceChip(
+                        label: Text('${_speedLabel(s)}x',
+                            style: const TextStyle(fontSize: 12)),
+                        selected: player.speed == s,
+                        onSelected: (_) => player.setSpeed(s),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => player.setSpeed(1.0),
+            child: const Text('恢复 1x'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 }

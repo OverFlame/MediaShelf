@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+// RepeatMode 与 Flutter 的同名枚举冲突，隐藏框架那个
+import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:path/path.dart' as p;
 
 import '../db/database.dart';
 import '../db/folder_dao.dart';
+import '../db/media_dao.dart';
 import '../db/tag_dao.dart';
 import '../db/track_dao.dart';
 import '../db/work_dao.dart';
@@ -14,8 +16,15 @@ import '../services/cover_service.dart';
 import '../services/data_dir_service.dart';
 import '../services/file_scanner.dart';
 import '../services/import_service.dart';
+import '../services/playlist_writer.dart';
+import '../services/reading_progress_service.dart';
+import '../services/segment_service.dart';
 import '../services/settings_service.dart';
 import '../services/subtitle_parser.dart';
+import '../services/subtitle_service.dart';
+import '../services/thumbnail_cache.dart';
+import '../services/video_launcher.dart';
+import '../services/volume_cover_service.dart';
 import '../utils/filter_expression.dart';
 import '../utils/log_util.dart';
 import 'player_controller.dart';
@@ -39,6 +48,9 @@ class TagFilter {
 /// 应用状态 — 作品集 / 文件夹导航 / 曲目 / 标签 / 导入 / 播放
 class AppState extends ChangeNotifier {
   final PlayerController player;
+
+  /// 外链播放器。用例注入假实现，界面用例才能断言交给系统的命令
+  final VideoLauncher _launcher;
 
   // ── 作品集 ──
   List<Work> _works = [];
@@ -65,6 +77,71 @@ class AppState extends ChangeNotifier {
   List<VirtualFolder> get centerFolders => _centerFolders;
   List<TrackItem> _tracks = [];
   List<TrackItem> get tracks => _tracks;
+
+  // ── 图片列表（与曲目列表按库类型互斥：同一时刻只有一侧有内容）──
+  List<MediaItem> _images = [];
+  List<MediaItem> get images => _images;
+
+  /// id → 图片的索引，跟着 [_images] 一起更新。
+  ///
+  /// 详情面板每次构建都会读 [selectedImage]；没有索引时要在整页列表上
+  /// 线性扫描，两万张图时每次通知都要扫一遍。
+  final Map<int, MediaItem> _imageIndex = {};
+
+  /// 当前界面上真正看得见的媒体 id。
+  ///
+  /// 作品层由 [ImageGrid] 自己查媒体行（`_images` 那一层只有文件夹），
+  /// 所以「全选」「区间选」不能只看 [_images]，要听这里的登记。
+  List<int> _visibleMediaIds = const [];
+
+  /// [ImageGrid] 每次重建后登记可见媒体；内容没变就不通知，避免死循环。
+  ///
+  /// 同时把媒体行并进 [_imageIndex]：作品层的 [_images] 只有文件夹，媒体行是
+  /// [ImageGrid] 自己查出来的，不登记的话 [selectedImage] 解析不到，图片详情
+  /// 面板与窄屏详情页只会显示占位。
+  void reportVisibleMedia(List<MediaItem> items) {
+    for (final item in items) {
+      final id = item.id;
+      if (id != null) _imageIndex[id] = item;
+    }
+    final ids = items.map((i) => i.id).whereType<int>().toList();
+    if (ids.length == _visibleMediaIds.length) {
+      var same = true;
+      for (var i = 0; i < ids.length; i++) {
+        if (ids[i] != _visibleMediaIds[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return;
+    }
+    _visibleMediaIds = List<int>.unmodifiable(ids);
+    notifyListeners();
+  }
+
+  /// 能被「全选」「区间选」摸到的媒体：优先当前列表，其次界面登记的可见项。
+  List<int> get _selectableMediaIds => _images.isNotEmpty
+      ? _images.map((i) => i.id).whereType<int>().toList()
+      : _visibleMediaIds;
+
+  /// 统一替换图片列表并重建索引（不要直接给 [_images] 赋值）。
+  void _setImages(List<MediaItem> list) {
+    _images = list;
+    _imageIndex.clear();
+    for (final img in list) {
+      final id = img.id;
+      if (id != null) _imageIndex[id] = img;
+    }
+  }
+
+  /// 媒体行增删的代数：作品层的网格自己缓存媒体列表，删完记录要
+  /// 靠这个代数知道该重查，不然磁贴会留在界面上。
+  int _mediaRevision = 0;
+  int get mediaRevision => _mediaRevision;
+
+  int _totalCount = 0;
+  int get totalCount => _totalCount;
+
   bool _loading = false;
   bool get loading => _loading;
 
@@ -76,6 +153,7 @@ class AppState extends ChangeNotifier {
   List<Tag> _allTags = [];
   List<Tag> get allTags => _allTags;
   final Map<int, List<Tag>> _trackTags = {};
+  final Map<int, List<Tag>> _imageTags = {};
   /// 每个曲目的标签切换排队串行执行，见 [toggleTagOnTrack]。
   final Map<int, Future<void>> _tagToggleChains = {};
   // ── 曲目多选 ──
@@ -91,6 +169,48 @@ class AppState extends ChangeNotifier {
   String _advancedFilter = '';
   String get advancedFilter => _advancedFilter;
   bool get hasAdvancedFilter => _advancedFilter.trim().isNotEmpty;
+
+  // ── 图片单选 + 多选 ──
+  int? _selectedImageId;
+  int? get selectedId => _selectedImageId;
+  MediaItem? get selectedImage =>
+      _selectedImageId == null ? null : _imageIndex[_selectedImageId];
+  final Set<int> _selectedImageIds = {};
+  /// 只读视图：调用方拿不到内部集合，改不到选中状态。
+  Set<int> get selectedIds => UnmodifiableSetView(_selectedImageIds);
+  bool isSelected(int id) => _selectedImageIds.contains(id);
+  int? _anchorImageId;
+
+  /// 视觉库多选模式。开启后单击是勾选而不是打开，长按、Ctrl 点击或工具栏
+  /// 的「多选」都会打开它；选中集合清空时自动关掉。
+  bool _visualSelectionMode = false;
+  bool get visualSelectionMode => _visualSelectionMode;
+
+  // ── 图片视图设置 ──
+  int _gridColumns = 4;
+  int get gridColumns => _gridColumns;
+
+  /// 缩略图缓存上限（MB）。复用封面缓存设置键，见 [setCacheSizeMB]。
+  int get cacheSizeMB => _coverCacheLimitMB;
+
+  String _viewMode = 'grid';
+  String get viewMode => _viewMode;
+
+  /// 缩略图缓存世代。清空缓存时自增，图片卡片据此重新生成缩略图。
+  int _thumbEpoch = 0;
+  int get thumbEpoch => _thumbEpoch;
+
+  // ── 全屏查看器 ──
+  List<MediaItem> _viewerImages = [];
+  List<MediaItem> get viewerImages => _viewerImages;
+  int _viewerIndex = 0;
+  int get viewerIndex => _viewerIndex;
+  bool _showViewer = false;
+  bool get showViewer => _showViewer;
+  MediaItem? get viewerImage =>
+      _viewerIndex >= 0 && _viewerIndex < _viewerImages.length
+          ? _viewerImages[_viewerIndex]
+          : null;
 
   // ── 导入状态 ──
   bool _importing = false;
@@ -120,6 +240,10 @@ class AppState extends ChangeNotifier {
   int _coverCacheLimitMB = 512;
   int get coverCacheLimitMB => _coverCacheLimitMB;
 
+  // ── 当前曲目的收藏选段（BUILD_GUIDE 第 24.3 节）──
+  List<MediaSegment> _segments = [];
+  List<MediaSegment> get segments => List.unmodifiable(_segments);
+
   // ── 设置 ──
   ThemeMode _themeMode = ThemeMode.dark;
   ThemeMode get themeMode => _themeMode;
@@ -128,8 +252,96 @@ class AppState extends ChangeNotifier {
   bool _sortDescending = false;
   bool get sortDescending => _sortDescending;
 
+  // ── 图片 / 视频库排序 ──
+  //
+  // 音频那套是单份 `_sortKey`；视觉库按库各存一份：图片与视频的行数、
+  // 关心的字段都不一样（视频常按大小/时间，图片常按文件名自然序）。
+
+  /// 视觉库排序字段：`name`（自然序，默认）/ `mtime` / `size` / `added`。
+  static const Map<String, String> visualSortLabels = {
+    'name': '文件名',
+    'mtime': '修改时间',
+    'size': '文件大小',
+    'added': '加入时间',
+  };
+
+  String _imageSortKey = 'name';
+  bool _imageSortDesc = false;
+  String _videoSortKey = 'name';
+  bool _videoSortDesc = false;
+
+  /// 当前是不是视频库（排序设置按库分开存）。
+  bool get _isVideoLibrary => currentLibrary == 'video';
+
+  /// 当前视觉库的排序字段。
+  String get visualSortKey => _isVideoLibrary ? _videoSortKey : _imageSortKey;
+
+  /// 当前视觉库是否降序。
+  bool get visualSortDescending =>
+      _isVideoLibrary ? _videoSortDesc : _imageSortDesc;
+
+  /// 当前视觉库的排序比较器。
+  ///
+  /// `name` 走自然序（`sort_key` 补零，见 BUILD_GUIDE 第 20.2 节），其余字段
+  /// 比完再按自然序兜底，保证同一时间戳的行不会每次刷新换位置。
+  int Function(MediaItem, MediaItem) get visualSortComparator {
+    final key = visualSortKey;
+    final desc = visualSortDescending;
+    return (a, b) {
+      int cmp;
+      switch (key) {
+        case 'mtime':
+          cmp = (a.fileMtime ?? 0).compareTo(b.fileMtime ?? 0);
+          break;
+        case 'size':
+          cmp = (a.fileSize ?? 0).compareTo(b.fileSize ?? 0);
+          break;
+        case 'added':
+          cmp = a.addedAt.compareTo(b.addedAt);
+          break;
+        default:
+          cmp = MediaDao.compareNatural(a, b);
+          break;
+      }
+      if (cmp == 0 && key != 'name') cmp = MediaDao.compareNatural(a, b);
+      return desc ? -cmp : cmp;
+    };
+  }
+
+  Future<void> setVisualSortKey(String key) async {
+    if (!visualSortLabels.containsKey(key)) return;
+    final ss = SettingsService.instance;
+    if (_isVideoLibrary) {
+      _videoSortKey = key;
+      await ss.setVideoSortKey(key);
+    } else {
+      _imageSortKey = key;
+      await ss.setImageSortKey(key);
+    }
+    await _afterVisualSortChanged();
+  }
+
+  Future<void> setVisualSortDescending(bool desc) async {
+    final ss = SettingsService.instance;
+    if (_isVideoLibrary) {
+      _videoSortDesc = desc;
+      await ss.setVideoSortDescending(desc);
+    } else {
+      _imageSortDesc = desc;
+      await ss.setImageSortDescending(desc);
+    }
+    await _afterVisualSortChanged();
+  }
+
+  /// 排序一变：中间栏重排，作品层的网格靠 [mediaRevision] 知道要重查。
+  Future<void> _afterVisualSortChanged() async {
+    _mediaRevision++;
+    notifyListeners();
+    await refresh();
+  }
+
   // ── 字幕缓存 ──
-  final Map<String, List<LyricLine>> _subtitleCache = {};
+  final Map<String, SubtitleDocument> _subtitleCache = {};
 
   // ═══════════════ DAO 便捷访问 ═══════════════
 
@@ -137,28 +349,173 @@ class AppState extends ChangeNotifier {
   FolderDao get _folderDao => FolderDao(DatabaseManager.instance.db);
   TrackDao get _trackDao => TrackDao(DatabaseManager.instance.db);
   TagDao get _tagDao => TagDao(DatabaseManager.instance.db);
+  MediaDao get _mediaDao => MediaDao(DatabaseManager.instance.db);
+  SegmentService get _segmentService =>
+      SegmentService(DatabaseManager.instance.db);
 
-  AppState({required this.player});
+  AppState({required this.player, VideoLauncher? videoLauncher})
+      : _launcher = videoLauncher ?? VideoLauncher();
 
   Future<void> init() async {
     logInfo('AppState', 'Initializing...');
+    // 缩略图服务必须在这里初始化：界面一建卡片就会调 thumbPath()，
+    // 漏掉这一步时缩略图一张都生成不出来（网格只剩占位图标）。
+    await ThumbnailService.instance.init();
     player.onTrackStarted = _onTrackStarted;
+    player.onRepeatModeChanged = _persistRepeatMode;
+    player.onShuffleChanged = _persistShuffle;
+    player.onSpeedChanged = _persistSpeed;
     await loadSettings();
+    // 规则标签只放定义行，筛选时翻成列条件（BUILD_GUIDE 第 18.4 节）。
+    await _tagDao.ensureRuleTags(extNames: _ruleTagExtensions);
     await loadTags();
+    await _initNotTagIds();
+    await _initCollapsedNamespaces();
     await loadRecentTracks();
     await loadCoverCacheLimit();
     await refresh();
     logInfo('AppState', 'Initialized OK');
   }
 
+  /// 默认排除「字幕」这类规则标签，并把排除集持久化（BUILD_GUIDE 第 18.5 节）。
+  ///
+  /// 字幕照常入库，只是默认不进列表；用户改过排除集就不再套用默认值。
+  Future<void> _initNotTagIds() async {
+    final settings = SettingsService.instance;
+    final stored = settings.excludedTagIds;
+    if (stored != null) {
+      if (stored.isNotEmpty) {
+        _tagFilter = TagFilter(notTagIds: stored);
+      }
+      return;
+    }
+    final kindIds = _allTags
+        .where((t) =>
+            t.namespace == TagDao.kindNamespace &&
+            t.name == MediaType.subtitle.value)
+        .map((t) => t.id)
+        .whereType<int>()
+        .toList();
+    await settings.setExcludedTagIds(kindIds);
+    if (kindIds.isNotEmpty) {
+      _tagFilter = TagFilter(notTagIds: kindIds);
+    }
+  }
+
+  /// 排除集每次变动都落盘，重启后保持。
+  void _persistNotTagIds() {
+    unawaited(
+        SettingsService.instance.setExcludedTagIds(_tagFilter.notTagIds));
+  }
+
+  // ── 标签面板折叠的命名空间 ──
+
+  final Set<String> _collapsedNamespaces = {};
+
+  /// 折叠起来的命名空间（标签面板据此只画标题行）。
+  Set<String> get collapsedNamespaces =>
+      UnmodifiableSetView(_collapsedNamespaces);
+
+  bool isNamespaceCollapsed(String namespace) =>
+      _collapsedNamespaces.contains(namespace);
+
+  /// 首次启动折叠扩展名那一组：那是按文件后缀自动生成的规则标签，几十个，
+  /// 不折叠会盖住用户自己打的标签。用户改过就按用户存的来。
+  Future<void> _initCollapsedNamespaces() async {
+    final stored = SettingsService.instance.collapsedTagNamespaces;
+    if (stored != null) {
+      _collapsedNamespaces
+        ..clear()
+        ..addAll(stored);
+      return;
+    }
+    _collapsedNamespaces.add(TagDao.extNamespace);
+    await SettingsService.instance
+        .setCollapsedTagNamespaces(_collapsedNamespaces.toList());
+  }
+
+  void toggleNamespaceCollapsed(String namespace) {
+    if (!_collapsedNamespaces.remove(namespace)) {
+      _collapsedNamespaces.add(namespace);
+    }
+    unawaited(SettingsService.instance
+        .setCollapsedTagNamespaces(_collapsedNamespaces.toList()));
+    notifyListeners();
+  }
+
+  /// 展开或折叠当前已有的全部命名空间（标签面板的「全部折叠/展开」）。
+  void setAllNamespacesCollapsed(bool collapsed) {
+    final all = _allTags.map((t) => t.namespace).toSet();
+    if (collapsed) {
+      _collapsedNamespaces.addAll(all);
+    } else {
+      _collapsedNamespaces.removeAll(all);
+    }
+    unawaited(SettingsService.instance
+        .setCollapsedTagNamespaces(_collapsedNamespaces.toList()));
+    notifyListeners();
+  }
+
   // ═══════════════ 设置 ═══════════════
+
+  /// 载入设置期间不回写，避免把刚读到的值又原样写一遍
+  bool _loadingSettings = false;
 
   Future<void> loadSettings() async {
     final ss = SettingsService.instance;
-    _themeMode = ss.themeMode;
-    _sortKey = ss.sortKey;
-    _sortDescending = ss.sortDescending;
+    _loadingSettings = true;
+    try {
+      _themeMode = ss.themeMode;
+      _sortKey = ss.sortKey;
+      _sortDescending = ss.sortDescending;
+      _imageSortKey = ss.imageSortKey;
+      _imageSortDesc = ss.imageSortDescending;
+      _videoSortKey = ss.videoSortKey;
+      _videoSortDesc = ss.videoSortDescending;
+      _gridColumns = ss.gridColumns;
+      _viewMode = ss.viewMode;
+      player.setRepeatMode(_repeatModeFromName(ss.repeatModeName));
+      player.setShuffle(ss.shuffle);
+      await player.setSpeed(ss.playSpeed);
+    } finally {
+      _loadingSettings = false;
+    }
     notifyListeners();
+  }
+
+  /// 规则标签要补的全部扩展名，四种媒体各自的扫描白名单并集。
+  static Iterable<String> get _ruleTagExtensions => {
+        ...audioExtensions,
+        ...imageExtensions,
+        ...videoExtensions,
+        ...knownSubtitleExtensions,
+      };
+
+  static RepeatMode _repeatModeFromName(String name) => switch (name) {
+        'off' => RepeatMode.off,
+        'one' => RepeatMode.one,
+        _ => RepeatMode.all,
+      };
+
+  static String _repeatModeName(RepeatMode mode) => switch (mode) {
+        RepeatMode.off => 'off',
+        RepeatMode.one => 'one',
+        RepeatMode.all => 'all',
+      };
+
+  Future<void> _persistRepeatMode(RepeatMode mode) async {
+    if (_loadingSettings) return;
+    await SettingsService.instance.setRepeatModeName(_repeatModeName(mode));
+  }
+
+  Future<void> _persistShuffle(bool on) async {
+    if (_loadingSettings) return;
+    await SettingsService.instance.setShuffle(on);
+  }
+
+  Future<void> _persistSpeed(double speed) async {
+    if (_loadingSettings) return;
+    await SettingsService.instance.setPlaySpeed(speed);
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
@@ -177,6 +534,233 @@ class AppState extends ChangeNotifier {
     _sortDescending = desc;
     await SettingsService.instance.setSortDescending(desc);
     await refresh();
+  }
+
+  // ── 图片视图设置 ──
+
+  Future<void> setGridColumns(int cols) async {
+    _gridColumns = cols.clamp(2, 10);
+    await SettingsService.instance.setGridColumns(_gridColumns);
+    notifyListeners();
+  }
+
+  /// 缩略图缓存上限。与封面缓存上限共用 `cover_cache_mb` 设置键，
+  /// 落到 [setCoverCacheLimit] 上，避免同一份配额存两遍。
+  Future<void> setCacheSizeMB(int mb) => setCoverCacheLimit(mb);
+
+  Future<void> setViewMode(String mode) async {
+    _viewMode = mode == 'list' ? 'list' : 'grid';
+    await SettingsService.instance.setViewMode(_viewMode);
+    notifyListeners();
+  }
+
+  /// 缩略图缓存被清空：自增世代，让在屏的图片卡片重新生成缩略图。
+  void markThumbnailsCleared() {
+    _thumbEpoch++;
+    notifyListeners();
+  }
+
+  // ═══════════════ 图片列表 / 选中 / 查看器 ═══════════════
+
+  /// 当前浏览上下文的库标识：`audio` / `image` / `video`，没有上下文时为 null。
+  String? get currentLibrary =>
+      _currentWork?.library ?? _currentFolder?.library;
+
+  /// 当前是否在图片库。
+  bool get isImageLibrary => currentLibrary == 'image';
+
+  /// 当前是否在视觉库（图片或视频）。
+  ///
+  /// 视觉库的媒体行在 `media` 表里，音频库走 `tracks` 视图；[_loadCenter] 据此
+  /// 决定填 [_images] 还是 [_tracks]。视频与图片在这一层同构，区别只在查询用的
+  /// [MediaType]。
+  bool get isVisualLibrary {
+    final lib = currentLibrary;
+    return lib == 'image' || lib == 'video';
+  }
+
+  /// 视觉库查询该用的媒体类型；音频上下文返回图片类型，调用方只在视觉分支用它。
+  MediaType get _visualMediaType =>
+      currentLibrary == 'video' ? MediaType.video : MediaType.image;
+
+  /// 单选（普通点击）
+  void selectImage(int? id) {
+    _selectedImageId = id;
+    _selectedImageIds
+      ..clear()
+      ..addAll({?id});
+    _anchorImageId = id;
+    notifyListeners();
+  }
+
+  /// 切换多选（Ctrl+点击）
+  void toggleSelect(int id) {
+    _visualSelectionMode = true;
+    if (_selectedImageIds.contains(id)) {
+      _selectedImageIds.remove(id);
+    } else {
+      _selectedImageIds.add(id);
+    }
+    _selectedImageId = id;
+    _anchorImageId = id;
+    notifyListeners();
+  }
+
+  /// 区间多选（Shift+点击，按当前图片列表顺序从锚点到目标）
+  void rangeSelect(int id) {
+    final ids = _selectableMediaIds;
+    final anchorIdx =
+        _anchorImageId == null ? -1 : ids.indexOf(_anchorImageId!);
+    final curIdx = ids.indexOf(id);
+    if (anchorIdx < 0 || curIdx < 0) {
+      toggleSelect(id);
+      return;
+    }
+    final lo = anchorIdx < curIdx ? anchorIdx : curIdx;
+    final hi = anchorIdx < curIdx ? curIdx : anchorIdx;
+    _selectedImageIds.addAll(ids.sublist(lo, hi + 1));
+    _selectedImageId = id;
+    notifyListeners();
+  }
+
+  void clearSelection() {
+    _visualSelectionMode = false;
+    _selectedImageId = null;
+    _selectedImageIds.clear();
+    _anchorImageId = null;
+    notifyListeners();
+  }
+
+  /// 打开图片详情前的兜底选中：没有有效选中项时退到查看器当前图，再退到当前
+  /// 列表第一张。返回 false 表示当前上下文里一张图都没有。
+  ///
+  /// 没有这一步时，手机/桌面在作品层点「图片详情」只会看到一个占位（以前
+  /// 只有手动单击过磁贴、且选中项没被 refresh 收窄，详情才有内容）。
+  bool ensureDetailSelection() {
+    final current = _selectedImageId;
+    if (current != null && _imageIndex.containsKey(current)) return true;
+    int? fallback;
+    final viewerId = viewerImage?.id;
+    if (viewerId != null && _imageIndex.containsKey(viewerId)) {
+      fallback = viewerId;
+    } else {
+      for (final item in _imageIndex.values) {
+        if (item.id != null) {
+          fallback = item.id;
+          break;
+        }
+      }
+    }
+    if (fallback == null) return false;
+    // 只动「详情看哪张」，不碰多选集合：用户已经框了一批图时打开详情，
+    // 不该把框选清掉（详情面板自己只读 selectedImage）。
+    _selectedImageId = fallback;
+    _anchorImageId = fallback;
+    notifyListeners();
+    return true;
+  }
+
+  /// 进入视觉库多选模式；给了 id 就顺手把它勾上（长按磁贴走这条路）
+  void enterVisualSelectionMode([int? id]) {
+    _visualSelectionMode = true;
+    if (id != null) {
+      _selectedImageIds.add(id);
+      _selectedImageId = id;
+      _anchorImageId = id;
+    }
+    notifyListeners();
+  }
+
+  void exitVisualSelectionMode() {
+    if (!_visualSelectionMode && _selectedImageIds.isEmpty) return;
+    clearSelection();
+  }
+
+  /// 选中当前列表里的全部图片或视频
+  void selectAllImages() {
+    _visualSelectionMode = true;
+    final ids = _selectableMediaIds;
+    _selectedImageIds
+      ..clear()
+      ..addAll(ids);
+    _anchorImageId = ids.isEmpty ? null : ids.first;
+    notifyListeners();
+  }
+
+  /// 批量「从软件移除」：只删库里的媒体行，磁盘文件不动。
+  ///
+  /// 返回真正删掉的行数。关联的标签行由外键级联清掉，查看器里对应的
+  /// 条目也一起收起来。
+  Future<int> deleteMediaByIds(Iterable<int> ids) async {
+    final list = ids.toSet().toList();
+    if (list.isEmpty) return 0;
+    final paths = await _mediaDao.pathsByIds(list.toSet());
+    final deleted = await _mediaDao.deleteByIds(list);
+    for (final id in list) {
+      _trackTags.remove(id);
+      _imageTags.remove(id);
+      _selectedTrackIds.remove(id);
+      _selectedImageIds.remove(id);
+    }
+    _dropViewerItemsFor(paths);
+    if (_selectedTrackIds.isEmpty) _selectionMode = false;
+    if (_selectedImageIds.isEmpty) _visualSelectionMode = false;
+    if (_anchorImageId != null && !_selectedImageIds.contains(_anchorImageId)) {
+      _anchorImageId = null;
+    }
+    if (_anchorTrackId != null && !_selectedTrackIds.contains(_anchorTrackId)) {
+      _anchorTrackId = null;
+    }
+    _mediaRevision++;
+    await refresh();
+    logInfo('AppState', '批量移除媒体 $deleted 条（请求 ${list.length} 条）');
+    return deleted;
+  }
+
+  /// 打开查看器 — 传入可导航的图片列表和起始索引
+  ///
+  /// 直接调这里的都是「浏览」：顺手结束上一个阅读会话，避免把浏览的
+  /// 翻页记到某个卷的进度上。阅读模式走 [openVolumeReader]。
+  void openViewer(List<MediaItem> images, int startIndex) {
+    _readingVolumeId = null;
+    _viewerImages = List<MediaItem>.from(images);
+    _viewerIndex = _viewerImages.isEmpty
+        ? 0
+        : startIndex.clamp(0, _viewerImages.length - 1);
+    _showViewer = true;
+    _syncSelectedToViewer();
+    notifyListeners();
+  }
+
+  void closeViewer() {
+    final volumeId = _readingVolumeId;
+    _readingVolumeId = null;
+    _showViewer = false;
+    _viewerImages = [];
+    _viewerIndex = 0;
+    notifyListeners();
+    if (volumeId != null) unawaited(flushReadingProgress());
+  }
+
+  /// 查看器中导航（方向：-1=上一张, 1=下一张）。越界不动。
+  void navigateViewer(int direction) {
+    final newIndex = _viewerIndex + direction;
+    if (newIndex >= 0 && newIndex < _viewerImages.length) {
+      _viewerIndex = newIndex;
+      _recordReading();
+      _syncSelectedToViewer();
+      notifyListeners();
+    }
+  }
+
+  /// 查看器里的当前页同步成单选目标。
+  ///
+  /// 「图片详情」面板读的是 [selectedImage]，不同步的话在大图里翻页时
+  /// 详情仍停在进查看器之前那张图。
+  void _syncSelectedToViewer() {
+    if (_viewerImages.isEmpty) return;
+    final id = _viewerImages[_viewerIndex].id;
+    if (id != null) _selectedImageId = id;
   }
 
   // ═══════════════ 刷新 / 中间栏加载 ═══════════════
@@ -201,43 +785,83 @@ class AppState extends ChangeNotifier {
   }
 
   /// 加载中间栏。[gen] 是发起时的 [refresh] 代际。
+  ///
+  /// 按当前作品/目录的库归属分流：视觉库（图片/视频）填 [_images]，音频库填 [_tracks]。
   Future<void> _loadCenter(int gen) async {
     _loading = true;
     notifyListeners();
     try {
       final search = _searchQuery.trim();
       final filterActive = hasAdvancedFilter || _tagFilter.active;
+      final visual = isVisualLibrary;
+      final visualType = _visualMediaType;
+      // 标签筛选要按当前库的媒体类型查：视频行不是音频，落进曲目集合就全被滤掉。
+      final matchType = visual ? visualType : MediaType.audio;
 
       List<VirtualFolder> folders;
       List<TrackItem> tracks;
+      List<MediaItem> images;
 
       if (search.isNotEmpty) {
         folders = const [];
-        var list = await _trackDao.searchByName(search);
-        if (filterActive) {
-          final ids = await _computeMatchingIds();
-          list = list.where((t) => ids.contains(t.id)).toList();
+        if (visual) {
+          tracks = const [];
+          var list = await _mediaDao.searchByName(search, type: visualType);
+          if (filterActive) {
+            final ids = await _computeMatchingIds(matchType);
+            list =
+                list.where((i) => i.id != null && ids.contains(i.id)).toList();
+          }
+          images = list;
+        } else {
+          images = const [];
+          var list = await _trackDao.searchByName(search);
+          if (filterActive) {
+            final ids = await _computeMatchingIds(matchType);
+            list = list.where((t) => ids.contains(t.id)).toList();
+          }
+          tracks = list;
         }
-        tracks = list;
       } else {
         if (_currentWork != null && _currentFolderId != null) {
           folders = await _folderDao.listChildren(_currentFolderId!);
-          tracks = _currentFolderPath == null
-              ? <TrackItem>[]
-              : await _trackDao.queryDirectInDir(_currentFolderPath!);
+          if (visual) {
+            tracks = const [];
+            images = _currentFolderPath == null
+                ? const <MediaItem>[]
+                : await _mediaDao.queryDirectInDir(_currentFolderPath!,
+                    type: visualType);
+          } else {
+            images = const [];
+            tracks = _currentFolderPath == null
+                ? <TrackItem>[]
+                : await _trackDao.queryDirectInDir(_currentFolderPath!);
+          }
         } else if (_currentWork != null) {
-          // 严格按文件夹树：作品层只显示入口子文件夹，不直接平铺曲目
-          folders = await _folderDao.listRootsByWork(_currentWork!.id!);
+          // 视觉库的作品层只平铺媒体，媒体由 ImageGrid 自己按作品查（入口文件夹
+          // 与作品同名，再画一层磁贴就是同一个名字出现两次）；音频库保留入口
+          // 文件夹，它是进入专辑/歌单的入口。
+          folders = visual
+              ? const []
+              : await _folderDao.listRootsByWork(_currentWork!.id!);
           tracks = const [];
+          images = const [];
         } else {
           folders = const [];
           tracks = const [];
+          images = const [];
         }
 
         if (filterActive) {
-          final ids = await _computeMatchingIds();
-          tracks = tracks.where((t) => ids.contains(t.id)).toList();
-          folders = await _filterFolders(folders, ids);
+          final ids = await _computeMatchingIds(matchType);
+          if (visual) {
+            images = images
+                .where((i) => i.id != null && ids.contains(i.id))
+                .toList();
+          } else {
+            tracks = tracks.where((t) => ids.contains(t.id)).toList();
+          }
+          folders = await _filterFolders(folders, ids, matchType);
         }
       }
 
@@ -248,12 +872,14 @@ class AppState extends ChangeNotifier {
       }
       _centerFolders = _sortFolders(folders);
       _tracks = _sortTracks(tracks);
-      // 选中集合只保留当前可见的曲目。切到别的作品或文件夹之后，
-      // 「批量打标签」「移动」不会落到看不见的曲目上。
-      final visibleIds = _tracks.map((t) => t.id).whereType<int>().toSet();
+      _setImages(_sortImages(images));
+      _totalCount = _images.length;
+      // 选中集合只保留当前可见的条目。切到别的作品或文件夹之后，
+      // 「批量打标签」「移动」不会落到看不见的条目上。
+      final visibleTrackIds = _tracks.map((t) => t.id).whereType<int>().toSet();
       final selectedBefore = _selectedTrackIds.length;
-      _selectedTrackIds.retainAll(visibleIds);
-      if (_anchorTrackId != null && !visibleIds.contains(_anchorTrackId)) {
+      _selectedTrackIds.retainAll(visibleTrackIds);
+      if (_anchorTrackId != null && !visibleTrackIds.contains(_anchorTrackId)) {
         _anchorTrackId = null;
       }
       if (_selectedTrackIds.isEmpty) _selectionMode = false;
@@ -261,8 +887,27 @@ class AppState extends ChangeNotifier {
         logInfo('AppState',
             '选中集合随上下文收窄: $selectedBefore -> ${_selectedTrackIds.length}');
       }
+
+      final visibleImageIds = <int>{
+        ..._images.map((i) => i.id).whereType<int>(),
+        ..._visibleMediaIds,
+      };
+      final selectedImagesBefore = _selectedImageIds.length;
+      _selectedImageIds.retainAll(visibleImageIds);
+      if (_anchorImageId != null && !visibleImageIds.contains(_anchorImageId)) {
+        _anchorImageId = null;
+      }
+      if (_selectedImageId != null &&
+          !visibleImageIds.contains(_selectedImageId)) {
+        _selectedImageId = null;
+      }
+      if (_selectedImageIds.isEmpty) _visualSelectionMode = false;
+      if (selectedImagesBefore != _selectedImageIds.length) {
+        logInfo('AppState',
+            '图片选中集合随上下文收窄: $selectedImagesBefore -> ${_selectedImageIds.length}');
+      }
       logInfo('AppState',
-          'Center loaded: ${_centerFolders.length} folders, ${_tracks.length} tracks');
+          'Center loaded: ${_centerFolders.length} folders, ${_tracks.length} tracks, ${_images.length} images');
     } finally {
       // 只有最新一代有资格清 loading，否则会提前关掉新一轮的转圈。
       if (gen == _refreshGeneration) {
@@ -272,11 +917,14 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Set<int>> _computeMatchingIds() async {
+  /// 当前筛选下命中的媒体 id 集合。[type] 是当前库的媒体类型：音频库用
+  /// `MediaType.audio`，图片库与视频库分别用各自的类型。
+  Future<Set<int>> _computeMatchingIds(MediaType type) async {
     if (hasAdvancedFilter) {
-      return _tagDao.getTrackIdsByExpression(_advancedFilter, _allTags);
+      return _tagDao.getIdsByExpression(type, _advancedFilter, _allTags);
     }
-    return _tagDao.getTrackIdsByTags(
+    return _tagDao.getIdsByTags(
+      type,
       andTagIds: _tagFilter.andTagIds,
       orTagIds: _tagFilter.orTagIds,
       notTagIds: _tagFilter.notTagIds,
@@ -284,10 +932,13 @@ class AppState extends ChangeNotifier {
   }
 
   Future<List<VirtualFolder>> _filterFolders(
-      List<VirtualFolder> folders, Set<int> matchingIds) async {
+      List<VirtualFolder> folders, Set<int> matchingIds, MediaType type) async {
     if (folders.isEmpty) return [];
-    final matchingPaths =
-        matchingIds.isEmpty ? <String>[] : await _trackDao.pathsByIds(matchingIds);
+    final matchingPaths = matchingIds.isEmpty
+        ? <String>[]
+        : type == MediaType.audio
+            ? await _trackDao.pathsByIds(matchingIds)
+            : await _mediaDao.pathsByIds(matchingIds, type: type);
 
     Map<int, List<Tag>> folderTags = {};
     if (!hasAdvancedFilter && _tagFilter.active) {
@@ -336,7 +987,16 @@ class AppState extends ChangeNotifier {
   List<VirtualFolder> _sortFolders(List<VirtualFolder> list) {
     // 先复制：入参可能是 const []（不可变），直接 sort 会抛 Unsupported operation
     final sorted = List<VirtualFolder>.from(list);
-    sorted.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    // 自然序：第 2 卷排在第 10 卷前面（BUILD_GUIDE 第 20.2 节）
+    sorted.sort((a, b) => naturalCompare(a.name, b.name));
+    return sorted;
+  }
+
+  /// 图片/视频按当前视觉库的排序方式排；默认 `name` 是自然序，
+  /// 与 [MediaDao.naturalOrderBy] 的 SQL 顺序一致（BUILD_GUIDE 第 20.2 节）。
+  List<MediaItem> _sortImages(List<MediaItem> list) {
+    final sorted = List<MediaItem>.from(list);
+    sorted.sort(visualSortComparator);
     return sorted;
   }
 
@@ -558,6 +1218,189 @@ class AppState extends ChangeNotifier {
     return deleted;
   }
 
+  /// 深度删除文件夹：连子文件夹与其中所有媒体记录一起从软件里移除。
+  ///
+  /// 与 [deleteFolder] 的区别是这个方法把「目录里的东西」也一起清掉；两者都只动
+  /// 数据库，不碰磁盘文件，用户之后重新导入就能拿回来。返回移除的媒体行数。
+  Future<int> deleteFolderDeep(int id) async {
+    final ids = await _expandFoldersDeep(<int>{id});
+    final deleted = await _deleteFoldersDeep(ids);
+    _folderVersion++;
+    if (_currentFolderId != null && ids.contains(_currentFolderId)) {
+      _currentFolderId = null;
+      _currentFolder = null;
+      _currentFolderPath = null;
+    }
+    await refresh();
+    return deleted;
+  }
+
+  /// 深度删除作品：作品、它下面的文件夹与其中的媒体记录一起移除。
+  ///
+  /// 与 [deleteWork] 的区别是不再留下「未归类」的文件夹树。
+  Future<int> deleteWorkDeep(int workId) async {
+    final owned = await _folderDao.listByWork(workId);
+    final ids = await _expandFoldersDeep(
+        owned.map((f) => f.id).whereType<int>().toSet());
+    final deleted = await _deleteFoldersDeep(ids);
+    // 文件夹已删，这里只剩摘掉已不存在的归属并删除作品行。
+    await _workDao.delete(workId);
+    _folderVersion++;
+    if (_currentWork?.id == workId) {
+      await goHome();
+    } else {
+      await refresh();
+    }
+    return deleted;
+  }
+
+  /// 深度删除某文件夹会移除多少条媒体记录（删除前用来提示用户）。
+  Future<int> countMediaUnderFolder(int folderId) async {
+    final ids = await _expandFoldersDeep(<int>{folderId});
+    return _countMediaInFolders(ids);
+  }
+
+  /// 作品下全部媒体的 id：作品卡片的标签增删要用（一次作用于整个作品）。
+  ///
+  /// 取法同 [countMediaUnderWork]，但这里要全部命中项——作品视图里看到的本来
+  /// 就是这些目录下的媒体，标签也该整批生效。
+  Future<List<int>> mediaIdsUnderWork(int workId) async {
+    final rows = await _mediaUnderWork(workId);
+    return rows.map((m) => m.id).whereType<int>().toList();
+  }
+
+  /// 作品下的全部图片（按自然序）：作品封面的「从作品图片里选」用它当候选。
+  Future<List<MediaItem>> imagesUnderWork(int workId) =>
+      _mediaUnderWork(workId, type: MediaType.image);
+
+  /// 作品目录闭包里的媒体行。[type] 非空时只取该类型。
+  Future<List<MediaItem>> _mediaUnderWork(int workId, {MediaType? type}) async {
+    final owned = await _folderDao.listByWork(workId);
+    if (owned.isEmpty) return const [];
+    final ids = await _expandFoldersDeep(
+      owned.map((f) => f.id).whereType<int>().toSet(),
+    );
+    final paths = await _pathsOfFolders(ids);
+    if (paths.isEmpty) return const [];
+    return _mediaDao.queryByDirs(
+      paths.toList(),
+      type: type,
+      orderBy: MediaDao.naturalOrderBy,
+    );
+  }
+
+  /// 深度删除某作品会移除多少条媒体记录（删除前用来提示用户）。
+  Future<int> countMediaUnderWork(int workId) async {
+    final owned = await _folderDao.listByWork(workId);
+    final ids = await _expandFoldersDeep(
+        owned.map((f) => f.id).whereType<int>().toSet());
+    return _countMediaInFolders(ids);
+  }
+
+  /// 把一批文件夹扩成闭包：先补后代，再吸收「路径落在被删目录里」的其它文件夹。
+  ///
+  /// 后一步是为了跨库：同一条物理目录常同时登记在音频树与图片树（专辑目录里的
+  /// 封面、扫描件）。只删音频那一份会让图片侧的文件夹留在树里，指向已经不在库中
+  /// 的文件。吸收是迭代的——新吸进来的文件夹可能又带进别的库。
+  Future<Set<int>> _expandFoldersDeep(Set<int> seed) async {
+    final ids = <int>{};
+    for (final id in seed) {
+      ids.addAll(await _folderDao.collectDescendants(id));
+    }
+    final removed = await _pathsOfFolders(ids);
+    var grew = true;
+    while (grew) {
+      grew = false;
+      final all = await _folderDao.getAllPaths();
+      for (final entry in all.entries) {
+        if (ids.contains(entry.key)) continue;
+        final inside = entry.value.any(
+            (fp) => removed.any((r) => fp.path == r || p.isWithin(r, fp.path)));
+        if (!inside) continue;
+        ids.addAll(await _folderDao.collectDescendants(entry.key));
+        removed.addAll(entry.value.map((fp) => fp.path));
+        grew = true;
+      }
+    }
+    return ids;
+  }
+
+  Future<Set<String>> _pathsOfFolders(Set<int> ids) async {
+    final out = <String>{};
+    for (final id in ids) {
+      out.addAll((await _folderDao.getPaths(id)).map((fp) => fp.path));
+    }
+    return out;
+  }
+
+  /// 深度删除的执行体：先删文件夹行，再清掉因此失联的媒体行。
+  Future<int> _deleteFoldersDeep(Set<int> ids) async {
+    if (ids.isEmpty) return 0;
+    final removed = await _pathsOfFolders(ids);
+    await _folderDao.deleteMany(ids);
+    return _pruneMediaLeftBehind(removed.toList());
+  }
+
+  /// 清掉落在 [removedPaths] 下、又不再被任何文件夹覆盖的媒体行（全部类型）。
+  ///
+  /// [deleteFolder] 用的 [_pruneTracksLeftBehind] 只管音频，这里的「深度删除」
+  /// 要连图片、视频、字幕记录一起清，否则树里没入口、网格里却还看得见。
+  Future<int> _pruneMediaLeftBehind(List<String> removedPaths) async {
+    if (removedPaths.isEmpty) return 0;
+    final alive = <String>[];
+    for (final list in (await _folderDao.getAllPaths()).values) {
+      for (final fp in list) {
+        alive.add(fp.path);
+      }
+    }
+    final under = await _mediaDao.queryByDirs(removedPaths);
+    final victims = <String>[];
+    for (final m in under) {
+      if (alive.any((a) => p.isWithin(a, m.path))) continue;
+      victims.add(m.path);
+    }
+    if (victims.isEmpty) return 0;
+    final deleted = await _mediaDao.deleteByPaths(victims);
+    _trackTags.clear();
+    _dropViewerItemsFor(victims);
+    logInfo('AppState',
+        '深度删除后清理媒体 ${victims.length} 条（实删 $deleted 行）');
+    return deleted;
+  }
+
+  Future<int> _countMediaInFolders(Set<int> ids) async {
+    if (ids.isEmpty) return 0;
+    final removed = await _pathsOfFolders(ids);
+    if (removed.isEmpty) return 0;
+    final alive = <String>[];
+    for (final entry in (await _folderDao.getAllPaths()).entries) {
+      if (ids.contains(entry.key)) continue;
+      for (final fp in entry.value) {
+        alive.add(fp.path);
+      }
+    }
+    final under = await _mediaDao.queryByDirs(removed.toList());
+    return under.where((m) => !alive.any((a) => p.isWithin(a, m.path))).length;
+  }
+
+  /// 查看器里正在看的图被删掉时收起来，避免翻到一条已不存在的记录。
+  void _dropViewerItemsFor(List<String> removedPaths) {
+    if (_viewerImages.isEmpty) return;
+    final victims = removedPaths.toSet();
+    final keep =
+        _viewerImages.where((m) => !victims.contains(m.path)).toList();
+    if (keep.length == _viewerImages.length) return;
+    _viewerImages = keep;
+    if (_viewerImages.isEmpty) {
+      _viewerIndex = 0;
+      _showViewer = false;
+      _readingVolumeId = null;
+    } else if (_viewerIndex >= _viewerImages.length) {
+      _viewerIndex = _viewerImages.length - 1;
+    }
+    notifyListeners();
+  }
+
   /// 把文件夹（及其后代）移动到另一作品
   Future<void> moveFolderToWork(int folderId, int? workId) async {
     final ids = await _folderDao.collectDescendants(folderId);
@@ -572,12 +1415,21 @@ class AppState extends ChangeNotifier {
 
   /// 导入目录（自动创建同名作品）。
   ///
-  /// 返回 null 表示没有导入：已有别的导入在跑，或者目录里没有新的音频。
-  /// 目录内没有音频时不建作品，避免留下空作品。
-  Future<Work?> importDirectory(String dirPath) async {
+  /// [library] 指定库归属：`audio` / `image` / `video`。传 null 时按扫描结果
+  /// 推断：有音频走音频，否则有图片走图片库，否则走视频库（BUILD_GUIDE 第 18.2 节）。
+  ///
+  /// 返回 null 表示没有导入：已有别的导入在跑，目录里没有可导入的媒体，
+  /// 或者这批媒体都已经在库里。目录里没有新媒体时不建作品，避免留下空作品。
+  Future<Work?> importDirectory(String dirPath, {String? library}) async {
     if (!_beginImport('importDirectory')) return null;
     try {
       final scan = await FileScanner.scanDirectoryOffThread(dirPath);
+      if (scan.isEmpty) {
+        logWarn('AppState', '目录内没有可导入的媒体，未创建作品: $dirPath');
+        return null;
+      }
+      final lib = library ?? _libraryForScan(scan);
+      if (lib != 'audio') return await _importVisualWork(dirPath, lib, scan);
       if (scan.audioPaths.isEmpty) {
         logWarn('AppState', '目录内无音频，未创建作品: $dirPath');
         return null;
@@ -604,10 +1456,157 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 按扫描结果推断库归属。
+  ///
+  /// 优先级：音频 > 图片 > 视频。混合目录按音频处理，和改动前的行为一致。
+  static String _libraryForScan(ScanResult scan) {
+    if (scan.audioPaths.isNotEmpty) return 'audio';
+    if (scan.imagePaths.isNotEmpty) return 'image';
+    if (scan.videoPaths.isNotEmpty) return 'video';
+    return 'audio';
+  }
+
+  /// 图片与视频的单目录列表，按库归属取。
+  static List<String> _visualPaths(ScanResult scan, String library) =>
+      library == 'video' ? scan.videoPaths : scan.imagePaths;
+
+  /// 新建一个图片或视频作品，把扫描到的文件落库并挂上虚拟文件夹。
+  Future<Work?> _importVisualWork(
+      String dirPath, String library, ScanResult scan) async {
+    final paths = _visualPaths(scan, library);
+    if (paths.isEmpty) {
+      logWarn('AppState', '$library 库没有可导入的文件: $dirPath');
+      return null;
+    }
+    final existing = await _mediaDao.existingPaths(paths);
+    if (existing.length == paths.length) {
+      logWarn('AppState', '目录内媒体均已导入，未创建作品: $dirPath');
+      return null;
+    }
+    final work = await _workDao.create(_baseName(dirPath), library: library);
+    final imported = await _runVisualImport(dirPath, work.id!, library, paths);
+    if (imported == 0) {
+      final why = _importError ?? '没有新条目落库';
+      logWarn('AppState', '导入没有落库（$why），删除空作品: ${work.name}');
+      await _workDao.delete(work.id!);
+      return null;
+    }
+    return work;
+  }
+
+  /// 把图片或视频写进 media 表，并在目标库下建/复用虚拟文件夹。
+  Future<int> _runVisualImport(
+      String dirPath, int workId, String library, List<String> paths) async {
+    var imported = 0;
+    final freshPaths = <String>[];
+    try {
+      final existing = await _mediaDao.existingPaths(paths);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final rows = <Map<String, Object?>>[];
+      for (final path in paths) {
+        if (existing.contains(path)) continue;
+        freshPaths.add(path);
+        var size = 0;
+        var mtime = 0;
+        try {
+          final stat = File(path).statSync();
+          size = stat.size;
+          mtime = stat.modified.millisecondsSinceEpoch;
+        } catch (e) {
+          // 读不到 stat 不影响入库：尺寸与时间留 0，路径照样能用。
+          logWarn('AppState', 'stat 失败 "$path": $e');
+        }
+        rows.add({
+          'path': path,
+          'media_type': library,
+          'ext': extOfPath(path),
+          'name_lower': nameLowerOfPath(path),
+          'filename': baseNameOfPath(path),
+          'file_size': size,
+          'file_mtime': mtime,
+          'added_at': now,
+          'sort_key': sortKeyOfPath(path),
+        });
+      }
+      imported = await _mediaDao.insertRows(rows);
+      // 目录本身挂成一个虚拟文件夹，ensureByPath 内部会补 folder_paths。
+      await _folderDao.ensureByPath(dirPath,
+          name: _baseName(dirPath), workId: workId, library: library);
+      logInfo('AppState',
+          '$library 导入落库 $imported 条（扫描 ${paths.length} 条）: $dirPath');
+    } catch (e) {
+      _importError = e.toString();
+      logError('AppState', '$library 导入失败', e.toString());
+    } finally {
+      _importProgress = imported > 0 ? 1.0 : 0.0;
+      _folderVersion++;
+      await refresh();
+    }
+    // README 承诺「缩略图进库时后台补齐」：这里接着补，不占导入的关键路径。
+    if (imported > 0 && freshPaths.isNotEmpty) {
+      unawaited(backfillThumbnails(freshPaths));
+    }
+    return imported;
+  }
+
+  /// 已经排进补齐队列的路径，避免同一批被反复排队。
+  final List<String> _thumbBackfillQueue = <String>[];
+  bool _thumbBackfillRunning = false;
+
+  /// 在后台把 [paths] 的 300px 缩略图逐张补齐（已存在就跳过）。
+  ///
+  /// 进库时同步生成会把导入卡住（几百张原图解码很久），所以导入一结束就把
+  /// 新路径丢进来异步跑；每补 8 张自增一次 [thumbEpoch]，已经画出来的占位
+  /// 卡片据此重新检查文件，补完的图不用重启就会出现。
+  Future<void> backfillThumbnails(Iterable<String> paths) async {
+    for (final path in paths) {
+      if (path.isNotEmpty && !_thumbBackfillQueue.contains(path)) {
+        _thumbBackfillQueue.add(path);
+      }
+    }
+    if (_thumbBackfillRunning || _thumbBackfillQueue.isEmpty) return;
+    _thumbBackfillRunning = true;
+    final service = ThumbnailService.instance;
+    var done = 0;
+    try {
+      while (_thumbBackfillQueue.isNotEmpty) {
+        final path = _thumbBackfillQueue.removeAt(0);
+        try {
+          final file = File(service.thumbPath(path, size: 300));
+          if (await file.exists()) continue;
+          await service.ensureThumbnail(path, size: 300);
+          done++;
+          if (done % 8 == 0) {
+            _thumbEpoch++;
+            notifyListeners();
+          }
+        } catch (e) {
+          logDebug('AppState', '缩略图补齐失败 "$path": $e');
+        }
+      }
+    } finally {
+      _thumbBackfillRunning = false;
+      if (done > 0) {
+        logInfo('AppState', '缩略图后台补齐 $done 张');
+        _thumbEpoch++;
+        notifyListeners();
+      }
+    }
+  }
+
   /// 导入目录到指定作品（合并）
   Future<void> importDirectoryIntoWork(String dirPath, int workId) async {
     if (!_beginImport('importDirectoryIntoWork')) return;
     try {
+      final work = await _workDao.getById(workId);
+      if (work != null && work.library != 'audio') {
+        final scan = await FileScanner.scanDirectoryOffThread(dirPath);
+        final paths = _visualPaths(scan, work.library);
+        if (paths.isNotEmpty) {
+          await _runVisualImport(dirPath, workId, work.library, paths);
+        }
+        return;
+      }
       await _runImport(dirPath, workId);
     } finally {
       _endImport();
@@ -674,6 +1673,339 @@ class AppState extends ChangeNotifier {
     return base.isEmpty ? path : base;
   }
 
+  // ═══════════════ 卷封面与卷内图片（BUILD_GUIDE 第 19、21 节）═══════════════
+
+  VolumeCoverService get _coverService =>
+      VolumeCoverService(DatabaseManager.instance.db);
+
+  /// 卷封面或裁剪改动后自增，界面据此重新读取封面。
+  int _coverVersion = 0;
+  int get coverVersion => _coverVersion;
+
+  /// 自动候选按第 19.2 节的四级顺序返回，第一个就是自动选中的那张。
+  Future<List<VolumeCoverCandidate>> volumeCoverCandidates(int folderId) =>
+      _coverService.listCandidates(folderId);
+
+  /// 当前生效的封面：手动指定的优先，其次是自动候选。
+  Future<String?> volumeCover(int folderId) =>
+      _coverService.effectiveCover(folderId);
+
+  /// 手动指定封面。传 null 表示恢复自动候选。
+  Future<void> setVolumeCover(int folderId, String? path) async {
+    await _coverService.setCover(folderId, path);
+    _coverVersion++;
+    notifyListeners();
+  }
+
+  Future<Rect?> volumeCoverCrop(int folderId) => _coverService.cropOf(folderId);
+
+  /// 存裁剪框。传 null 表示恢复默认（清空 `cover_crop`）。
+  Future<void> setVolumeCoverCrop(int folderId, Rect? crop) async {
+    await _coverService.setCrop(folderId, crop);
+    _coverVersion++;
+    notifyListeners();
+  }
+
+  /// 指定封面与裁剪一次写完，避免界面连点两次。
+  Future<void> setVolumeCoverWithCrop(
+      int folderId, String? path, Rect? crop) async {
+    await _coverService.setCoverWithCrop(folderId, path, crop);
+    _coverVersion++;
+    notifyListeners();
+  }
+
+  /// 卷子树里的图片行（第 19.4 节），按自然序排。
+  ///
+  /// 同一张图在图片库照常可见：这里只查 media 行，不动文件夹归属。
+  Future<List<MediaItem>> imagesInFolder(int folderId) async {
+    final rows = await _folderDao.getPaths(folderId);
+    if (rows.isEmpty) return const <MediaItem>[];
+    final dirs = rows.map((row) => row.path).toList();
+    return _mediaDao.queryByDirs(dirs,
+        type: MediaType.image, orderBy: MediaDao.naturalOrderBy);
+  }
+
+  // ═══════════════ 字幕归属（BUILD_GUIDE 第 18.5、23.6 节）═══════════════
+
+  SubtitleService get _subtitleService =>
+      SubtitleService(DatabaseManager.instance.db);
+
+  /// 某条音频名下的字幕，默认项排在最前（第 23.6 节的三级顺序）。
+  Future<List<SubtitleEntry>> subtitleEntriesFor(int audioId) =>
+      _subtitleService.listForAudio(audioId);
+
+  /// 这条音频该显示哪条字幕。没有归属关系时返回 null。
+  Future<SubtitleEntry?> defaultSubtitleFor(int audioId) =>
+      _subtitleService.defaultFor(audioId);
+
+  /// 还没归属任何音频的字幕行，供「手动指定归属」用。
+  Future<List<SubtitleEntry>> unassignedSubtitles() =>
+      _subtitleService.listUnassigned();
+
+  /// 把某条字幕设为它所属音频的默认项。
+  Future<void> setDefaultSubtitle(int subtitleId) async {
+    await _subtitleService.setDefault(subtitleId);
+    _subtitleCache.clear();
+    notifyListeners();
+  }
+
+  /// 手动指定字幕归属某个音频，并把它设为默认项。
+  Future<void> attachSubtitleToAudio(int subtitleId, int audioId) async {
+    await _subtitleService.attach(subtitleId, audioId);
+    _subtitleCache.clear();
+    notifyListeners();
+  }
+
+  Future<void> detachSubtitle(int subtitleId) async {
+    await _subtitleService.detach(subtitleId);
+    _subtitleCache.clear();
+    notifyListeners();
+  }
+
+  // ═══════════════ 阅读进度（BUILD_GUIDE 第 22.6 节）═══════════════
+
+  ReadingProgressService? _readingService;
+
+  /// 记下服务绑定的数据库实例。只用来比对象身份，不调用任何方法，
+  /// 所以这里不为了一个类型名去 import sqflite。
+  Object? _readingServiceDb;
+
+  /// 节流状态要活过单次调用，所以服务实例缓存起来；数据库换了实例就重建。
+  @visibleForTesting
+  ReadingProgressService get readingService {
+    final db = DatabaseManager.instance.db;
+    if (_readingService == null || !identical(_readingServiceDb, db)) {
+      _readingService = ReadingProgressService(db);
+      _readingServiceDb = db;
+    }
+    return _readingService!;
+  }
+
+  Future<ReadingProgress?> readingProgressOf(int volumeId) =>
+      readingService.get(volumeId);
+
+  /// 非空表示查看器正以阅读模式打开某个卷，翻页会记进度。
+  int? _readingVolumeId;
+  int? get readingVolumeId => _readingVolumeId;
+
+  /// 从卷上进入阅读（BUILD_GUIDE 第 22.6、22.7 节）。
+  ///
+  /// 有上次进度就接着看：先按 media_id 找，找不到再按页号兜。返回 false
+  /// 表示这个卷里没有可阅读的图片，调用方据此提示。
+  Future<bool> openVolumeReader(int volumeId) async {
+    final images = await imagesInFolder(volumeId);
+    if (images.isEmpty) return false;
+    var start = 0;
+    final progress = await readingProgressOf(volumeId);
+    if (progress != null) {
+      final matched = images.indexWhere((m) => m.id == progress.mediaId);
+      start = matched >= 0
+          ? matched
+          : progress.pageIndex.clamp(0, images.length - 1);
+    }
+    openViewer(images, start);
+    _readingVolumeId = volumeId;
+    _recordReading();
+    notifyListeners();
+    return true;
+  }
+
+  /// 翻页后写一次进度，节流与落盘交给 [ReadingProgressService]。
+  void _recordReading() {
+    final volumeId = _readingVolumeId;
+    if (volumeId == null) return;
+    unawaited(recordReading(volumeId,
+        mediaId: viewerImage?.id, pageIndex: _viewerIndex));
+  }
+
+  /// 手动标记本卷已读完（第 22.6 节）。
+  Future<void> markReadFinished() async {
+    final volumeId = _readingVolumeId;
+    if (volumeId == null) return;
+    await markVolumeFinished(volumeId,
+        mediaId: viewerImage?.id, pageIndex: _viewerIndex);
+  }
+
+  /// 翻页时记录进度。写入按服务里的 1 秒窗口节流。
+  Future<void> recordReading(int volumeId,
+          {int? mediaId, required int pageIndex}) =>
+      readingService.record(volumeId, mediaId: mediaId, pageIndex: pageIndex);
+
+  Future<void> markVolumeFinished(int volumeId, {int? mediaId, int? pageIndex}) =>
+      readingService.markFinished(volumeId,
+          mediaId: mediaId, pageIndex: pageIndex);
+
+  /// 离开阅读器前强制落盘，别让最后几页只留在内存里。
+  Future<void> flushReadingProgress() => readingService.flush();
+
+  // ═══════════════ 系列与卷导入（BUILD_GUIDE 第 19.5 节）═══════════════
+
+  /// 按系列导入：选中的目录是系列，其下每个含音频的一级子目录各成一卷。
+  ///
+  /// 没有含音频的一级子目录时，目录自己就是唯一那一卷。导入根那一层不单独建
+  /// 文件夹，所以树里不会多出一层（第 19.5 节）。
+  Future<Work?> importSeries(String dirPath) async {
+    if (!_beginImport('importSeries')) return null;
+    try {
+      final children = await _audioChildDirs(dirPath);
+      if (children.isEmpty) {
+        final scan = await FileScanner.scanDirectoryOffThread(dirPath);
+        if (scan.audioPaths.isEmpty) {
+          logWarn('AppState', '目录内无音频，未创建系列: $dirPath');
+          return null;
+        }
+        final work = await _workDao.create(_baseName(dirPath), library: 'audio');
+        final imported = await _runImport(dirPath, work.id!, scan: scan);
+        if (imported == 0) {
+          logWarn('AppState', '系列导入没有新曲目，删除空系列: ${work.name}');
+          await _workDao.delete(work.id!);
+          return null;
+        }
+        await _tagBonusDirs(dirPath);
+        return work;
+      }
+
+      final work = await _workDao.create(_baseName(dirPath), library: 'audio');
+      var imported = 0;
+      for (final child in children) {
+        final volume = await _folderDao.ensureByPath(child,
+            name: _baseName(child), workId: work.id!, library: 'audio');
+        imported += await _runImport(child, work.id!);
+        await _tagBonusDirs(child);
+        logInfo('AppState', '系列卷导入: ${volume.name}（$child）');
+      }
+      if (imported == 0) {
+        logWarn('AppState', '系列内没有新曲目，删除空系列: ${work.name}');
+        await _workDao.delete(work.id!);
+        return null;
+      }
+      return work;
+    } catch (e) {
+      _importError = e.toString();
+      logError('AppState', '系列导入失败', e.toString());
+      return null;
+    } finally {
+      _endImport();
+    }
+  }
+
+  /// 直接子目录里含音频的那些，按名字自然序。
+  Future<List<String>> _audioChildDirs(String dirPath) async {
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) return const <String>[];
+    final hits = <String>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! Directory) continue;
+      final scan = await FileScanner.scanDirectoryOffThread(entity.path);
+      if (scan.audioPaths.isNotEmpty) hits.add(entity.path);
+    }
+    hits.sort((a, b) => naturalCompare(_baseName(a), _baseName(b)));
+    return hits;
+  }
+
+  /// 批量导入：选一个父目录，每个含媒体的直接子目录各建一个作品。
+  ///
+  /// 音频库有「导入系列」（子目录当成同一个作品的各卷），图片/视频库以前只能
+  /// 一个目录一个作品地导入；这里补上批量做法：一个子目录 = 一个作品。子目录
+  /// 都没有该库媒体时退回按单目录导入。返回新建的作品数。
+  Future<int> importSubdirectoriesAsWorks(
+    String dirPath, {
+    String? library,
+  }) async {
+    if (!_beginImport('importSubdirectoriesAsWorks')) return 0;
+    var created = 0;
+    try {
+      final scan = await FileScanner.scanDirectoryOffThread(dirPath);
+      final lib = library ?? _libraryForScan(scan);
+      if (lib == 'audio') {
+        logWarn('AppState', '音频库请用「导入系列」把子目录当成卷: $dirPath');
+        return 0;
+      }
+      final children = await _childDirsWithMedia(dirPath, lib);
+      if (children.isEmpty) {
+        logInfo('AppState', '子目录里没有 $lib 媒体，按单目录导入: $dirPath');
+        final work = await _importVisualWork(dirPath, lib, scan);
+        return work == null ? 0 : 1;
+      }
+      for (final child in children) {
+        final childScan = await FileScanner.scanDirectoryOffThread(child);
+        if (childScan.isEmpty) continue;
+        final work = await _importVisualWork(child, lib, childScan);
+        if (work != null) {
+          created++;
+          logInfo('AppState', '批量导入子目录: ${_baseName(child)}（$child）');
+        }
+      }
+      logInfo('AppState', '批量导入完成：子目录 ${children.length} 个，新建作品 $created 个');
+    } catch (e) {
+      _importError = e.toString();
+      logError('AppState', '批量导入失败', e.toString());
+    } finally {
+      _endImport();
+    }
+    return created;
+  }
+
+  /// 直接子目录里含该库媒体的那些，按名字自然序。
+  Future<List<String>> _childDirsWithMedia(
+    String dirPath,
+    String library,
+  ) async {
+    final dir = Directory(dirPath);
+    if (!await dir.exists()) return const <String>[];
+    final hits = <String>[];
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! Directory) continue;
+      final scan = await FileScanner.scanDirectoryOffThread(entity.path);
+      final paths = library == 'video' ? scan.videoPaths : scan.imagePaths;
+      if (paths.isNotEmpty) hits.add(entity.path);
+    }
+    hits.sort((a, b) => naturalCompare(_baseName(a), _baseName(b)));
+    return hits;
+  }
+
+  /// 把特典子目录（特典 / SP / Bonus）里的条目打上「特典」标签（第 19.3 节）。
+  ///
+  /// 只在导入那一次调用；用户可以随后自己删掉标签。返回新打标的条目数。
+  Future<int> _tagBonusDirs(String rootPath) async {
+    final dirs = <String>[];
+    final root = Directory(rootPath);
+    if (!await root.exists()) return 0;
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is Directory && isBonusDirName(p.basename(entity.path))) {
+        dirs.add(entity.path);
+      }
+    }
+    if (dirs.isEmpty) return 0;
+
+    final tag = await _ensureBonusTag();
+    if (tag?.id == null) return 0;
+
+    var tagged = 0;
+    for (final dir in dirs) {
+      final rows = await _mediaDao.queryByDirs([dir]);
+      for (final row in rows) {
+        if (row.mediaType == MediaType.subtitle) continue;
+        await _tagDao.addTagToTrack(row.id!, tag!.id!);
+        tagged++;
+      }
+    }
+    if (tagged > 0) {
+      logInfo('AppState', '特典目录自动打标 $tagged 条（$rootPath）');
+    }
+    return tagged;
+  }
+
+  /// 「特典」是普通标签，没有就先建出来。
+  Future<Tag?> _ensureBonusTag() async {
+    final existing = await _tagDao.getByFullName('general', bonusTagName);
+    if (existing != null) return existing;
+    return _tagDao.insert(const Tag(name: bonusTagName));
+  }
+
+  /// 特典标签名（第 19.3 节）
+  static const String bonusTagName = '特典';
+
   // ═══════════════ 标签 ═══════════════
 
   Future<void> loadTags() async {
@@ -689,37 +2021,76 @@ class AppState extends ChangeNotifier {
     return List<Tag>.unmodifiable(_trackTags[trackId]!);
   }
 
+  Future<List<Tag>> getImageTags(int imageId) async {
+    final cached = _imageTags[imageId];
+    if (cached != null) return List<Tag>.unmodifiable(cached);
+    final tags = await _tagDao.getTagsForImage(imageId);
+    _imageTags[imageId] = List<Tag>.of(tags);
+    return List<Tag>.unmodifiable(_imageTags[imageId]!);
+  }
+
+  /// 图片与视频通用：读单个媒体已绑定的标签（视频卡片菜单用）。
+  Future<List<Tag>> getTagsForMedia(int mediaId) async {
+    final cached = _imageTags[mediaId];
+    if (cached != null) return List<Tag>.unmodifiable(cached);
+    final tags = await _tagDao.getTagsForTrack(mediaId);
+    _imageTags[mediaId] = List<Tag>.of(tags);
+    return List<Tag>.unmodifiable(_imageTags[mediaId]!);
+  }
+
   /// 切换曲目标签。同一曲目的多次调用按顺序串行执行。
   ///
   /// 连点两次同一个标签时，第二次必须在第一次写库并更新缓存之后才读当前状态；
   /// 否则两次都读到「未打标签」，双击「关标签」会变成打开。
-  Future<void> toggleTagOnTrack(int trackId, Tag tag) {
-    final previous = _tagToggleChains[trackId] ?? Future<void>.value();
-    final chain = previous.then((_) => _applyTagToggle(trackId, tag));
+  Future<void> toggleTagOnTrack(int trackId, Tag tag) =>
+      _queueTagToggle(trackId, image: false, tag: tag);
+
+  /// 切换图片标签。串行语义与 [toggleTagOnTrack] 相同。
+  Future<void> toggleTagOnImage(int imageId, Tag tag) =>
+      _queueTagToggle(imageId, image: true, tag: tag);
+
+  Future<void> _queueTagToggle(int mediaId,
+      {required bool image, required Tag tag}) {
+    final previous = _tagToggleChains[mediaId] ?? Future<void>.value();
+    final chain =
+        previous.then((_) => _applyTagToggle(mediaId, tag, image: image));
     // 链尾只保留不会失败的 future：前一次出错不能卡住后面的点击。
     final tail = chain.catchError((Object _) {});
-    _tagToggleChains[trackId] = tail;
+    _tagToggleChains[mediaId] = tail;
     unawaited(tail.whenComplete(() {
-      if (identical(_tagToggleChains[trackId], tail)) {
-        _tagToggleChains.remove(trackId);
+      if (identical(_tagToggleChains[mediaId], tail)) {
+        _tagToggleChains.remove(mediaId);
       }
     }));
     return chain;
   }
 
-  Future<void> _applyTagToggle(int trackId, Tag tag) async {
+  /// media_tags 以 media.id 为键，曲目与图片共用；只有内存缓存分两份。
+  Future<void> _applyTagToggle(int mediaId, Tag tag,
+      {required bool image}) async {
+    final cache = image ? _imageTags : _trackTags;
     // 改副本，缓存里的 List 不被就地修改；调用方拿到的也是不可变视图。
-    final current = List<Tag>.of(
-        _trackTags[trackId] ?? await _tagDao.getTagsForTrack(trackId));
+    final current = List<Tag>.of(cache[mediaId] ??
+        (image
+            ? await _tagDao.getTagsForImage(mediaId)
+            : await _tagDao.getTagsForTrack(mediaId)));
     final has = current.any((t) => t.id == tag.id);
     if (has) {
-      await _tagDao.removeTagFromTrack(trackId, tag.id!);
+      if (image) {
+        await _tagDao.removeTagFromImage(mediaId, tag.id!);
+      } else {
+        await _tagDao.removeTagFromTrack(mediaId, tag.id!);
+      }
       current.removeWhere((t) => t.id == tag.id);
     } else {
-      await _tagDao.addTagToTrack(trackId, tag.id!);
+      if (image) {
+        await _tagDao.addTagToImage(mediaId, tag.id!);
+      } else {
+        await _tagDao.addTagToTrack(mediaId, tag.id!);
+      }
       current.add(tag);
     }
-    _trackTags[trackId] = current;
+    cache[mediaId] = current;
     notifyListeners();
   }
 
@@ -775,6 +2146,30 @@ class AppState extends ChangeNotifier {
   Future<List<Tag>> getFolderTags(int folderId) =>
       _tagDao.getTagsForFolder(folderId);
 
+  /// 规则标签由软件按扩展名或媒体类型自动补行，删掉下次启动还会回来。
+  static bool isRuleTag(Tag tag) => TagDao.ruleNamespaces.contains(tag.namespace);
+
+  /// 按名字找标签。给了命名空间就精确匹配，没给就跨命名空间找第一个。
+  Tag? findTagByName(String name, {String? namespace}) {
+    final target = name.trim().toLowerCase();
+    if (target.isEmpty) return null;
+    for (final t in _allTags) {
+      if (t.name.toLowerCase() != target) continue;
+      if (namespace == null || t.namespace == namespace) return t;
+    }
+    return null;
+  }
+
+  /// 标签被多少条媒体、多少个文件夹引用（删除前提示用）。
+  Future<({int media, int folders})> tagUsageCounts(int tagId) =>
+      _tagDao.countUsage(tagId);
+
+  /// 标签库里出现过的命名空间（新建标签时给输入框做联想）。
+  List<String> get knownNamespaces {
+    final names = _allTags.map((t) => t.namespace).toSet().toList()..sort();
+    return names;
+  }
+
   Future<Tag> createTag(String name,
       {String namespace = '', String color = '#cba6f7'}) async {
     final ns = namespace.isEmpty ? 'general' : namespace;
@@ -789,6 +2184,7 @@ class AppState extends ChangeNotifier {
   Future<void> deleteTag(int tagId) async {
     await _tagDao.delete(tagId);
     _trackTags.clear();
+    _imageTags.clear();
     _removeFromFilter(tagId);
     await loadTags();
     await refresh();
@@ -806,6 +2202,7 @@ class AppState extends ChangeNotifier {
       color: color ?? existing.color,
     ));
     _trackTags.clear();
+    _imageTags.clear();
     await loadTags();
     await refresh();
   }
@@ -856,6 +2253,22 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 只开多选模式，不预先选中任何曲目（工具条的「选择」按钮走这条路）
+  void enterTrackSelectionMode() {
+    _selectionMode = true;
+    notifyListeners();
+  }
+
+  /// 选中当前列表里的全部曲目（多选工具条的「全选」）
+  void selectAllTracks() {
+    _selectionMode = true;
+    _selectedTrackIds
+      ..clear()
+      ..addAll(_tracks.map((t) => t.id).whereType<int>());
+    _anchorTrackId = _tracks.isEmpty ? null : _tracks.first.id;
+    notifyListeners();
+  }
+
   Future<void> addTagsToTracks(Iterable<int> trackIds, List<Tag> tags) async {
     await _tagDao.addTagsToTracks(trackIds, tags.map((t) => t.id!));
     _trackTags.clear();
@@ -883,12 +2296,91 @@ class AppState extends ChangeNotifier {
     return result;
   }
 
+  // ── 图片批量标签 ──
+
+  Future<void> addTagsToImages(Iterable<int> imageIds, List<Tag> tags) async {
+    for (final t in tags) {
+      await _tagDao.addTagsToTracks(imageIds, [t.id!]);
+    }
+    _imageTags.clear();
+    notifyListeners();
+  }
+
+  Future<void> removeTagsFromImages(
+      Iterable<int> imageIds, List<Tag> tags) async {
+    for (final t in tags) {
+      await _tagDao.removeTagsFromTracks(imageIds, [t.id!]);
+    }
+    _imageTags.clear();
+    notifyListeners();
+  }
+
+  /// 返回这批图片上已绑定的标签 id 集合（用于「移除标签」时过滤可选项）
+  Future<Set<int>> getTagIdsOnImages(Iterable<int> imageIds) async {
+    final ids = imageIds.toList();
+    if (ids.isEmpty) return {};
+    final map = await _tagDao.getTagsForImages(ids);
+    final result = <int>{};
+    for (final tags in map.values) {
+      for (final t in tags) {
+        if (t.id != null) result.add(t.id!);
+      }
+    }
+    return result;
+  }
+
+  /// 覆盖设置单个媒体的标签集（视频卡片菜单用）。
+  ///
+  /// 媒体行不分类型，图片与视频都存 `media_tags`，所以这里复用曲目的写入口。
+  Future<void> setMediaTags(int mediaId, List<Tag> tags) async {
+    await _tagDao.setTrackTags(mediaId, [
+      for (final t in tags)
+        if (t.id != null) t.id!,
+    ]);
+    _imageTags.clear();
+    if (_tagFilter.active || hasAdvancedFilter) {
+      await refresh();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  /// 图片与视频通用的批量标签入口，媒体行统一存 `media_tags`。
+  Future<void> addTagsToMedia(Iterable<int> mediaIds, List<Tag> tags) =>
+      addTagsToImages(mediaIds, tags);
+
+  Future<void> removeTagsFromMedia(Iterable<int> mediaIds, List<Tag> tags) =>
+      removeTagsFromImages(mediaIds, tags);
+
+  Future<Set<int>> getTagIdsOnMedia(Iterable<int> mediaIds) =>
+      getTagIdsOnImages(mediaIds);
+
+  /// 当前标签筛选（AND ∪ OR ∪ NOT）里出现的全部标签 id。
+  Set<int> get activeTagIds => {
+        ..._tagFilter.andTagIds,
+        ..._tagFilter.orTagIds,
+        ..._tagFilter.notTagIds,
+      };
+
+  /// 设置图片别名（用户命名）。传 null 或空串表示清除。
+  ///
+  /// 写库后重新读回该行，保证内存里的 [MediaItem] 与库一致。
+  Future<void> setImageAlias(int id, String? alias) async {
+    final value = (alias == null || alias.trim().isEmpty) ? null : alias.trim();
+    await _mediaDao.setAlias(id, value);
+    final updated = await _mediaDao.getById(id);
+    if (updated == null) return;
+    _setImages(_images.map((img) => img.id == id ? updated : img).toList());
+    notifyListeners();
+  }
+
   void _removeFromFilter(int tagId) {
     _tagFilter = TagFilter(
       andTagIds: _tagFilter.andTagIds.where((id) => id != tagId).toList(),
       orTagIds: _tagFilter.orTagIds.where((id) => id != tagId).toList(),
       notTagIds: _tagFilter.notTagIds.where((id) => id != tagId).toList(),
     );
+    _persistNotTagIds();
   }
 
   // 标签筛选
@@ -913,6 +2405,7 @@ class AppState extends ChangeNotifier {
       orTagIds: list,
       notTagIds: _tagFilter.notTagIds.where((id) => id != tagId).toList(),
     );
+    _persistNotTagIds();
     refresh();
   }
 
@@ -925,11 +2418,13 @@ class AppState extends ChangeNotifier {
       orTagIds: _tagFilter.orTagIds.where((id) => id != tagId).toList(),
       notTagIds: list,
     );
+    _persistNotTagIds();
     refresh();
   }
 
   void clearTagFilters() {
     _tagFilter = const TagFilter();
+    _persistNotTagIds();
     refresh();
   }
 
@@ -966,6 +2461,162 @@ class AppState extends ChangeNotifier {
     await player.playQueue(_tracks, startIndex: 0);
   }
 
+  /// 播放某个文件夹（含子文件夹）下的全部曲目
+  Future<void> playFolderAll(int folderId) async {
+    final paths = <String>[];
+    final queue = <int>[folderId];
+    while (queue.isNotEmpty) {
+      final fid = queue.removeAt(0);
+      for (final fp in await _folderDao.getPaths(fid)) {
+        paths.add(fp.path);
+      }
+      for (final c in await _folderDao.listChildren(fid)) {
+        if (c.id != null) queue.add(c.id!);
+      }
+    }
+    if (paths.isEmpty) return;
+    final tracks = await _trackDao.queryByDirs(paths);
+    if (tracks.isEmpty) return;
+    await playTracks(tracks, 0);
+  }
+
+  /// 播放某个作品全部卷下的曲目
+  Future<void> playWorkAll(int workId) async {
+    final paths = await _folderDao.getPathsByWork(workId);
+    if (paths.isEmpty) return;
+    final tracks = await _trackDao.queryByDirs(paths);
+    if (tracks.isEmpty) return;
+    await playTracks(tracks, 0);
+  }
+
+  /// 用外部播放器播放这个卷（BUILD_GUIDE 第 24.2 节）
+  ///
+  /// 优先取卷内的视频行，没有视频时退回该卷的全部媒体行。
+  Future<LaunchResult> playFolderExternal(int folderId) async {
+    final folder = await _folderDao.getById(folderId);
+    final paths = await _collectFolderPaths(folderId);
+    return _launchExternal(folder?.name ?? '播放列表', paths);
+  }
+
+  /// 用外部播放器播放这个作品下的全部卷
+  Future<LaunchResult> playWorkExternal(int workId) async {
+    final work = await _workDao.getById(workId);
+    final paths = await _folderDao.getPathsByWork(workId);
+    return _launchExternal(work?.name ?? '播放列表', paths);
+  }
+
+  /// 收集一个卷及其全部子卷的目录路径
+  Future<List<String>> _collectFolderPaths(int folderId) async {
+    final paths = <String>[];
+    final queue = <int>[folderId];
+    while (queue.isNotEmpty) {
+      final fid = queue.removeAt(0);
+      for (final fp in await _folderDao.getPaths(fid)) {
+        paths.add(fp.path);
+      }
+      for (final c in await _folderDao.listChildren(fid)) {
+        if (c.id != null) queue.add(c.id!);
+      }
+    }
+    return paths;
+  }
+
+  /// 生成 m3u8 并交给系统默认播放器
+  Future<LaunchResult> _launchExternal(
+      String title, List<String> dirPaths) async {
+    if (dirPaths.isEmpty) return LaunchResult.failed;
+    var rows = await _mediaDao.queryByDirs(dirPaths, type: MediaType.video);
+    if (rows.isEmpty) rows = await _mediaDao.queryByDirs(dirPaths);
+    if (rows.isEmpty) return LaunchResult.failed;
+    final dir = await DataDirService.instance.dataDir;
+    final writer = PlaylistWriter(outputDir: p.join(dir, 'playlist'));
+    final file = await writer.write(
+      name: title,
+      entries: [
+        for (final m in rows)
+          PlaylistEntry(
+              path: m.path, title: m.title ?? m.filename, durationMs: m.durationMs),
+      ],
+    );
+    return _launcher.open(file);
+  }
+
+  // ═══════════════ 收藏选段（BUILD_GUIDE 第 24.3 节）═══════════════
+
+  /// 载入当前曲目的选段。没有曲目时清空列表。
+  Future<void> reloadSegments() async {
+    final id = player.currentTrack?.id;
+    if (id == null) {
+      _assignSegments(const []);
+      return;
+    }
+    await _reloadSegments(id);
+  }
+
+  Future<void> _reloadSegments(int mediaId) async {
+    _assignSegments(await _segmentService.listByMedia(mediaId));
+  }
+
+  /// 列表真的变了才通知：切歌时顺带载入选段，不该多出无谓的重建。
+  void _assignSegments(List<MediaSegment> list) {
+    if (_sameSegments(_segments, list)) return;
+    _segments = list;
+    notifyListeners();
+  }
+
+  static bool _sameSegments(List<MediaSegment> a, List<MediaSegment> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// 保存一段选区。起止按当前曲目时长收口。
+  Future<MediaSegment?> addSegment({
+    required int startMs,
+    required int endMs,
+    String? name,
+  }) async {
+    final id = player.currentTrack?.id;
+    if (id == null) return null;
+    final seg = await _segmentService.add(
+      mediaId: id,
+      startMs: startMs,
+      endMs: endMs,
+      durationMs: player.duration.inMilliseconds,
+      name: name,
+    );
+    await _reloadSegments(id);
+    return seg;
+  }
+
+  Future<void> renameSegment(MediaSegment seg, String? name) async {
+    final id = seg.id;
+    if (id == null) return;
+    await _segmentService.rename(id, name);
+    await reloadSegments();
+  }
+
+  /// 删除一段。删掉的正是当前循环段时同时关掉选区循环。
+  Future<void> deleteSegment(MediaSegment seg) async {
+    final id = seg.id;
+    if (id == null) return;
+    final looping = player.loopSegment;
+    if (looping != null && looping.id == id) {
+      await player.setLoopSegment(null);
+    }
+    await _segmentService.remove(id);
+    await reloadSegments();
+  }
+
+  /// 开启或关闭选段循环。[seg] 为 null 时关闭。
+  Future<void> loopSegment(MediaSegment? seg) => player.setLoopSegment(seg);
+
+  /// 跳到段首播放
+  Future<void> jumpToSegment(MediaSegment seg) =>
+      player.seek(Duration(milliseconds: seg.startMs));
+
   Future<void> playTrackAt(int index) async {
     if (index < 0 || index >= _tracks.length) return;
     _rememberQueueCover();
@@ -974,9 +2625,13 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 字幕 / 封面 ═══════════════
 
-  List<LyricLine> getSubtitleLines(TrackItem track) {
+  /// 读一首曲目的字幕，结果按曲目路径缓存（BUILD_GUIDE 第 23.3 节）。
+  ///
+  /// 返回 [SubtitleDocument]：界面据 [SubtitleDocument.parsed] 判断格式是否
+  /// 可解析，据 [SubtitleDocument.hasTiming] 判断要不要做逐行同步。
+  SubtitleDocument subtitleFor(TrackItem track) {
     final p = track.subtitlePath;
-    if (p == null || p.isEmpty) return const [];
+    if (p == null || p.isEmpty) return SubtitleDocument.empty;
     return _subtitleCache.putIfAbsent(
         track.path, () => SubtitleParser.parseFile(p));
   }
@@ -1098,6 +2753,7 @@ class AppState extends ChangeNotifier {
   void _onTrackStarted(TrackItem track) {
     final id = track.id;
     if (id == null) return;
+    unawaited(_reloadSegments(id));
     final gen = ++_recentLoadGeneration;
     unawaited(_trackDao
         .recordPlay(id, DateTime.now().millisecondsSinceEpoch)

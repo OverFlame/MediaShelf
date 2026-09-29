@@ -237,27 +237,41 @@ class _Parser {
 
 // ═══════════════════ SQL 编译 ═══════════════════
 
-/// 将 AST 编译为返回 track_id 集合的 SQL 子查询。
+/// 把标签引用翻译成「返回 media id 集合的子查询」。
 ///
-/// [resolve] 负责把 [TagRef] 解析为 tag id 列表（空列表表示该原子恒假）。
-String buildTrackIdSubquery(Expr ast, List<int> Function(TagRef ref) resolve) {
-  if (ast is TagRef) {
-    return _tagRefSql(resolve(ast));
-  } else if (ast is NotExpr) {
-    return '(SELECT id FROM tracks) EXCEPT (${buildTrackIdSubquery(ast.child, resolve)})';
-  } else if (ast is AndExpr) {
-    return '(${buildTrackIdSubquery(ast.left, resolve)}) INTERSECT '
-        '(${buildTrackIdSubquery(ast.right, resolve)})';
-  } else if (ast is OrExpr) {
-    return '(${buildTrackIdSubquery(ast.left, resolve)}) UNION '
-        '(${buildTrackIdSubquery(ast.right, resolve)})';
-  }
-  throw StateError('未知的表达式节点类型');
+/// 普通标签查 media_tags；规则标签（kind / ext）由 TagDao 翻成 media 的列条件。
+typedef TagRefResolver = String Function(TagRef ref);
+
+/// 普通标签的 id 集合子查询。空列表表示该原子恒假。
+String tagIdsSubquery(List<int> ids) {
+  if (ids.isEmpty) return 'SELECT media_id FROM media_tags WHERE 0';
+  return 'SELECT media_id FROM media_tags WHERE tag_id IN (${ids.join(',')})';
 }
 
-String _tagRefSql(List<int> ids) {
-  if (ids.isEmpty) {
-    return 'SELECT track_id FROM track_tags WHERE 0';
+/// 音频筛选的作用域，所有分支都从这里收窄。
+const String _audioScope =
+    "SELECT id FROM media WHERE media_type = 'audio'";
+
+/// 将 AST 编译为返回 media id 集合的 SQL 子查询。
+///
+/// 这里不用 INTERSECT / EXCEPT 这类集合运算：SQLite 不接受把括号里的
+/// 复合查询当成集合运算的操作数（`(SELECT ...) INTERSECT (SELECT ...)` 直接报
+/// 语法错），所以改成每层都从音频作用域出发做 IN / NOT IN 收窄。
+/// 规则标签同样返回一条子查询，直接当 IN 的操作数用。
+String buildTrackIdSubquery(Expr ast, TagRefResolver resolve) {
+  if (ast is TagRef) {
+    return resolve(ast);
+  } else if (ast is NotExpr) {
+    return '$_audioScope AND id NOT IN '
+        '(${buildTrackIdSubquery(ast.child, resolve)})';
+  } else if (ast is AndExpr) {
+    return '$_audioScope AND id IN '
+        '(${buildTrackIdSubquery(ast.left, resolve)}) AND id IN '
+        '(${buildTrackIdSubquery(ast.right, resolve)})';
+  } else if (ast is OrExpr) {
+    return '$_audioScope AND (id IN '
+        '(${buildTrackIdSubquery(ast.left, resolve)}) OR id IN '
+        '(${buildTrackIdSubquery(ast.right, resolve)}))';
   }
-  return 'SELECT track_id FROM track_tags WHERE tag_id IN (${ids.join(',')})';
+  throw StateError('未知的表达式节点类型');
 }

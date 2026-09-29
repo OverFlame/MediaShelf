@@ -112,6 +112,12 @@ class ImportService {
           final filename = p.basename(path);
           final now = DateTime.now().millisecondsSinceEpoch;
 
+          // 多字幕归属模型在阶段 6 落地（BUILD_GUIDE 第 23.6 节），
+          // 这一步先沿用 media.subtitle_path 记下优先级最高的那一条。
+          final matched = scanned.subtitleByAudio[path];
+          final subtitlePath =
+              (matched == null || matched.isEmpty) ? null : matched.first;
+
           final item = TrackItem(
             path: path,
             filename: filename,
@@ -122,7 +128,7 @@ class ImportService {
             format: ext.isNotEmpty ? ext.substring(1) : 'unknown',
             fileSize: sizeBytes > 0 ? sizeBytes : null,
             fileMtime: mtime > 0 ? mtime : null,
-            subtitlePath: scanned.subtitleByAudio[path],
+            subtitlePath: subtitlePath,
             addedAt: now,
           );
 

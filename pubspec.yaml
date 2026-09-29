@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.4.0+21
 
 # sqlite3（sqflite_common_ffi 依赖）使用系统库，避免构建时从 GitHub 下载
 # 预编译二进制（国内网络无法访问 GitHub）。
@@ -30,7 +30,7 @@ hooks:
       name_windows: winsqlite3
 
 environment:
-  sdk: ^3.12.0
+  sdk: ^3.12.2
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -48,12 +48,23 @@ dependencies:
   provider: ^6.1.5+1
   sqflite: ^2.4.3
   sqflite_common_ffi: ^2.4.2+1
+  # 迁移服务与校验工具直接用 sqflite_common 的 API 和 databaseFactory
+  sqflite_common: ^2.5.11
   path_provider: ^2.1.6
   path: ^1.9.1
   file_picker: ^12.1.2
   shared_preferences: ^2.5.5
   audio_metadata_reader: ^1.7.1
   flutter_soloud: ^4.1.7
+
+  # 图片与视频栈，随 PictureViewer2 并入（BUILD_GUIDE 第 5.1 节）
+  crypto: ^3.0.7
+  image: ^4.9.1
+  desktop_drop: ^0.4.4
+  exif: ^3.3.0
+
+  # 中文字幕解码：GBK/GB18030 的纯 Dart 实现（BUILD_GUIDE 第 23.2 节）
+  fast_gbk: ^1.0.0
 
 dev_dependencies:
   flutter_test:

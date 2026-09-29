@@ -139,4 +139,38 @@ void main() {
     await bridge.debugSync(track('/m/1.mp3'));
     expect(calls, ['start', 'update']);
   });
+
+  test('ensureScanAccess：没授权就跳设置页并返回 false', () async {
+    final seen = <String>[];
+    mock((call) async {
+      seen.add(call.method);
+      if (call.method == 'checkAllFilesAccess') return false;
+      return null;
+    });
+
+    expect(await bridge.ensureScanAccess(), isFalse);
+    expect(seen, [
+      'checkAllFilesAccess',
+      'requestAllFilesAccess',
+      'checkAllFilesAccess',
+    ]);
+  });
+
+  test('ensureScanAccess：授权已在就直接放行，不跳设置页', () async {
+    final seen = <String>[];
+    mock((call) async {
+      seen.add(call.method);
+      return true;
+    });
+
+    expect(await bridge.ensureScanAccess(), isTrue);
+    expect(seen, ['checkAllFilesAccess']);
+  });
+
+  test('ensureScanAccess：桌面端不碰平台通道', () async {
+    bridge.forceAndroid = false;
+    mock((call) async => fail('桌面端不该调通道：${call.method}'));
+
+    expect(await bridge.ensureScanAccess(), isTrue);
+  });
 }

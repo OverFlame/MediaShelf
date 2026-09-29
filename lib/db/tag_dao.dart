@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import '../utils/filter_expression.dart';
 import '../utils/log_util.dart';
+import 'media_dao.dart';
 
 /// 标签数据类
 class Tag {
@@ -36,6 +37,10 @@ class Tag {
 
   @override
   int get hashCode => Object.hash(namespace, name);
+
+  /// 规则标签（kind/ext）只作筛选条件，不写关联行，也不该出现在「手动打标签」的
+  /// 列表里（第 18.4 节）。
+  bool get isRule => TagDao.ruleNamespaces.contains(namespace);
 
   @override
   String toString() => namespace == 'general' ? name : '$namespace:$name';
@@ -89,6 +94,21 @@ class TagDao {
     return _db.delete('tags', where: 'id = ?', whereArgs: [id]);
   }
 
+  /// 这个标签被多少条媒体、多少个文件夹引用。
+  ///
+  /// 删除前用来告诉用户会解除多少关联；规则标签（kind/ext）不写关联行，
+  /// 这里一般返回 0。
+  Future<({int media, int folders})> countUsage(int tagId) async {
+    final mediaRows = await _db.rawQuery(
+        'SELECT COUNT(*) AS c FROM media_tags WHERE tag_id = ?', [tagId]);
+    final folderRows = await _db.rawQuery(
+        'SELECT COUNT(*) AS c FROM folder_tags WHERE tag_id = ?', [tagId]);
+    return (
+      media: (mediaRows.first['c'] as int?) ?? 0,
+      folders: (folderRows.first['c'] as int?) ?? 0,
+    );
+  }
+
   Future<List<Tag>> getAll() async {
     final rows = await _db.query('tags', orderBy: 'namespace, name');
     return rows.map(Tag.fromMap).toList();
@@ -96,9 +116,9 @@ class TagDao {
 
   Future<List<TagCount>> listWithCount() async {
     final rows = await _db.rawQuery('''
-      SELECT t.*, COUNT(tt.track_id) as track_count
+      SELECT t.*, COUNT(tt.media_id) as track_count
       FROM tags t
-      LEFT JOIN track_tags tt ON t.id = tt.tag_id
+      LEFT JOIN media_tags tt ON t.id = tt.tag_id
       GROUP BY t.id
       ORDER BY t.namespace, t.name
     ''');
@@ -123,21 +143,21 @@ class TagDao {
   // ═══ 曲目标签关联 ═══
 
   Future<void> addTagToTrack(int trackId, int tagId) async {
-    await _db.insert('track_tags', {'track_id': trackId, 'tag_id': tagId},
+    await _db.insert('media_tags', {'media_id': trackId, 'tag_id': tagId},
         conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<void> removeTagFromTrack(int trackId, int tagId) async {
-    await _db.delete('track_tags',
-        where: 'track_id = ? AND tag_id = ?', whereArgs: [trackId, tagId]);
+    await _db.delete('media_tags',
+        where: 'media_id = ? AND tag_id = ?', whereArgs: [trackId, tagId]);
   }
 
   Future<void> setTrackTags(int trackId, List<int> tagIds) async {
     await _db.transaction((txn) async {
       await txn
-          .delete('track_tags', where: 'track_id = ?', whereArgs: [trackId]);
+          .delete('media_tags', where: 'media_id = ?', whereArgs: [trackId]);
       for (final tagId in tagIds) {
-        await txn.insert('track_tags', {'track_id': trackId, 'tag_id': tagId});
+        await txn.insert('media_tags', {'media_id': trackId, 'tag_id': tagId});
       }
     });
   }
@@ -154,8 +174,8 @@ class TagDao {
     await _db.transaction((txn) async {
       for (final trackId in tids) {
         for (final tagId in gids) {
-          await txn.insert('track_tags',
-              {'track_id': trackId, 'tag_id': tagId},
+          await txn.insert('media_tags',
+              {'media_id': trackId, 'tag_id': tagId},
               conflictAlgorithm: ConflictAlgorithm.ignore);
         }
       }
@@ -171,8 +191,8 @@ class TagDao {
     await _db.transaction((txn) async {
       for (final trackId in tids) {
         for (final tagId in gids) {
-          await txn.delete('track_tags',
-              where: 'track_id = ? AND tag_id = ?',
+          await txn.delete('media_tags',
+              where: 'media_id = ? AND tag_id = ?',
               whereArgs: [trackId, tagId]);
         }
       }
@@ -182,8 +202,8 @@ class TagDao {
   Future<List<Tag>> getTagsForTrack(int trackId) async {
     final rows = await _db.rawQuery('''
       SELECT t.* FROM tags t
-      INNER JOIN track_tags tt ON t.id = tt.tag_id
-      WHERE tt.track_id = ?
+      INNER JOIN media_tags tt ON t.id = tt.tag_id
+      WHERE tt.media_id = ?
       ORDER BY t.namespace, t.name
     ''', [trackId]);
     return rows.map(Tag.fromMap).toList();
@@ -193,22 +213,68 @@ class TagDao {
     if (trackIds.isEmpty) return {};
     final placeholders = trackIds.map((_) => '?').join(',');
     final rows = await _db.rawQuery('''
-      SELECT tt.track_id, t.*
-      FROM track_tags tt
+      SELECT tt.media_id, t.*
+      FROM media_tags tt
       INNER JOIN tags t ON t.id = tt.tag_id
-      WHERE tt.track_id IN ($placeholders)
+      WHERE tt.media_id IN ($placeholders)
       ORDER BY t.namespace, t.name
     ''', trackIds);
     final map = <int, List<Tag>>{};
     for (final row in rows) {
-      final tid = row['track_id'] as int;
+      final tid = row['media_id'] as int;
       map.putIfAbsent(tid, () => []).add(Tag.fromMap(row));
     }
     return map;
   }
 
+  // ═══ 图片标签关联 ═══
+  //
+  // media_tags 以 media.id 为键，不分媒体类型；图片与曲目共用同一批方法，
+  // 这里只给出图片侧的命名别名，避免复制一份同样的 SQL。
+
+  Future<void> addTagToImage(int imageId, int tagId) =>
+      addTagToTrack(imageId, tagId);
+
+  Future<void> removeTagFromImage(int imageId, int tagId) =>
+      removeTagFromTrack(imageId, tagId);
+
+  Future<List<Tag>> getTagsForImage(int imageId) => getTagsForTrack(imageId);
+
+  Future<Map<int, List<Tag>>> getTagsForImages(List<int> imageIds) =>
+      getTagsForTracks(imageIds);
+
+  /// 按标签 AND/OR/NOT 筛选指定媒体类型，返回匹配的 media id 集合。
+  ///
+  /// 音频与图片那两个便捷入口只是固定类型的包装；视频等其它类型用本方法。
+  Future<Set<int>> getIdsByTags(
+    MediaType type, {
+    List<int> andTagIds = const [],
+    List<int> orTagIds = const [],
+    List<int> notTagIds = const [],
+  }) =>
+      _getIdsByTags(type,
+          andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
+
   /// 按标签 AND/OR/NOT 筛选曲目，返回匹配的曲目 id 集合
   Future<Set<int>> getTrackIdsByTags({
+    List<int> andTagIds = const [],
+    List<int> orTagIds = const [],
+    List<int> notTagIds = const [],
+  }) =>
+      getIdsByTags(MediaType.audio,
+          andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
+
+  /// 按标签 AND/OR/NOT 筛选图片，返回匹配的图片 id 集合
+  Future<Set<int>> getImageIdsByTags({
+    List<int> andTagIds = const [],
+    List<int> orTagIds = const [],
+    List<int> notTagIds = const [],
+  }) =>
+      getIdsByTags(MediaType.image,
+          andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
+
+  Future<Set<int>> _getIdsByTags(
+    MediaType type, {
     List<int> andTagIds = const [],
     List<int> orTagIds = const [],
     List<int> notTagIds = const [],
@@ -218,7 +284,10 @@ class TagDao {
     final not = notTagIds.toSet();
 
     if (and.isEmpty && or.isEmpty && not.isEmpty) {
-      final rows = await _db.query('tracks', columns: ['id']);
+      final rows = await _db.query('media',
+          columns: ['id'],
+          where: 'media_type = ?',
+          whereArgs: [type.value]);
       return rows.map((r) => r['id'] as int).toSet();
     }
 
@@ -229,9 +298,9 @@ class TagDao {
       final ph = and.map((_) => '?').join(',');
       conds.add('''
         id IN (
-          SELECT track_id FROM track_tags
+          SELECT media_id FROM media_tags
           WHERE tag_id IN ($ph)
-          GROUP BY track_id
+          GROUP BY media_id
           HAVING COUNT(DISTINCT tag_id) = ${and.length}
         )
       ''');
@@ -241,31 +310,103 @@ class TagDao {
     if (or.isNotEmpty) {
       final ph = or.map((_) => '?').join(',');
       conds.add(
-          'id IN (SELECT DISTINCT track_id FROM track_tags WHERE tag_id IN ($ph))');
+          'id IN (SELECT DISTINCT media_id FROM media_tags WHERE tag_id IN ($ph))');
       args.addAll(or);
     }
 
     if (not.isNotEmpty) {
       final ph = not.map((_) => '?').join(',');
       conds.add(
-          'id NOT IN (SELECT DISTINCT track_id FROM track_tags WHERE tag_id IN ($ph))');
+          'id NOT IN (SELECT DISTINCT media_id FROM media_tags WHERE tag_id IN ($ph))');
       args.addAll(not);
     }
 
     final rows = await _db.rawQuery(
-      'SELECT id FROM tracks WHERE ${conds.join(' AND ')}',
-      args,
+      'SELECT id FROM media WHERE media_type = ? AND ${conds.join(' AND ')}',
+      [type.value, ...args],
     );
     return rows.map((r) => r['id'] as int).toSet();
   }
 
+  /// 按布尔表达式筛选指定媒体类型，返回匹配的 media id 集合。
+  Future<Set<int>> getIdsByExpression(
+          MediaType type, String expression, List<Tag> allTags) =>
+      _getIdsByExpression(type, expression, allTags);
+
   /// 按布尔表达式筛选曲目
   Future<Set<int>> getTrackIdsByExpression(
-      String expression, List<Tag> allTags) async {
+          String expression, List<Tag> allTags) =>
+      getIdsByExpression(MediaType.audio, expression, allTags);
+
+  /// 按布尔表达式筛选图片
+  Future<Set<int>> getImageIdsByExpression(
+          String expression, List<Tag> allTags) =>
+      getIdsByExpression(MediaType.image, expression, allTags);
+
+  Future<Set<int>> _getIdsByExpression(
+      MediaType type, String expression, List<Tag> allTags) async {
     final ast = FilterExpressionParser.parse(expression);
-    final sub = buildTrackIdSubquery(ast, (ref) => _resolveTagRef(ref, allTags));
-    final rows = await _db.rawQuery('SELECT id FROM tracks WHERE id IN ($sub)');
+    final sub =
+        buildTrackIdSubquery(ast, (ref) => _resolveTagRefSql(ref, allTags));
+    final rows = await _db.rawQuery(
+        'SELECT id FROM media WHERE media_type = ? AND id IN ($sub)',
+        [type.value]);
     return rows.map((r) => r['id'] as int).toSet();
+  }
+
+  /// 规则标签的命名空间。库里只放定义行，不写关联行。
+  static const String kindNamespace = 'kind';
+  static const String extNamespace = 'ext';
+
+  /// 规则命名空间集合，界面用来区分「可手动打」与「只能筛」。
+  static const Set<String> ruleNamespaces = {kindNamespace, extNamespace};
+
+  /// 标签引用 → 返回 media id 集合的子查询字符串。
+  ///
+  /// kind 与 ext 翻成 media 的列条件，普通标签查 media_tags（第 18.4 节）。
+  String _resolveTagRefSql(TagRef ref, List<Tag> allTags) {
+    final rule = ruleTagSql(ref);
+    if (rule != null) return 'SELECT id FROM media WHERE $rule';
+    return tagIdsSubquery(_resolveTagRef(ref, allTags));
+  }
+
+  /// 规则标签 → media 列条件；不是规则标签返回 null。
+  ///
+  /// 值先过白名单再拼进 SQL：kind 只认四个媒体类型，ext 只认字母与数字。
+  static String? ruleTagSql(TagRef ref) {
+    if (ref.quoted) return null;
+    final text = ref.text.toLowerCase();
+    final ci = text.indexOf(':');
+    if (ci <= 0) return null;
+    final ns = text.substring(0, ci);
+    var name = text.substring(ci + 1);
+    if (name.startsWith('.')) name = name.substring(1);
+    if (ns == kindNamespace) {
+      if (!MediaType.allValues.contains(name)) return null;
+      return "media_type = '$name'";
+    }
+    if (ns == extNamespace) {
+      if (!RegExp(r'^[a-z0-9]{1,12}$').hasMatch(name)) return null;
+      return "ext = '.$name'";
+    }
+    return null;
+  }
+
+  /// 补齐规则标签的定义行：kind 取四个媒体类型，ext 由调用方给扩展名集合。
+  Future<void> ensureRuleTags({Iterable<String> extNames = const []}) async {
+    await _db.transaction((txn) async {
+      for (final k in MediaType.allValues) {
+        await txn.insert('tags', {'namespace': kindNamespace, 'name': k},
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+      for (final e in extNames) {
+        final name =
+            e.startsWith('.') ? e.substring(1).toLowerCase() : e.toLowerCase();
+        if (name.isEmpty) continue;
+        await txn.insert('tags', {'namespace': extNamespace, 'name': name},
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
   }
 
   List<int> _resolveTagRef(TagRef ref, List<Tag> allTags) {
@@ -342,7 +483,7 @@ class TagDao {
   Future<int> deleteOrphanTags() async {
     final count = await _db.delete('tags',
         where: '''
-      id NOT IN (SELECT DISTINCT tag_id FROM track_tags)
+      id NOT IN (SELECT DISTINCT tag_id FROM media_tags)
       AND id NOT IN (SELECT DISTINCT tag_id FROM folder_tags)
     ''');
     logInfo('TagDao', 'deleteOrphanTags: removed $count orphan(s)');

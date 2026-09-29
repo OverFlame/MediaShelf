@@ -16,6 +16,24 @@
 | [shared_preferences](https://pub.dev/packages/shared_preferences) | BSD-3-Clause | 设置持久化 |
 | [path](https://pub.dev/packages/path) | BSD-3-Clause | 路径处理 |
 | [cupertino_icons](https://pub.dev/packages/cupertino_icons) | MIT | 图标 |
+| [crypto](https://pub.dev/packages/crypto) | BSD-3-Clause | 内容哈希（缩略图缓存命名） |
+| [image](https://pub.dev/packages/image) | MIT | 图片解码与缩放 |
+| [desktop_drop](https://pub.dev/packages/desktop_drop) | Apache-2.0 | 拖入文件与文件夹 |
+| [exif](https://pub.dev/packages/exif) | MIT | EXIF 元数据读取 |
+| [fast_gbk](https://pub.dev/packages/fast_gbk) | BSD-3-Clause | GBK / GB18030 字幕解码 |
+
+## 分发时要保留的版权声明
+
+BSD-3-Clause 与 Apache-2.0 要求在分发二进制时保留原始版权声明：
+
+| 组件 | 版权行 |
+| --- | --- |
+| fast_gbk | Copyright 2019, LI Xiang. All rights reserved. |
+| crypto | Copyright 2015, the Dart project authors. |
+| desktop_drop | 版权行见 Apache-2.0 全文 |
+| sqflite / sqflite_common_ffi / path_provider / shared_preferences / path | Copyright the Dart and Flutter project authors. |
+
+完整许可证文本随 pub 缓存与各包发布页提供，打包发行时一并附上。
 
 ## 内嵌组件（随 flutter_soloud 的 SoLoud 内核）
 

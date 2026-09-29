@@ -8,7 +8,11 @@ import '../state/app_state.dart';
 import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
-import 'dialogs.dart';
+import 'dialogs.dart' hide showTagPickerDialog;
+import 'launch_result_snack.dart';
+import 'scan_access_snack.dart';
+import 'subtitle_assign_dialog.dart';
+import 'tag_picker_dialog.dart';
 
 /// 中间栏：作品/文件夹浏览（面包屑 + 子文件夹 + 曲目列表）
 class FolderBrowser extends StatelessWidget {
@@ -118,15 +122,50 @@ class FolderBrowser extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          IconButton(
+            key: const ValueKey('track-toolbar-select'),
+            tooltip: appState.selectionMode ? '退出多选' : '多选',
+            icon: Icon(
+              appState.selectionMode
+                  ? Icons.check_box
+                  : Icons.check_box_outline_blank,
+              size: 18,
+              color: appState.selectionMode ? AppColors.accent : null,
+            ),
+            onPressed: appState.selectionMode
+                ? () => appState.clearTrackSelection()
+                : () => appState.enterTrackSelectionMode(),
+          ),
           if (appState.selectedTrackIds.isNotEmpty) ...[
             Text('已选 ${appState.selectedTrackIds.length} 首',
                 style: TextStyle(
                     color: AppColors.mutedLightOf(context), fontSize: 12)),
             const SizedBox(width: 8),
             TextButton.icon(
+              key: const ValueKey('track-select-all'),
+              onPressed: appState.selectAllTracks,
+              icon: const Icon(Icons.select_all, size: 15),
+              label: const Text('全选'),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
               onPressed: () => _batchAddTags(context, appState),
               icon: const Icon(Icons.sell_outlined, size: 15),
               label: const Text('批量加标签'),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
+              onPressed: () => _batchRemoveTags(context, appState),
+              icon: const Icon(Icons.label_off_outlined, size: 15),
+              label: const Text('批量移除标签'),
+            ),
+            const SizedBox(width: 4),
+            TextButton.icon(
+              key: const ValueKey('track-remove-records'),
+              onPressed: () => _batchRemoveRecords(context, appState),
+              icon: const Icon(Icons.playlist_remove, size: 15),
+              label: Text('移除记录',
+                  style: TextStyle(color: AppColors.danger)),
             ),
             const SizedBox(width: 4),
             IconButton(
@@ -147,6 +186,7 @@ class FolderBrowser extends StatelessWidget {
   Future<void> _addFolderToWork(BuildContext context, AppState appState) async {
     final work = appState.currentWork;
     if (work == null) return;
+    if (!await ensureScanAccessOrPrompt(context)) return;
     final path = await pickDirectoryPath(title: '选择要加入「${work.name}」的文件夹');
     if (path == null) return;
     await appState.importDirectoryIntoWork(path, work.id!);
@@ -168,6 +208,51 @@ class FolderBrowser extends StatelessWidget {
     if (tags == null) return;
     await appState.addTagsToTracks(ids, tags);
     appState.clearTrackSelection();
+  }
+
+  Future<void> _batchRemoveTags(BuildContext context, AppState appState) async {
+    final ids = appState.selectedTrackIds.toList();
+    if (ids.isEmpty) return;
+    final existing = await appState.getTagIdsOnTracks(ids);
+    if (!context.mounted) return;
+    final tags = await showTagPickerDialog(context,
+        title: '移除选中曲目的标签', filterTagIds: existing);
+    if (tags == null) return;
+    await appState.removeTagsFromTracks(ids, tags);
+    appState.clearTrackSelection();
+  }
+
+  /// 从软件移除选中曲目的记录：只删库里的行，磁盘文件保持原样。
+  Future<void> _batchRemoveRecords(
+      BuildContext context, AppState appState) async {
+    final ids = appState.selectedTrackIds.toList();
+    if (ids.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移除记录'),
+        content: Text(
+            '从软件里移除选中的 ${ids.length} 首？\n'
+            '磁盘上的文件不会被删除，标签关联会一起解除。',
+            style: TextStyle(
+                color: AppColors.textSecondaryOf(ctx), fontSize: 13)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child:
+                const Text('移除', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final deleted = await appState.deleteMediaByIds(ids);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已移除 $deleted 条记录，磁盘文件未改动')));
   }
 
   Widget _sortMenu(BuildContext context, AppState appState) {
@@ -268,14 +353,38 @@ class _FolderTile extends StatelessWidget {
               icon: Icon(Icons.more_vert, size: 16, color: AppColors.mutedOf(context)),
               onSelected: (v) => _onMenu(context, appState, v),
               itemBuilder: (_) => const [
-                PopupMenuItem(value: 'open', child: Text('打开', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'rename', child: Text('重命名', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'move', child: Text('移动到作品...', style: TextStyle(fontSize: 13))),
-                PopupMenuItem(value: 'tags', child: Text('添加标签...', style: TextStyle(fontSize: 13))),
+                PopupMenuItem(
+                  value: 'open',
+                  child: Text('打开', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'playAll',
+                  child: Text('播放全部', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'playExternal',
+                  child: Text('用外部播放器播放', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'rename',
+                  child: Text('重命名', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'move',
+                  child: Text('移动到作品...', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'tags',
+                  child: Text('添加标签...', style: TextStyle(fontSize: 13)),
+                ),
+                PopupMenuItem(
+                  value: 'untag',
+                  child: Text('移除标签...', style: TextStyle(fontSize: 13)),
+                ),
                 PopupMenuDivider(),
                 PopupMenuItem(
                     value: 'delete',
-                    child: Text('删除（虚拟）', style: TextStyle(fontSize: 13, color: AppColors.danger))),
+                    child: Text('删除', style: TextStyle(fontSize: 13, color: AppColors.danger))),
               ],
             ),
           ],
@@ -288,6 +397,13 @@ class _FolderTile extends StatelessWidget {
     switch (v) {
       case 'open':
         await appState.enterFolder(folder.id!);
+        break;
+      case 'playAll':
+        await appState.playFolderAll(folder.id!);
+        break;
+      case 'playExternal':
+        final r = await appState.playFolderExternal(folder.id!);
+        if (context.mounted) showLaunchResult(context, r);
         break;
       case 'rename':
         final name = await promptText(context,
@@ -310,38 +426,69 @@ class _FolderTile extends StatelessWidget {
         if (recursive == null) return;
         await appState.addTagsToFolder(folder.id!, tags, recursive: recursive);
         break;
+      case 'untag':
+        final folderTags = await appState.getFolderTags(folder.id!);
+        final ids = folderTags.map((t) => t.id).whereType<int>().toSet();
+        if (!context.mounted) return;
+        if (ids.isEmpty) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('该文件夹没有标签')));
+          return;
+        }
+        final removed = await showTagPickerDialog(
+          context,
+          title: '移除文件夹标签',
+          filterTagIds: ids,
+        );
+        if (removed == null || removed.isEmpty) return;
+        if (!context.mounted) return;
+        final recursiveRemove = await _confirmSync(context, removing: true);
+        if (recursiveRemove == null) return;
+        await appState.removeTagsFromFolder(
+          folder.id!,
+          removed,
+          recursive: recursiveRemove,
+        );
+        break;
       case 'delete':
+        final count = await appState.countMediaUnderFolder(folder.id!);
+        if (!context.mounted) return;
         final ok = await confirmDialog(context,
             title: '删除文件夹「${folder.name}」？',
-            content: '磁盘文件保留，但其中的曲目会从曲库移除'
-                '（别的文件夹仍覆盖到的曲目保留）。');
+            content: '将从软件里移除这个文件夹、它的子文件夹，以及其中的 '
+                '$count 条媒体记录（音频、图片、视频、字幕都算；'
+                '别的文件夹仍覆盖到的记录保留）。\n'
+                '磁盘文件不会被删除，之后可以重新导入。');
         if (ok == true) {
-          await appState.deleteFolder(folder.id!);
+          await appState.deleteFolderDeep(folder.id!);
         }
         break;
     }
   }
 
   /// 询问是否递归同步到子文件夹曲目；null=取消, true=同步, false=仅当前文件夹
-  Future<bool?> _confirmSync(BuildContext context) {
+  Future<bool?> _confirmSync(BuildContext context, {bool removing = false}) {
     return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('同步操作'),
-        content: const Text(
-          '是否把该标签同步到文件夹内所有曲目及子文件夹？',
-          style: TextStyle(fontSize: 13),
+        content: Text(
+          removing ? '是否把该标签从文件夹内所有曲目及子文件夹中一并移除？' : '是否把该标签同步到文件夹内所有曲目及子文件夹？',
+          style: const TextStyle(fontSize: 13),
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
               child: const Text('取消')),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('仅标记文件夹')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(removing ? '仅移除文件夹标签' : '仅标记文件夹'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('同步到所有曲目')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(removing ? '同步移除所有曲目' : '同步到所有曲目'),
+          ),
         ],
       ),
     );
@@ -455,6 +602,7 @@ class _TrackTile extends StatelessWidget {
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'play', child: Text('播放', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'subtitle', child: Text('替换字幕...', style: TextStyle(fontSize: 13))),
+                PopupMenuItem(value: 'subtitle_assign', child: Text('字幕归属...', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'clear_subtitle', child: Text('清除字幕', style: TextStyle(fontSize: 13))),
                 PopupMenuItem(value: 'tags', child: Text('添加标签...', style: TextStyle(fontSize: 13))),
               ],
@@ -473,6 +621,14 @@ class _TrackTile extends StatelessWidget {
       case 'subtitle':
         if (track.id != null) {
           await showReplaceSubtitleDialog(context, track.id!);
+        }
+        break;
+      case 'subtitle_assign':
+        if (track.id != null) {
+          await SubtitleAssignDialog.show(context,
+              state: appState,
+              audioId: track.id!,
+              audioLabel: track.title ?? track.filename);
         }
         break;
       case 'clear_subtitle':

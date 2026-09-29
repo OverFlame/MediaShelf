@@ -8,11 +8,15 @@ class VirtualFolder {
   final int? parentId;
   final int? workId;
 
+  /// 库归属：audio / image / video，各自一棵树（BUILD_GUIDE 第 18.2 节）
+  final String library;
+
   const VirtualFolder({
     this.id,
     required this.name,
     this.parentId,
     this.workId,
+    this.library = 'audio',
   });
 
   Map<String, dynamic> toMap() => {
@@ -20,6 +24,7 @@ class VirtualFolder {
         'name': name,
         'parent': parentId,
         'work_id': workId,
+        'library': library,
       };
 
   factory VirtualFolder.fromMap(Map<String, dynamic> map) => VirtualFolder(
@@ -27,6 +32,7 @@ class VirtualFolder {
         name: map['name'] as String,
         parentId: map['parent'] as int?,
         workId: map['work_id'] as int?,
+        library: (map['library'] as String?) ?? 'audio',
       );
 }
 
@@ -56,20 +62,31 @@ class FolderDao {
   // ═══ 文件夹 CRUD ═══
 
   Future<VirtualFolder> create(String name,
-      {int? parentId, int? workId}) async {
+      {int? parentId, int? workId, String library = 'audio'}) async {
     final id = await _db.insert('folders', {
       'name': name,
       'parent': parentId,
       'work_id': workId,
+      'library': library,
     });
     logInfo('FolderDao',
-        'Created folder: id=$id name="$name" parent=$parentId work=$workId');
-    return VirtualFolder(id: id, name: name, parentId: parentId, workId: workId);
+        'Created folder: id=$id name="$name" parent=$parentId work=$workId lib=$library');
+    return VirtualFolder(
+        id: id,
+        name: name,
+        parentId: parentId,
+        workId: workId,
+        library: library);
   }
 
-  Future<List<VirtualFolder>> listRoot() async {
-    final rows = await _db.query('folders',
-        where: 'parent IS NULL', orderBy: 'name');
+  /// 顶层文件夹。给了 library 就只返回该库的根。
+  Future<List<VirtualFolder>> listRoot({String? library}) async {
+    final rows = library == null
+        ? await _db.query('folders', where: 'parent IS NULL', orderBy: 'name')
+        : await _db.query('folders',
+            where: 'parent IS NULL AND library = ?',
+            whereArgs: [library],
+            orderBy: 'name');
     return rows.map(VirtualFolder.fromMap).toList();
   }
 
@@ -79,8 +96,11 @@ class FolderDao {
     return rows.map(VirtualFolder.fromMap).toList();
   }
 
-  Future<List<VirtualFolder>> listAll() async {
-    final rows = await _db.query('folders', orderBy: 'name');
+  Future<List<VirtualFolder>> listAll({String? library}) async {
+    final rows = library == null
+        ? await _db.query('folders', orderBy: 'name')
+        : await _db.query('folders',
+            where: 'library = ?', whereArgs: [library], orderBy: 'name');
     return rows.map(VirtualFolder.fromMap).toList();
   }
 
@@ -100,10 +120,15 @@ class FolderDao {
     return rows.map(VirtualFolder.fromMap).toList();
   }
 
-  /// 未归类（work_id 为空）的顶层文件夹
-  Future<List<VirtualFolder>> listUnassignedRoots() async {
+  /// 未归类（work_id 为空）的顶层文件夹。
+  ///
+  /// 默认只看音频库：图片与视频各有一棵树，不带库条件会让它们的根混进「未归类」。
+  Future<List<VirtualFolder>> listUnassignedRoots(
+      {String library = 'audio'}) async {
     final rows = await _db.query('folders',
-        where: 'work_id IS NULL AND parent IS NULL', orderBy: 'name');
+        where: 'work_id IS NULL AND parent IS NULL AND library = ?',
+        whereArgs: [library],
+        orderBy: 'name');
     return rows.map(VirtualFolder.fromMap).toList();
   }
 
@@ -146,6 +171,49 @@ class FolderDao {
       final count = await txn.delete('folders', where: 'id = ?', whereArgs: [id]);
       logInfo('FolderDao', 'Deleted folder id=$id (affected $count row(s))');
       return count;
+    });
+  }
+
+  /// 一次删掉整棵子树的文件夹行（CASCADE 清 folder_paths 等关联）。
+  ///
+  /// [ids] 必须自己闭合：要么是单一文件夹，要么调用方已补齐全部后代。
+  /// folders.parent 是自引用外键且不带 ON DELETE，所以按深度从深到浅逐行删，
+  /// 否则父行先走会让还没删的子行悬空，外键校验直接报错。
+  Future<int> deleteMany(Iterable<int> ids) async {
+    final list = ids.toSet().toList();
+    if (list.isEmpty) return 0;
+    return _db.transaction((txn) async {
+      final ph = List.filled(list.length, '?').join(',');
+      // 集合外的子级上移为根级。正常调用不会出现（[ids] 闭合），保险用。
+      await txn.rawUpdate(
+          'UPDATE folders SET parent = NULL WHERE parent IN ($ph) '
+          'AND id NOT IN ($ph)',
+          [...list, ...list]);
+      final rows = await txn.query('folders',
+          columns: ['id', 'parent'], where: 'id IN ($ph)', whereArgs: list);
+      final parentOf = <int, int?>{
+        for (final r in rows) r['id'] as int: r['parent'] as int?,
+      };
+      int depthOf(int id) {
+        var depth = 0;
+        var cur = parentOf[id];
+        final seen = <int>{};
+        while (cur != null && seen.add(cur)) {
+          depth++;
+          cur = parentOf[cur];
+        }
+        return depth;
+      }
+
+      final ordered = parentOf.keys.toList()
+        ..sort((a, b) => depthOf(b).compareTo(depthOf(a)));
+      var deleted = 0;
+      for (final id in ordered) {
+        deleted += await txn.delete('folders', where: 'id = ?', whereArgs: [id]);
+      }
+      logInfo('FolderDao',
+          'Deleted ${list.length} folder(s) in subtree (affected $deleted row(s))');
+      return deleted;
     });
   }
 
@@ -192,16 +260,19 @@ class FolderDao {
         where: 'folder_id = ? AND path = ?', whereArgs: [folderId, path]);
   }
 
-  Future<VirtualFolder?> getByPath(String path) async {
-    // 同一个路径可能挂在多个文件夹上（migrations[4] 之前建的数据）。
+  /// 按路径反查文件夹。给了 library 就只在该库的树里找。
+  Future<VirtualFolder?> getByPath(String path, {String? library}) async {
+    // 同一个路径可能挂在多个文件夹上（老数据，或同一个目录同时进了两个库）。
     // 不给顺序时返回哪一行由 SQLite 扫描顺序决定，导入时命中的文件夹会来回跳，
     // 所以固定取 id 最小的那个。
+    final libSql = library == null ? '' : ' AND f.library = ?';
+    final args = library == null ? <Object?>[path] : <Object?>[path, library];
     final rows = await _db.rawQuery('''
       SELECT f.* FROM folders f
       INNER JOIN folder_paths fp ON f.id = fp.folder_id
-      WHERE fp.path = ?
+      WHERE fp.path = ?$libSql
       ORDER BY f.id
-    ''', [path]);
+    ''', args);
     if (rows.isEmpty) return null;
     return VirtualFolder.fromMap(rows.first);
   }
@@ -210,26 +281,28 @@ class FolderDao {
   ///
   /// 原来的写法是「先 getByPath、再 create、再 addPath」三条独立语句：并发调用时
   /// 两边都查不到、都新建，同一个目录于是变成两个文件夹，各挂一条相同的 path。
-  /// 已存在的记录会顺带把 parent / work 对齐到本次期望值。
+  /// 已存在的记录会顺带把 parent / work / library 对齐到本次期望值。
   Future<VirtualFolder> ensureByPath(
     String path, {
     required String name,
     int? parentId,
     int? workId,
+    String library = 'audio',
   }) async {
     return _db.transaction((txn) async {
       final rows = await txn.rawQuery('''
         SELECT f.* FROM folders f
         INNER JOIN folder_paths fp ON f.id = fp.folder_id
-        WHERE fp.path = ?
+        WHERE fp.path = ? AND f.library = ?
         ORDER BY f.id
-      ''', [path]);
+      ''', [path, library]);
 
       if (rows.isNotEmpty) {
         final existing = VirtualFolder.fromMap(rows.first);
         final patch = <String, Object?>{};
         if (existing.parentId != parentId) patch['parent'] = parentId;
         if (existing.workId != workId) patch['work_id'] = workId;
+        if (existing.library != library) patch['library'] = library;
         if (patch.isNotEmpty) {
           await txn.update('folders', patch,
               where: 'id = ?', whereArgs: [existing.id]);
@@ -239,6 +312,7 @@ class FolderDao {
           name: existing.name,
           parentId: parentId,
           workId: workId,
+          library: library,
         );
       }
 
@@ -246,6 +320,7 @@ class FolderDao {
         'name': name,
         'parent': parentId,
         'work_id': workId,
+        'library': library,
       });
       await txn.insert('folder_paths', {
         'folder_id': id,
@@ -253,9 +328,13 @@ class FolderDao {
         'recursive': 0,
       });
       logInfo('FolderDao',
-          'ensureByPath 新建文件夹 id=$id name="$name" path="$path"');
+          'ensureByPath 新建文件夹 id=$id name="$name" path="$path" lib=$library');
       return VirtualFolder(
-          id: id, name: name, parentId: parentId, workId: workId);
+          id: id,
+          name: name,
+          parentId: parentId,
+          workId: workId,
+          library: library);
     });
   }
 
@@ -264,8 +343,10 @@ class FolderDao {
     required String path,
     int? parentId,
     int? workId,
+    String library = 'audio',
   }) async {
-    final folder = await create(name, parentId: parentId, workId: workId);
+    final folder = await create(name,
+        parentId: parentId, workId: workId, library: library);
     await addPath(folder.id!, path);
     return folder;
   }

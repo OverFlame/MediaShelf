@@ -37,7 +37,7 @@ void main() {
 
   Future<void> seed(String dir) async {
     await Directory(p.join(dir, 'covers')).create(recursive: true);
-    await File(p.join(dir, 'audioshelf.db')).writeAsString('DB-CONTENT');
+    await File(p.join(dir, 'mediashelf.db')).writeAsString('DB-CONTENT');
     await File(p.join(dir, 'settings.json')).writeAsString('{"theme":"dark"}');
     await File(p.join(dir, 'covers', 'track_1.jpg')).writeAsString('IMG');
   }
@@ -54,7 +54,7 @@ void main() {
     expect((await DataDirService.instance.dataDir), p.normalize(newD));
     expect(File(pointerPath()).readAsStringSync().trim(), p.normalize(newD));
 
-    expect(File(p.join(newD, 'audioshelf.db')).readAsStringSync(), 'DB-CONTENT');
+    expect(File(p.join(newD, 'mediashelf.db')).readAsStringSync(), 'DB-CONTENT');
     expect(File(p.join(newD, 'settings.json')).readAsStringSync(),
         '{"theme":"dark"}');
     expect(File(p.join(newD, 'covers', 'track_1.jpg')).readAsStringSync(), 'IMG');
@@ -66,7 +66,7 @@ void main() {
     await seed(defaultDir);
     final newD = p.join(tmp.path, 'occupied');
     await Directory(newD).create(recursive: true);
-    await File(p.join(newD, 'audioshelf.db')).writeAsString('OTHER-DB');
+    await File(p.join(newD, 'mediashelf.db')).writeAsString('OTHER-DB');
 
     await expectLater(
       DataDirService.instance.migrateTo(newD),
@@ -77,7 +77,7 @@ void main() {
         reason: '失败时不能留下指针文件');
     expect(await DataDirService.instance.dataDir, p.normalize(defaultDir),
         reason: '失败后仍应使用旧目录');
-    expect(File(p.join(newD, 'audioshelf.db')).readAsStringSync(), 'OTHER-DB',
+    expect(File(p.join(newD, 'mediashelf.db')).readAsStringSync(), 'OTHER-DB',
         reason: '已有数据不能被覆盖');
   });
 
@@ -91,7 +91,7 @@ void main() {
     final second = await DataDirService.instance.migrateTo(newD);
 
     expect(second, p.normalize(newD));
-    expect(File(p.join(newD, 'audioshelf.db')).readAsStringSync(), 'DB-CONTENT');
+    expect(File(p.join(newD, 'mediashelf.db')).readAsStringSync(), 'DB-CONTENT');
   });
 
   test('目标即当前目录：直接返回，不做复制', () async {

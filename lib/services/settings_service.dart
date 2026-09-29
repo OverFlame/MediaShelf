@@ -82,6 +82,34 @@ class SettingsService {
     await _save();
   }
 
+  // ── 默认排除的标签 ──
+
+  /// 用户排除（NOT）的标签 id。返回 null 表示还没写过，首次启动按规则填。
+  List<int>? get excludedTagIds {
+    final raw = _data['excluded_tag_ids'];
+    if (raw is! List) return null;
+    return raw.whereType<int>().toList();
+  }
+
+  Future<void> setExcludedTagIds(List<int> ids) async {
+    _data['excluded_tag_ids'] = ids;
+    await _save();
+  }
+
+  // ── 标签面板折叠的命名空间 ──
+
+  /// 收起来的命名空间。返回 null 表示用户还没动过，首次启动按规则折叠扩展名。
+  List<String>? get collapsedTagNamespaces {
+    final raw = _data['collapsed_namespaces'];
+    if (raw is! List) return null;
+    return raw.whereType<String>().toList();
+  }
+
+  Future<void> setCollapsedTagNamespaces(List<String> namespaces) async {
+    _data['collapsed_namespaces'] = namespaces;
+    await _save();
+  }
+
   // ── 曲目排序 ──
   String get sortKey => (_data['sort_key'] as String?) ?? 'filename';
 
@@ -94,6 +122,39 @@ class SettingsService {
 
   Future<void> setSortDescending(bool desc) async {
     _data['sort_desc'] = desc;
+    await _save();
+  }
+
+  // ── 图片 / 视频库排序 ──
+  //
+  // 字段：`name`（自然序）/ `mtime` / `size` / `added`。与音频的 `sort_key`
+  // 分开存：三个库的关注点不一样，改视频的顺序不该动图片的顺序。
+
+  String get imageSortKey => (_data['image_sort_key'] as String?) ?? 'name';
+
+  Future<void> setImageSortKey(String key) async {
+    _data['image_sort_key'] = key;
+    await _save();
+  }
+
+  bool get imageSortDescending => (_data['image_sort_desc'] as bool?) ?? false;
+
+  Future<void> setImageSortDescending(bool desc) async {
+    _data['image_sort_desc'] = desc;
+    await _save();
+  }
+
+  String get videoSortKey => (_data['video_sort_key'] as String?) ?? 'name';
+
+  Future<void> setVideoSortKey(String key) async {
+    _data['video_sort_key'] = key;
+    await _save();
+  }
+
+  bool get videoSortDescending => (_data['video_sort_desc'] as bool?) ?? false;
+
+  Future<void> setVideoSortDescending(bool desc) async {
+    _data['video_sort_desc'] = desc;
     await _save();
   }
 
@@ -137,6 +198,58 @@ class SettingsService {
 
   Future<void> setCoverCacheLimitMB(int mb) async {
     _data['cover_cache_mb'] = mb.clamp(0, 8192);
+    await _save();
+  }
+
+  // ── 图片视图 ──
+
+  /// 网格列数，默认 4
+  int get gridColumns => (_data['grid_columns'] as int?) ?? 4;
+
+  Future<void> setGridColumns(int cols) async {
+    _data['grid_columns'] = cols.clamp(2, 10);
+    await _save();
+  }
+
+  /// 图片视图模式：grid / list，默认 grid
+  String get viewMode => (_data['view_mode'] as String?) ?? 'grid';
+
+  Future<void> setViewMode(String mode) async {
+    _data['view_mode'] = mode == 'list' ? 'list' : 'grid';
+    await _save();
+  }
+
+  // ── 播放设置 ──
+
+  /// 循环模式名：off / all / one
+  String get repeatModeName => (_data['repeat_mode'] as String?) ?? 'all';
+
+  Future<void> setRepeatModeName(String name) async {
+    _data['repeat_mode'] = switch (name) {
+      'off' => 'off',
+      'one' => 'one',
+      _ => 'all',
+    };
+    await _save();
+  }
+
+  /// 随机播放开关
+  bool get shuffle => (_data['shuffle'] as bool?) ?? false;
+
+  Future<void> setShuffle(bool on) async {
+    _data['shuffle'] = on;
+    await _save();
+  }
+
+  /// 播放速度，钳制在 0.5 与 2.0 之间
+  double get playSpeed {
+    final v = _data['play_speed'];
+    final d = v is num ? v.toDouble() : 1.0;
+    return d.clamp(0.5, 2.0).toDouble();
+  }
+
+  Future<void> setPlaySpeed(double speed) async {
+    _data['play_speed'] = speed.clamp(0.5, 2.0).toDouble();
     await _save();
   }
 }
