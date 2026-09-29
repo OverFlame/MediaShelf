@@ -87,6 +87,17 @@ class PlayerController extends ChangeNotifier {
   /// 播放速度变化后回调（用于持久化设置）
   void Function(double speed)? onSpeedChanged;
 
+  /// 每次要播一首曲目时问一次「从哪儿接着放」，返回 [Duration.zero] 表示从头。
+  ///
+  /// 引擎的 play 没有起始位置参数，所以非零值由控制器 play 之后再 seek。
+  Duration Function(TrackItem track)? resumeFrom;
+
+  /// 播放中的位置变化（约每 250 毫秒一次，暂停时不报）
+  void Function(TrackItem track, Duration position)? onPositionChanged;
+
+  /// 一首正常播完、即将切下一首时回调
+  void Function(TrackItem track)? onTrackCompleted;
+
   Timer? _ticker;
 
   /// 初始化共享 Future：并发调用只初始化一次
@@ -112,6 +123,9 @@ class PlayerController extends ChangeNotifier {
     if (h == null) return;
     try {
       _position = _engine.getPosition(h);
+      if (_playing && hasTrack) {
+        onPositionChanged?.call(_queue[_index], _position);
+      }
       notifyListeners();
     } catch (_) {
       // handle 已失效（例如刚播完），忽略
@@ -176,6 +190,11 @@ class PlayerController extends ChangeNotifier {
       _loopSegment = null;
     }
     final segment = _loopSegment;
+    // 续播只在没有选区时问起：选区循环有自己的起点
+    var resume = segment == null
+        ? (resumeFrom?.call(track) ?? Duration.zero)
+        : Duration.zero;
+    if (resume < Duration.zero) resume = Duration.zero;
     _handle = segment == null
         ? _engine.play(newSource, volume: _volume)
         : _engine.play(
@@ -185,11 +204,24 @@ class PlayerController extends ChangeNotifier {
             loopingStartAt: Duration(milliseconds: segment.startMs),
             loopingEndAt: Duration(milliseconds: segment.endMs),
           );
+    if (resume > Duration.zero) {
+      final h = _handle;
+      if (h == null) {
+        resume = Duration.zero;
+      } else {
+        try {
+          _engine.seek(h, resume);
+        } catch (e) {
+          logWarn('Player', '续播定位失败，从头播: $e');
+          resume = Duration.zero;
+        }
+      }
+    }
     _applySpeed();
     _listenEnd();
     _playing = true;
     _position = segment == null
-        ? Duration.zero
+        ? resume
         : Duration(milliseconds: segment.startMs);
     logInfo('Player', '播放: ${track.path}');
     onTrackStarted?.call(track);
@@ -232,6 +264,8 @@ class PlayerController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final finished = hasTrack ? _queue[_index] : null;
+    if (finished != null) onTrackCompleted?.call(finished);
     await next(auto: true);
   }
 
@@ -549,6 +583,13 @@ class PlayerController extends ChangeNotifier {
     _index = _queue.isEmpty ? -1 : startIndex.clamp(0, _queue.length - 1);
     if (duration != null) _duration = duration;
     if (_shuffle) _rebuildOrder();
+  }
+
+  /// 直接改当前位置，不触碰原生引擎。仅供用例。
+  @visibleForTesting
+  void debugSetPosition(Duration position) {
+    _position = position;
+    notifyListeners();
   }
 
   Future<void> stop() async {
