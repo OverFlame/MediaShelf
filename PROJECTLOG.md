@@ -1176,3 +1176,53 @@ P2-23 的处置：`lib/widgets/color_picker_dialog.dart` 在 `lib` 里确实没�
 - 给 `lib/widgets/folder_panel.dart` 加 `import 'dialogs.dart';` 之后要留意与本地名字冲突，`flutter analyze` 会指出来。
 
 下一步：如果还要继续，从 P2-25 到 27 的重复实现收拢做起，再考虑给主要交互控件补 `Semantics`。
+
+## 2026-09-29 四项交互改进（字幕页、音频多选、续播与已播时间）
+
+用户提出的四件事，按「先写红用例、再改、再变异验证」的顺序做，四个都落进
+了提交 `fa962d0`、`ca021ad`、`65f77e3`。
+
+| 需求 | 根因 | 处置 |
+| --- | --- | --- |
+| 正在播放的句子要居中，不要贴在底下 | `lib/pages/subtitle_page.dart` 的 `_scrollTo` 目标多减了一次 `视口高/2 - 行高/2`。列表上下内边距各半个视口，第 index 句本来就在正中，再减这一下就把它推到「视口底部往上 28px」 | 目标改成 `index * _itemExtent`；视口高 448 时旧实现差 196px（用例实测 468 对 272） |
+| 滑走之后的保留时间长一点 | `_resumeTimer` 固定 3 秒 | 提到 8 秒（`_resumeDelay`），用例把「8 秒内不动、之后回正」都断言住 |
+| 不在本句的字幕再透明一些 | 非当前句 `Colors.white38` | 降到 `Colors.white30` |
+| 手机上多选之后退出逻辑不清晰 | 工具条是一条固定 44 高的 Row，宽度不够时右侧被裁掉；退出多选只是个勾选图标，触屏看不到 tooltip | 工具条改 `LayoutBuilder`，窄屏（<560）用图标按钮加 tooltip 并套横向滚动；「退出多选」变成显式按钮；整页套 `PopScope`，返回键先退多选 |
+| 音频磁贴的选择栏没有删除标签的入口 | 同一条 Row 溢出：`批量移除标签` 排在右侧，被挤出屏幕 | 同上；另外补了 `ValueKey`，用例逐个断言五个入口都落在 360 宽屏幕内 |
+| 记住音频播到哪儿了，下次继续播 | `media` 表没有任何位置列，`play_history` 只有时间戳 | schema 升到 v9，加 `play_position_ms`；`lib/services/play_position.dart` 管取舍与节流；播放器加三个钩子，续播是 play 之后再 seek（引擎的 play 没有起始位置参数） |
+| 磁贴右侧显示已播时间与总时长 | 原来只显示总时长 | 改成「已播 / 总时长」，落盘成功后内存里的曲目也换成新位置，磁贴当场刷新 |
+
+验证：
+
+- 新增用例 20 条：`test/widget/subtitle_page_test.dart` 3 条、
+  `test/widget/folder_browser_selection_test.dart` 4 条、
+  `test/services/play_position_test.dart` 10 条、
+  `test/state/app_state_play_position_test.dart` 4 条、
+  `test/widget/track_tile_position_test.dart` 2 条，另在
+  `test/db_migration_test.dart` 补 2 条（v8 升 v9 的迁移、位置字段往返）。
+- `flutter test`：537 用例全过（本批开始前是 512）。`flutter analyze`：5 条既有 info。
+- 变异验证五处，都如期变红：`_scrollTo` 的目标、字幕透明度与保留时间（`git stash` 字幕页后三条用例报 468 对 272、0.384 大于 0.38、140 而不是 0）、
+  工具条宽度判断（`narrow` 写死 false 时用例抓到 `RenderFlex overflowed by 87 pixels`）、
+  `PopScope` 的 `canPop`（写死 true 时 `Navigator.maybePop` 返回 false，多选没退出）、
+  去掉 v9 迁移（`Expected: contains 'play_position_ms'`）、去掉 AppState 的三处接线
+  （`Null check operator used on a null value`）、磁贴退回只显示总时长（文案断言红）。
+- 迁移夹具要一起改：`test/services/migration_service_test.dart` 的 `buildV7Dst` 先按当前
+  建表语句建满再拆掉 v8 的两列模拟 v7，现在当前建表语句已经带 `play_position_ms`，
+  夹具不拆它，v9 的 `ALTER TABLE` 就会撞上已存在的列（`duplicate column name`）。
+
+踩坑：
+
+- `PopScope` 拦住返回时，`Navigator.maybePop` 返回的是 **true**（这一页把返回消费掉了），
+  不是 false。已装 Flutter 的 `navigator.dart` 里先判 `willPop()`，`doNotPop` 分支
+  `return true`。用例一度按 false 断言，改的是用例不是实现。
+- `testWidgets` 的方法体跑在假时钟里，真实文件 IO 的 Future 不会完成：探针脚本里
+  `Directory.systemTemp.createTemp` 写在方法体里直接把用例挂死，IO 必须放 `setUp`。
+- 自动滚动的动画要两帧才推进：`AnimationController` 的第一帧只确立 t0（elapsed 为 0），
+  一次 `pump` 之后读到的 offset 还是旧值。用例里用 `_settleScroll`（两次 `pump(400ms)`）采样。
+
+未验证的部分：续播的 `_engine.seek` 只在真机上才会执行（用例环境没有原生 SoLoud 引擎，
+`_loadAndPlay` 在未初始化时直接返回），所以「停下来再打开是否真的从原位继续」需要在
+装了原生库的机器上手动确认一次。磁贴上的时间文案与落盘链路已用假引擎钩子覆盖。
+
+下一步可选：`play_position_ms` 目前只在播放中每前进 5 秒落一次盘，退出应用时最多丢
+5 秒；若要更精确，可以在暂停与退出时也强制写一次。
