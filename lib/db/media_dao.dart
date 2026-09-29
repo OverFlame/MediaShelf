@@ -219,6 +219,14 @@ class MediaDao {
     await updateRow(id, {'cover_path': path});
   }
 
+  /// 记住这一首播到的位置（毫秒），0 表示从头播。
+  ///
+  /// 只在音频行上写，避免 id 撞到图片/视频行。
+  Future<void> setPlayPosition(int id, int positionMs) async {
+    await updateRow(id, {'play_position_ms': positionMs},
+        type: MediaType.audio);
+  }
+
   Future<int> deleteByPaths(Iterable<String> paths, {MediaType? type}) async {
     final list = paths.toList();
     if (list.isEmpty) return 0;

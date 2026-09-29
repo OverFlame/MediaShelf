@@ -16,6 +16,7 @@ import '../services/cover_service.dart';
 import '../services/data_dir_service.dart';
 import '../services/file_scanner.dart';
 import '../services/import_service.dart';
+import '../services/play_position.dart';
 import '../services/playlist_writer.dart';
 import '../services/reading_progress_service.dart';
 import '../services/segment_service.dart';
@@ -76,6 +77,9 @@ class AppState extends ChangeNotifier {
   // ── 中间栏内容 ──
   List<VirtualFolder> _centerFolders = [];
   List<VirtualFolder> get centerFolders => _centerFolders;
+  /// 播放位置落盘的节流（见 lib/services/play_position.dart）
+  final PlayPositionThrottle _positionThrottle = PlayPositionThrottle();
+
   List<TrackItem> _tracks = [];
   List<TrackItem> get tracks => _tracks;
 
@@ -363,6 +367,9 @@ class AppState extends ChangeNotifier {
     // 漏掉这一步时缩略图一张都生成不出来（网格只剩占位图标）。
     await ThumbnailService.instance.init();
     player.onTrackStarted = _onTrackStarted;
+    player.resumeFrom = _resumePositionOf;
+    player.onPositionChanged = _onPlayPosition;
+    player.onTrackCompleted = _onTrackCompleted;
     player.onRepeatModeChanged = _persistRepeatMode;
     player.onShuffleChanged = _persistShuffle;
     player.onSpeedChanged = _persistSpeed;
@@ -2804,6 +2811,52 @@ class AppState extends ChangeNotifier {
         .catchError((Object e) {
       logError('AppState', 'recordPlay 失败: $e');
     }));
+  }
+
+  /// 续播位置：太靠前、或快听完的位置都从头开始（见 PlayPositionRules）。
+  Duration _resumePositionOf(TrackItem track) =>
+      PlayPositionRules.resumeOf(track.playPositionMs, track.durationMs);
+
+  /// 播放中每 250 毫秒报一次位置，按前进量节流后才写库。
+  void _onPlayPosition(TrackItem track, Duration position) {
+    final id = track.id;
+    if (id == null) return;
+    if (!_positionThrottle.shouldSave(position)) return;
+    _savePlayPosition(id, position.inMilliseconds);
+  }
+
+  /// 一首播到结尾：位置清零，下次从头播。
+  void _onTrackCompleted(TrackItem track) {
+    final id = track.id;
+    if (id == null) return;
+    _positionThrottle.reset();
+    _savePlayPosition(id, 0);
+  }
+
+  void _savePlayPosition(int mediaId, int positionMs) {
+    unawaited(_mediaDao.setPlayPosition(mediaId, positionMs).then((_) {
+      // 磁贴右侧的「已播时间」跟着刷新
+      _applyPlayPosition(mediaId, positionMs);
+    }).catchError((Object e) {
+      logError('AppState', '播放位置落盘失败: $e');
+    }));
+  }
+
+  /// 把新位置同步进内存里的曲目列表（不重新查库）。
+  void _applyPlayPosition(int mediaId, int positionMs) {
+    var changed = false;
+    final next = <TrackItem>[];
+    for (final track in _tracks) {
+      if (track.id == mediaId && track.playPositionMs != positionMs) {
+        changed = true;
+        next.add(track.copyWith(playPositionMs: positionMs));
+      } else {
+        next.add(track);
+      }
+    }
+    if (!changed) return;
+    _tracks = next;
+    notifyListeners();
   }
 
   Future<void> loadRecentTracks() => _reloadRecentTracks(_recentLoadGeneration);

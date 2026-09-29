@@ -689,7 +689,9 @@ class _TrackTile extends StatelessWidget {
               ),
             if (track.durationMs != null)
               Text(
-                formatDuration(Duration(milliseconds: track.durationMs!)),
+                // 已播时间 / 总时长：没播过的显示 0:00，播过的能一眼看出听到哪里
+                '${formatDuration(Duration(milliseconds: track.playPositionMs))}'
+                ' / ${formatDuration(Duration(milliseconds: track.durationMs!))}',
                 style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12),
               ),
             PopupMenuButton<String>(

@@ -7,7 +7,7 @@ import 'package:sqflite_common/sqlite_api.dart';
 class Tables {
   Tables._();
 
-  static const int version = 8;
+  static const int version = 9;
 
   static const List<String> createStatements = [
     // 作品集：音频侧是系列，视频侧是剧集，图片侧是漫画系列
@@ -40,6 +40,9 @@ class Tables {
       artist        TEXT,
       album         TEXT,
       duration_ms   INTEGER,
+      -- 上一次播到的位置（毫秒）：磁贴右侧的已播时间与下次续播都用它，
+      -- 取舍规则见 lib/services/play_position.dart
+      play_position_ms INTEGER NOT NULL DEFAULT 0,
       width         INTEGER,
       height        INTEGER,
       hash          TEXT,
@@ -272,6 +275,12 @@ class Tables {
         updated_at INTEGER NOT NULL
       )
       ''',
+    ],
+
+    // v9：记住音频上次播到的位置（磁贴右侧的已播时间，下次从这里接着播）
+    9: [
+      'ALTER TABLE media ADD COLUMN '
+          'play_position_ms INTEGER NOT NULL DEFAULT 0',
     ],
   };
 

@@ -19,6 +19,10 @@ class TrackItem {
   final String? coverPath;
   final int addedAt;
 
+  /// 上一次播到的位置（毫秒）。0 表示没播过，续播取舍见
+  /// lib/services/play_position.dart。
+  final int playPositionMs;
+
   const TrackItem({
     this.id,
     required this.path,
@@ -33,6 +37,7 @@ class TrackItem {
     this.subtitlePath,
     this.coverPath,
     required this.addedAt,
+    this.playPositionMs = 0,
   });
 
   /// 显示标题：直接显示源文件名（含扩展名）
@@ -45,6 +50,7 @@ class TrackItem {
     String? artist,
     String? album,
     int? durationMs,
+    int? playPositionMs,
   }) {
     return TrackItem(
       id: id,
@@ -60,6 +66,7 @@ class TrackItem {
       subtitlePath: subtitlePath ?? this.subtitlePath,
       coverPath: coverPath ?? this.coverPath,
       addedAt: addedAt,
+      playPositionMs: playPositionMs ?? this.playPositionMs,
     );
   }
 
@@ -77,6 +84,7 @@ class TrackItem {
         'subtitle_path': subtitlePath,
         'cover_path': coverPath,
         'added_at': addedAt,
+        'play_position_ms': playPositionMs,
       };
 
   factory TrackItem.fromMap(Map<String, dynamic> map) => TrackItem(
@@ -93,6 +101,7 @@ class TrackItem {
         subtitlePath: map['subtitle_path'] as String?,
         coverPath: map['cover_path'] as String?,
         addedAt: map['added_at'] as int,
+        playPositionMs: map['play_position_ms'] as int? ?? 0,
       );
 }
 

@@ -300,8 +300,8 @@ void main() {
     expect(File(srcB).existsSync(), isTrue);
   });
 
-  /// 造一个 v7 结构的目标库：先按当前建表语句建满，再拆掉 v8 补的两列与
-  /// reading_progress，最后把 user_version 退回 7。
+  /// 造一个 v7 结构的目标库：先按当前建表语句建满，再拆掉 v8 补的两列、
+  /// v9 补的播放位置列与 reading_progress，最后把 user_version 退回 7。
   Future<void> buildV7Dst() async {
     final db = await databaseFactoryFfi.openDatabase(
       dst,
@@ -317,6 +317,7 @@ void main() {
     await db.execute('DROP INDEX IF EXISTS idx_media_subtitle_of');
     await db.execute('ALTER TABLE media DROP COLUMN subtitle_of');
     await db.execute('ALTER TABLE media DROP COLUMN is_default_subtitle');
+    await db.execute('ALTER TABLE media DROP COLUMN play_position_ms');
     await db.execute('DROP TABLE IF EXISTS reading_progress');
     expect(await _userVersion(db), Tables.version,
         reason: '建出来时是当前版本号，下面才退到 7 造旧结构');
@@ -334,9 +335,15 @@ void main() {
     try {
       expect(await _userVersion(db), Tables.version);
       final columns = await _columns(db, 'media');
-      expect(columns, containsAll(<String>['subtitle_of', 'is_default_subtitle']),
-          reason: '迁移服务自己开的库也要跑 v8 的 ALTER TABLE，'
-              '否则库被盖上 v8 的章、结构却停在 v7，应用再打开时不会补');
+      expect(
+          columns,
+          containsAll(<String>[
+            'subtitle_of',
+            'is_default_subtitle',
+            'play_position_ms',
+          ]),
+          reason: '迁移服务自己开的库也要跑 v8 与 v9 的 ALTER TABLE，'
+              '否则库被盖上当前版本号、结构却停在 v7，应用再打开时不会补');
       expect(await _tableNames(db), contains('reading_progress'));
     } finally {
       await db.close();
