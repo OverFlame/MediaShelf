@@ -14,15 +14,8 @@ import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 标签管理的四件事：折叠态持久化、删除标签与关联、批量移除记录、重名查询。
 void main() {
@@ -37,7 +30,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('mediashelf_tag_admin');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

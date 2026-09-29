@@ -20,16 +20,8 @@ import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/theme/app_theme.dart';
 import 'package:mediashelf/widgets/image_grid.dart';
+import '../support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 1×1 的合法 PNG，给缩略图生成器一张能真解码的原图。
 final _pngBytes = base64Decode(
@@ -58,7 +50,7 @@ void main() {
     tmp = await Directory.systemTemp.createTemp('mediashelf_image_grid');
     albumDir = await Directory(p.join(tmp.path, 'media', '相册')).create(recursive: true);
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

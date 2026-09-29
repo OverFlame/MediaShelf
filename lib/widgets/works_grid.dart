@@ -7,9 +7,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/log_util.dart';
 import 'cover_image.dart';
-// dialogs.dart 里那份旧的 showTagPickerDialog 参数更少（没有 filterTagIds），
-// 这里统一用 tag_picker_dialog.dart 的版本。
-import 'dialogs.dart' hide showTagPickerDialog;
+import 'dialogs.dart';
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
 import 'tag_picker_dialog.dart';

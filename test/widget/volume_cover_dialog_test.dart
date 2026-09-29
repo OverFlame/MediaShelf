@@ -18,19 +18,12 @@ import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/volume_cover_dialog.dart';
+import '../support/test_env.dart';
 
 /// 1x1 的合法 PNG，读图尺寸与预览都要真文件。
 const String _tinyPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 卷封面对话框的真实点击验收（BUILD_GUIDE 第 19.2、21.2、21.4 节）。
 void main() {
@@ -48,7 +41,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_cover_dialog');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

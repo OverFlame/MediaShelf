@@ -8,7 +8,7 @@ import '../state/app_state.dart';
 import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
-import 'dialogs.dart' hide showTagPickerDialog;
+import 'dialogs.dart';
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
 import 'subtitle_assign_dialog.dart';

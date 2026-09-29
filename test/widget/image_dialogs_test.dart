@@ -19,15 +19,8 @@ import 'package:mediashelf/widgets/color_picker_dialog.dart';
 import 'package:mediashelf/widgets/filter_dialog.dart';
 import 'package:mediashelf/widgets/move_folder_dialog.dart';
 import 'package:mediashelf/widgets/tag_picker_dialog.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 测试用的宿主：一个按钮打开被测对话框，把返回值交回测试闭包。
 ///
@@ -80,7 +73,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_img_dialogs');
-    PathProviderPlatform.instance = _FakePathProvider(p.join(tmp.path, 'support'));
+    PathProviderPlatform.instance = FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

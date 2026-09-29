@@ -16,15 +16,8 @@ import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/tag_panel.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 标签面板：命名空间折叠、规则标签保护、新建标签的联想与重名提醒。
 void main() {
@@ -44,7 +37,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_tag_panel');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

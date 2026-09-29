@@ -15,16 +15,8 @@ import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/player_bar.dart';
 import 'package:mediashelf/widgets/segment_panel.dart';
+import '../support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 收藏选段面板的界面交互测试（BUILD_GUIDE 第 24.3 节）。
 ///
@@ -42,7 +34,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('audioshelf_segment_ui');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

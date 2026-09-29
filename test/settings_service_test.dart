@@ -8,16 +8,8 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
+import 'support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +20,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_settings');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     // DataDirService.defaultDir() = <applicationSupport>/AudioShelf

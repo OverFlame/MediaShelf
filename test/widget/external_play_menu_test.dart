@@ -17,15 +17,8 @@ import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/folder_browser.dart';
 import 'package:mediashelf/widgets/works_grid.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 只为了占住 Process 的位置。exitCode 必须给 0：
 /// VideoLauncher 现在会看退出码，非 0 或抛异常都算「外链播放失败」。
@@ -64,7 +57,7 @@ void main() {
     tmp = await Directory.systemTemp.createTemp('audioshelf_ext_play');
     media = await Directory(p.join(tmp.path, 'media')).create(recursive: true);
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

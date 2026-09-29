@@ -11,16 +11,8 @@ import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/import_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import 'support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 导入守卫的回归测试（报告第 7、8 项）。
 ///
@@ -37,7 +29,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_import');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

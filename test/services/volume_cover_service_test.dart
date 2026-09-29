@@ -10,15 +10,8 @@ import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/volume_cover_service.dart';
 import 'package:mediashelf/utils/crop_math.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -86,7 +79,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_volume_cover');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

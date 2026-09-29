@@ -8,16 +8,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/segment_service.dart';
+import '../support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 收藏选段的服务层测试（BUILD_GUIDE 第 24.3 节）。
 ///
@@ -32,7 +24,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_segment');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

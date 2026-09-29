@@ -13,6 +13,7 @@ import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/utils/filter_expression.dart';
+import 'support/test_env.dart';
 
 /// 建一个空的 v5 库。
 ///
@@ -512,7 +513,7 @@ void main() {
   });
 
   test('DatabaseManager.init 给老行回填 sort_key（补零，修自然序）', () async {
-    PathProviderPlatform.instance = _FakePathProvider(
+    PathProviderPlatform.instance = FakePathProvider(
       p.join(dir.path, 'support'),
     );
     DataDirService.instance.resetCache();
@@ -576,12 +577,3 @@ void main() {
   });
 }
 
-/// 把 getApplicationSupportDirectory() 指到临时目录（回填用例要真开库）。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}

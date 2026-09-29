@@ -15,15 +15,8 @@ import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/theme/app_theme.dart';
 import 'package:mediashelf/widgets/tag_picker_dialog.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 标签选择对话框：按命名空间分组、标题可收起、搜索时忽略折叠、已选计数。
 void main() {
@@ -42,7 +35,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_tag_picker');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

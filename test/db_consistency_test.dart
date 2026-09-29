@@ -13,16 +13,8 @@ import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import 'support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 数据库一致性回归测试（报告第 16、19、20 项）。
 ///
@@ -43,7 +35,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_consistency');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();

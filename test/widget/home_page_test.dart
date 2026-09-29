@@ -26,15 +26,8 @@ import 'package:mediashelf/widgets/image_detail.dart';
 import 'package:mediashelf/widgets/image_grid.dart';
 import 'package:mediashelf/widgets/tag_panel.dart';
 import 'package:mediashelf/widgets/works_grid.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 目录选择打桩：一律当作用户取消，不弹真实对话框、不碰平台通道。
 /// 用例只验证「按钮点得动、点了不抛异常」，不验证真的导入。
@@ -85,7 +78,7 @@ void main() {
     tmp = await Directory.systemTemp.createTemp('mediashelf_home_page');
     albumDir = await Directory(p.join(tmp.path, 'media', '相册'))
         .create(recursive: true);
-    PathProviderPlatform.instance = _FakePathProvider(p.join(tmp.path, 'support'));
+    PathProviderPlatform.instance = FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();
