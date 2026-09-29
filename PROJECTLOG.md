@@ -1131,3 +1131,48 @@
 - `ReadingProgressService.dispose` 原本等 `flush()` 完成才置 `_disposed`。调用方是 fire-and-forget 时，紧接着的一次 `record` 会穿过 `_ensureUsable()` 打到已关闭的连接上。
 
 下一步：继续修 P2 剩下的批次，先做「重复与死代码」与「无障碍与国际化」两组。
+
+## 2026-09-29 只读代码质量审查与缺陷修复（P2 批次 B 到 D）
+
+承接上一节。这一节覆盖批次 B、批次 C 前半、批次 D，以及一次重复实现的合并。
+
+动作：
+
+| 编号 | 缺陷 | 修复 |
+| --- | --- | --- |
+| P2-31 | `AppColors.parseColor` 是 `int.parse(...) | 0xFF000000`，8 位 `#RRGGBBAA` 的 alpha 被抹成不透明，`#f00` 这类短格式也不展开 | 改成 `parseHexColor(hex, fallback: accent)`，读写共用同一套语义 |
+| P2-30 | `lib/db/sql_like.dart` 只有测试在引用，`MediaDao`、`TrackDao`、`VolumeCoverService` 各写一份 `_escapeLike`，`ESCAPE '\\'` 子句在三处硬编码（5 + 6 + 2 处） | 三处都改用 `escapeLike` 与 `sqlLikeEscape`，私有副本删除 |
+| P2-32 | 四个对话框的 `TextEditingController` 从不释放，`image_detail` 那个还建在 builder 里，每次重建新建一个 | 新增 `lib/widgets/controller_owner.dart`，挂在对话框内容的上一层，随路由子树一起销毁 |
+| P2-22 | `lib/widgets/dialogs.dart` 的旧 `showTagPickerDialog` 与 `_TagPickerDialog` 已无调用方（约 139 行），`works_grid` 与 `folder_browser` 里的 `hide` 是留给它的 | 删掉，`dialogs.dart` 从 325 行降到 175 行，两条 `hide` 与随之无用的 `tag_dao` import 一并清掉 |
+| P2-28 | 33 个测试文件各抄一份逐字节相同的 `_FakePathProvider` | 抽成 `test/support/test_env.dart` 的 `FakePathProvider`，净删 401 行 |
+| P2-33 | 返回、复制、取消这些系统自带文案在中文界面里是英文；六个纯图标按钮没有 tooltip | pubspec 加 `flutter_localizations`，`main.dart` 的 MaterialApp 补 delegates 与 supportedLocales，配置抽成 `appLocalizationsDelegates` 与 `appSupportedLocales` 两个常量便于测试；六个按钮补 tooltip |
+| P2-24 | `lib/widgets/dialogs.dart` 与 `lib/widgets/folder_panel.dart` 各有一份相同的 `_PromptDialog`，folder_panel 里还有两个包一层 `showDialog` 的小函数 | folder_panel 改走 `promptText`，少 52 行 |
+| P2-36 | 复核后不需要改 | `lib/pages/about_page.dart:28` 的 `appVersion` 已经被 `test/widget/settings_page_test.dart:199` 拿 pubspec.yaml 派生的值断言住 |
+
+验证：
+
+- `flutter analyze`：5 条既有 info，0 error 0 warning。
+- `flutter test`：512 用例全过（批次 B 之前是 508，新增 3 条本地化与 1 条清空按钮用例）。开始动手时的基线是 462。
+- 变异验证：`git stash push -- lib/theme/app_theme.dart` 之后，八位 hex 用例报 `Expected: <2164195328> Actual: <4278190208>`，短格式用例报 `Expected: <4294901760> Actual: <4278193920>`。
+- 提交：`0004df2` 批次 B、`611b2b5` 批次 C 前半、`e60ec60` 批次 D、`d674c4b` 合并重复的文本输入对话框。
+
+更正上一节的一处结论：P2-31 我原先写成「红通道与 alpha 对调」，实际后果是 8 位 hex 的 alpha 被抹成不透明，短格式不展开。红测试的报错数字是上面那两条。
+
+报告文件已经丢失：上一节提到的 `/tmp/mediashelf-review.md`（212 行，本轮修复的唯一需求来源）被 /tmp 的清理带走了。仓库外的临时文件留不住，剩下的事项按编号列在下面。
+
+P2-23 的处置：`lib/widgets/color_picker_dialog.dart` 在 `lib` 里确实没有调用方，但 `test/widget/image_dialogs_test.dart:18` 与 `:138` 在用。删掉它会连带删掉这几条既有测试覆盖，决定保留这份文件与用例，把「无人调用」记在这里。
+
+未完成事项（编号沿用已丢失的那份报告）：
+
+- 25：四份目录选择各写一遍。
+- 26：`lib/widgets/folder_browser.dart` 的两个批量方法重复。
+- 27：`lib/widgets/image_grid.dart` 的网格分支与列表分支重复。
+- 33 的剩余部分：全 `lib` 仍然零 `Semantics`，本轮只补了 tooltip 与本地化配置。
+
+踩坑：
+
+- 用 python 正则删 `lib/db/media_dao.dart` 与 `lib/db/track_dao.dart` 的私有转义方法时，把紧随其后的方法一起删了。那两个私有方法是表达式体（`=> raw...;`），下一个 `\n  }\n` 属于后一个方法。改成匹配到 `;` 结尾再删。
+- 对话框控制器的回收不能写成 `showDialog(...).whenComplete(dispose)`：`Navigator.pop` 之后退场动画还在跑，`TextField` 仍挂在树上，`test/widget/segment_panel_test.dart` 报 `A TextEditingController was used after being disposed`，报错位置在 `_AnimatedState.didUpdateWidget`。
+- 给 `lib/widgets/folder_panel.dart` 加 `import 'dialogs.dart';` 之后要留意与本地名字冲突，`flutter analyze` 会指出来。
+
+下一步：如果还要继续，从 P2-25 到 27 的重复实现收拢做起，再考虑给主要交互控件补 `Semantics`。
