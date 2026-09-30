@@ -9,6 +9,7 @@ import '../services/exif_service.dart';
 import '../services/thumbnail_cache.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import 'controller_owner.dart';
 import '../utils/color_util.dart';
 import '../utils/log_util.dart';
 import 'export_actions.dart';
@@ -779,133 +780,136 @@ class _TagEditorState extends State<_TagEditor> {
             return cmp != 0 ? cmp : a.name.compareTo(b.name);
           });
 
+    final searchCtrl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) {
-        final searchCtrl = TextEditingController();
-        return StatefulBuilder(
-          builder: (ctx, setLocal) {
-            return AlertDialog(
-              backgroundColor: AppColors.panelOf(context),
-              title:  Text(
-                '添加标签',
-                style: TextStyle(color: AppColors.textPrimaryOf(context)),
-              ),
-              content: SizedBox(
-                width: 280,
-                height: 350,
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: searchCtrl,
-                      autofocus: true,
-                      onChanged: (_) => setLocal(() {}),
-                      decoration: const InputDecoration(
-                        hintText: '搜索或输入新标签名...',
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: ListView(
-                        children: unbound
-                            .where(
-                              (t) =>
-                                  searchCtrl.text.isEmpty ||
-                                  t.name.toLowerCase().contains(
-                                    searchCtrl.text.toLowerCase(),
-                                  ),
-                            )
-                            .map(
-                              (tag) => ListTile(
-                                dense: true,
-                                visualDensity: VisualDensity.compact,
-                                leading: Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: BoxDecoration(
-                                    color: _tagColor(tag.color),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                title: Text(
-                                  tag.name,
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                subtitle: tag.namespace.isNotEmpty
-                                    ? Text(
-                                        tag.namespace,
-                                        style: const TextStyle(fontSize: 10),
-                                      )
-                                    : null,
-                                onTap: () {
-                                  appState.toggleTagOnImage(
-                                    widget.imageId,
-                                    tag,
-                                  );
-                                  Navigator.pop(ctx);
-                                  _loadTags();
-                                },
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ),
-                    // 如果搜索匹配为空，提供快速创建
-                    if (searchCtrl.text.isNotEmpty &&
-                        unbound
-                            .where(
-                              (t) => t.name.toLowerCase().contains(
-                                searchCtrl.text.toLowerCase(),
-                              ),
-                            )
-                            .isEmpty)
-                      ListTile(
-                        dense: true,
-                        leading: const Icon(
-                          Icons.add,
-                          size: 16,
-                          color: AppColors.accent,
-                        ),
-                        title: Text(
-                          '创建 "${searchCtrl.text}"',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.accent,
+        return ControllerOwner(
+          controllers: [searchCtrl],
+          child: StatefulBuilder(
+            builder: (ctx, setLocal) {
+              return AlertDialog(
+                backgroundColor: AppColors.panelOf(context),
+                title:  Text(
+                  '添加标签',
+                  style: TextStyle(color: AppColors.textPrimaryOf(context)),
+                ),
+                content: SizedBox(
+                  width: 280,
+                  height: 350,
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: searchCtrl,
+                        autofocus: true,
+                        onChanged: (_) => setLocal(() {}),
+                        decoration: const InputDecoration(
+                          hintText: '搜索或输入新标签名...',
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
                           ),
                         ),
-                        onTap: () async {
-                          // MediaShelf 的 createTag 直接返回 Tag（同名时复用），
-                          // PictureViewer2 的 {tag, created} 返回值在这里不存在。
-                          final created = await appState.createTag(
-                            searchCtrl.text.trim(),
-                          );
-                          await appState.toggleTagOnImage(
-                            widget.imageId,
-                            created,
-                          );
-                          if (ctx.mounted) Navigator.pop(ctx);
-                          _loadTags();
-                        },
                       ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child:  Text(
-                    '关闭',
-                    style: TextStyle(color: AppColors.mutedLightOf(context)),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: ListView(
+                          children: unbound
+                              .where(
+                                (t) =>
+                                    searchCtrl.text.isEmpty ||
+                                    t.name.toLowerCase().contains(
+                                      searchCtrl.text.toLowerCase(),
+                                    ),
+                              )
+                              .map(
+                                (tag) => ListTile(
+                                  dense: true,
+                                  visualDensity: VisualDensity.compact,
+                                  leading: Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: _tagColor(tag.color),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    tag.name,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  subtitle: tag.namespace.isNotEmpty
+                                      ? Text(
+                                          tag.namespace,
+                                          style: const TextStyle(fontSize: 10),
+                                        )
+                                      : null,
+                                  onTap: () {
+                                    appState.toggleTagOnImage(
+                                      widget.imageId,
+                                      tag,
+                                    );
+                                    Navigator.pop(ctx);
+                                    _loadTags();
+                                  },
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                      // 如果搜索匹配为空，提供快速创建
+                      if (searchCtrl.text.isNotEmpty &&
+                          unbound
+                              .where(
+                                (t) => t.name.toLowerCase().contains(
+                                  searchCtrl.text.toLowerCase(),
+                                ),
+                              )
+                              .isEmpty)
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(
+                            Icons.add,
+                            size: 16,
+                            color: AppColors.accent,
+                          ),
+                          title: Text(
+                            '创建 "${searchCtrl.text}"',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.accent,
+                            ),
+                          ),
+                          onTap: () async {
+                            // MediaShelf 的 createTag 直接返回 Tag（同名时复用），
+                            // PictureViewer2 的 {tag, created} 返回值在这里不存在。
+                            final created = await appState.createTag(
+                              searchCtrl.text.trim(),
+                            );
+                            await appState.toggleTagOnImage(
+                              widget.imageId,
+                              created,
+                            );
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            _loadTags();
+                          },
+                        ),
+                    ],
                   ),
                 ),
-              ],
-            );
-          },
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child:  Text(
+                      '关闭',
+                      style: TextStyle(color: AppColors.mutedLightOf(context)),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
         );
       },
     );

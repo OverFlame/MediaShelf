@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import '../utils/file_io.dart';
 import '../utils/log_util.dart';
 import 'data_dir_service.dart';
 
@@ -23,7 +24,7 @@ class CoverService {
       final ext = _extFromMime(mime);
       final dir = await _coversDir();
       final file = File(p.join(dir, 'track_$trackId.$ext'));
-      await _writeAtomic(file, (tmp) => tmp.writeAsBytes(bytes, flush: true));
+      await writeFileAtomic(file, (tmp) => tmp.writeAsBytes(bytes, flush: true));
       return file.path;
     } catch (e) {
       logWarn('Cover', '写入内嵌封面失败: $e');
@@ -43,7 +44,7 @@ class CoverService {
           : '.jpg';
       final dir = await _coversDir();
       final dest = File(p.join(dir, 'work_$workId$safeExt'));
-      await _writeAtomic(dest, (tmp) async {
+      await writeFileAtomic(dest, (tmp) async {
         await src.copy(tmp.path);
       });
       logInfo('Cover', '导入封面: $srcPath → ${dest.path}');
@@ -51,25 +52,6 @@ class CoverService {
     } catch (e) {
       logWarn('Cover', '导入封面失败: $e');
       return null;
-    }
-  }
-
-  /// 先写临时文件再改名。
-  ///
-  /// 直接覆盖目标文件时，写一半被读取（或进程结束）会留下半个图片；
-  /// 改名在同一文件系统内是原子的，读者要么看到旧的完整文件、要么看到新的。
-  static Future<void> _writeAtomic(
-      File dest, Future<void> Function(File tmp) writer) async {
-    final tmp = File('${dest.path}.tmp');
-    try {
-      await writer(tmp);
-      if (dest.existsSync()) await dest.delete();
-      await tmp.rename(dest.path);
-    } catch (e) {
-      try {
-        if (tmp.existsSync()) await tmp.delete();
-      } catch (_) {}
-      rethrow;
     }
   }
 

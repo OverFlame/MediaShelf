@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mediashelf/theme/app_theme.dart';
 import 'package:mediashelf/utils/color_util.dart';
 
 /// 回归用例：`parseHexColor` 与 `colorToHex` 必须互逆。
@@ -67,6 +68,24 @@ void main() {
     test('可以指定自己的 fallback', () {
       expect(parseHexColor('zzz', fallback: const Color(0xFF000000)).toARGB32(),
           0xFF000000);
+    });
+  });
+
+  group('AppColors.parseColor 与 parseHexColor 共用一套语义', () {
+    test('8 位十六进制保留 alpha', () {
+      // 旧实现是 int.parse(h, radix: 16) | 0xFF000000，把 'FF000080' 的 alpha
+      // 直接抹成不透明，而写侧的 colorToHex 输出的是 RRGGBBAA
+      expect(AppColors.parseColor('#FF000080').toARGB32(), 0x80FF0000);
+    });
+
+    test('短格式按位展开', () {
+      expect(AppColors.parseColor('#f00').toARGB32(), 0xFFFF0000);
+    });
+
+    test('解析不了时回落到主题强调色', () {
+      expect(AppColors.parseColor('nope').toARGB32(),
+          AppColors.accent.toARGB32());
+      expect(AppColors.parseColor('').toARGB32(), AppColors.accent.toARGB32());
     });
   });
 }

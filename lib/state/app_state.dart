@@ -16,6 +16,7 @@ import '../services/cover_service.dart';
 import '../services/data_dir_service.dart';
 import '../services/file_scanner.dart';
 import '../services/import_service.dart';
+import '../services/play_position.dart';
 import '../services/playlist_writer.dart';
 import '../services/reading_progress_service.dart';
 import '../services/segment_service.dart';
@@ -27,6 +28,7 @@ import '../services/video_launcher.dart';
 import '../services/volume_cover_service.dart';
 import '../utils/filter_expression.dart';
 import '../utils/log_util.dart';
+import '../utils/progress_throttle.dart';
 import 'player_controller.dart';
 
 /// 标签筛选规则
@@ -75,6 +77,9 @@ class AppState extends ChangeNotifier {
   // ── 中间栏内容 ──
   List<VirtualFolder> _centerFolders = [];
   List<VirtualFolder> get centerFolders => _centerFolders;
+  /// 播放位置落盘的节流（见 lib/services/play_position.dart）
+  final PlayPositionThrottle _positionThrottle = PlayPositionThrottle();
+
   List<TrackItem> _tracks = [];
   List<TrackItem> get tracks => _tracks;
 
@@ -362,6 +367,9 @@ class AppState extends ChangeNotifier {
     // 漏掉这一步时缩略图一张都生成不出来（网格只剩占位图标）。
     await ThumbnailService.instance.init();
     player.onTrackStarted = _onTrackStarted;
+    player.resumeFrom = _resumePositionOf;
+    player.onPositionChanged = _onPlayPosition;
+    player.onTrackCompleted = _onTrackCompleted;
     player.onRepeatModeChanged = _persistRepeatMode;
     player.onShuffleChanged = _persistShuffle;
     player.onSpeedChanged = _persistSpeed;
@@ -1213,6 +1221,7 @@ class AppState extends ChangeNotifier {
 
     final deleted = await _trackDao.deleteByPaths(orphan);
     _trackTags.clear();
+    if (deleted > 0) _mediaRevision++;
     logInfo('AppState',
         '删除文件夹后清理失联曲目 ${orphan.length} 条（实删 $deleted 行）');
     return deleted;
@@ -1363,6 +1372,9 @@ class AppState extends ChangeNotifier {
     final deleted = await _mediaDao.deleteByPaths(victims);
     _trackTags.clear();
     _dropViewerItemsFor(victims);
+    // 媒体行被删了就要推进代数：作品层的 ImageGrid 缓存着查过的列表，
+    // 只靠 folderVersion 它不知道该重查，删掉的磁贴会留在界面上。
+    if (deleted > 0) _mediaRevision++;
     logInfo('AppState',
         '深度删除后清理媒体 ${victims.length} 条（实删 $deleted 行）');
     return deleted;
@@ -1551,6 +1563,13 @@ class AppState extends ChangeNotifier {
 
   /// 已经排进补齐队列的路径，避免同一批被反复排队。
   final List<String> _thumbBackfillQueue = <String>[];
+
+  /// 与队列同步的集合，用来 O(1) 判重。
+  ///
+  /// 队列从前只有 List：`contains` 判重要扫全表，`removeAt(0)` 出队要把后面
+  /// 的元素整体前移。5000 张缩略图，两边各自都是一千两百多万次操作。
+  final Set<String> _thumbBackfillPending = <String>{};
+
   bool _thumbBackfillRunning = false;
 
   /// 在后台把 [paths] 的 300px 缩略图逐张补齐（已存在就跳过）。
@@ -1560,7 +1579,7 @@ class AppState extends ChangeNotifier {
   /// 卡片据此重新检查文件，补完的图不用重启就会出现。
   Future<void> backfillThumbnails(Iterable<String> paths) async {
     for (final path in paths) {
-      if (path.isNotEmpty && !_thumbBackfillQueue.contains(path)) {
+      if (path.isNotEmpty && _thumbBackfillPending.add(path)) {
         _thumbBackfillQueue.add(path);
       }
     }
@@ -1570,7 +1589,9 @@ class AppState extends ChangeNotifier {
     var done = 0;
     try {
       while (_thumbBackfillQueue.isNotEmpty) {
-        final path = _thumbBackfillQueue.removeAt(0);
+        // 从尾部取：补齐顺序对用户没有意义，而 removeLast 是 O(1)。
+        final path = _thumbBackfillQueue.removeLast();
+        _thumbBackfillPending.remove(path);
         try {
           final file = File(service.thumbPath(path, size: 300));
           if (await file.exists()) continue;
@@ -1649,10 +1670,13 @@ class AppState extends ChangeNotifier {
       final importService = ImportService.fromDB();
       final stream =
           importService.importDirectory(dirPath, workId: workId, scan: scan);
+      // 导入流按文件吐进度。逐条 notifyListeners 会让整页重建上千次，
+      // 进度条却看不出差别，所以按 1% 粒度通知。
+      final throttle = ProgressThrottle();
       await for (final p in stream) {
         imported++;
         _importProgress = p.percent;
-        notifyListeners();
+        if (throttle.shouldNotify(p.percent)) notifyListeners();
       }
     } catch (e) {
       _importError = e.toString();
@@ -1775,10 +1799,24 @@ class AppState extends ChangeNotifier {
   ReadingProgressService get readingService {
     final db = DatabaseManager.instance.db;
     if (_readingService == null || !identical(_readingServiceDb, db)) {
+      // 换库实例说明旧连接已经关掉或正在关：旧服务里攒着的进度要趁早落盘，
+      // 否则节流窗口里那一页会打到已关闭的连接上，异常只留一条日志。
+      final stale = _readingService;
+      if (stale != null) unawaited(stale.dispose());
       _readingService = ReadingProgressService(db);
       _readingServiceDb = db;
     }
     return _readingService!;
+  }
+
+  /// 关库、退出前把阅读进度落盘。服务自己带节流窗口，不落盘就会丢一页。
+  ///
+  /// 之后再用 [readingService] 会新建实例（老实例已 dispose）。
+  Future<void> disposeReadingService() async {
+    final service = _readingService;
+    _readingService = null;
+    _readingServiceDb = null;
+    await service?.dispose();
   }
 
   Future<ReadingProgress?> readingProgressOf(int volumeId) =>
@@ -2697,11 +2735,23 @@ class AppState extends ChangeNotifier {
     if (_migrating) {
       throw StateError('数据目录迁移已在进行中');
     }
+    // 导入不停就关库：在途的写入与 refresh 会打在已关闭的连接上。
+    if (_importing) {
+      throw StateError('正在导入，等导入结束再迁移数据目录');
+    }
     _migrating = true;
     final oldDir = await DataDirService.instance.dataDir;
     try {
+      // 关库前先前进一代：在途的 refresh 拿到结果后发现代际不匹配会主动丢弃，
+      // 不会去写已经关掉的连接。
+      _refreshGeneration++;
+      // 关库前先把阅读进度落盘：服务带一秒节流窗口，攒着的那一页在
+      // close() 之后就写不进去了。
+      await disposeReadingService();
       await DatabaseManager.instance.close();
       final newD = await DataDirService.instance.migrateTo(newDir);
+      // 日志跟着数据目录走，否则迁移后还往旧目录写。
+      LogUtil.attachFileSink(p.join(newD, 'logs'));
       await DatabaseManager.instance.init();
       // 更新数据目录内的封面缓存路径前缀（covers/track_*.jpg、covers/work_*.jpg）
       await _rewriteCoverPaths(oldDir, newD);
@@ -2761,6 +2811,52 @@ class AppState extends ChangeNotifier {
         .catchError((Object e) {
       logError('AppState', 'recordPlay 失败: $e');
     }));
+  }
+
+  /// 续播位置：太靠前、或快听完的位置都从头开始（见 PlayPositionRules）。
+  Duration _resumePositionOf(TrackItem track) =>
+      PlayPositionRules.resumeOf(track.playPositionMs, track.durationMs);
+
+  /// 播放中每 250 毫秒报一次位置，按前进量节流后才写库。
+  void _onPlayPosition(TrackItem track, Duration position) {
+    final id = track.id;
+    if (id == null) return;
+    if (!_positionThrottle.shouldSave(position)) return;
+    _savePlayPosition(id, position.inMilliseconds);
+  }
+
+  /// 一首播到结尾：位置清零，下次从头播。
+  void _onTrackCompleted(TrackItem track) {
+    final id = track.id;
+    if (id == null) return;
+    _positionThrottle.reset();
+    _savePlayPosition(id, 0);
+  }
+
+  void _savePlayPosition(int mediaId, int positionMs) {
+    unawaited(_mediaDao.setPlayPosition(mediaId, positionMs).then((_) {
+      // 磁贴右侧的「已播时间」跟着刷新
+      _applyPlayPosition(mediaId, positionMs);
+    }).catchError((Object e) {
+      logError('AppState', '播放位置落盘失败: $e');
+    }));
+  }
+
+  /// 把新位置同步进内存里的曲目列表（不重新查库）。
+  void _applyPlayPosition(int mediaId, int positionMs) {
+    var changed = false;
+    final next = <TrackItem>[];
+    for (final track in _tracks) {
+      if (track.id == mediaId && track.playPositionMs != positionMs) {
+        changed = true;
+        next.add(track.copyWith(playPositionMs: positionMs));
+      } else {
+        next.add(track);
+      }
+    }
+    if (!changed) return;
+    _tracks = next;
+    notifyListeners();
   }
 
   Future<void> loadRecentTracks() => _reloadRecentTracks(_recentLoadGeneration);

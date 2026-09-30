@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../utils/file_io.dart';
 import '../utils/log_util.dart';
 
 /// 播放列表里的一项
@@ -49,14 +50,34 @@ class PlaylistWriter {
     final dir = Directory(outputDir);
     if (!dir.existsSync()) await dir.create(recursive: true);
     final file = File(p.join(outputDir, '${_safeName(name)}.m3u8'));
-    await file.writeAsString(buildM3u8(entries), flush: true);
+    final text = buildM3u8(entries);
+    // 走临时文件再改名：直接覆盖写的话，写到一半断电就剩半份播放列表。
+    await writeFileAtomic(file, (tmp) => tmp.writeAsString(text, flush: true));
     logInfo('Playlist', '写入播放列表 ${file.path}，${entries.length} 项');
     return file.path;
   }
 
-  /// 文件名里去掉 Windows 与 POSIX 都不接受的字符
+  /// 文件名里去掉 Windows 与 POSIX 都不接受的字符。
+  ///
+  /// 替换是「多对一」的：`第1话/上` 与 `第1话:上` 都会变成 `第1话_上`，
+  /// 于是两个不同的播放列表落到同一个文件上互相覆盖。所以替换真的改动了
+  /// 名字时补一段原始名字的短哈希：同一个名字仍然稳定映射到同一个文件
+  /// （重复导出是覆盖自己），不同名字一定落到不同文件。
   static String _safeName(String raw) {
-    final cleaned = raw.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-    return cleaned.isEmpty ? 'playlist' : cleaned;
+    final trimmed = raw.trim();
+    final cleaned = trimmed.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    if (cleaned.isEmpty) return 'playlist';
+    if (cleaned == trimmed) return cleaned;
+    return '${cleaned}_${_shortHash(trimmed)}';
+  }
+
+  /// 名字的短哈希（FNV-1a 32 位转 36 进制），只用来给文件名去重，不做校验。
+  static String _shortHash(String input) {
+    var hash = 0x811c9dc5;
+    for (final unit in input.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xFFFFFFFF;
+    }
+    return hash.toRadixString(36).padLeft(6, '0');
   }
 }

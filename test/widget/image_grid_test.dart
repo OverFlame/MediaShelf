@@ -20,16 +20,8 @@ import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/theme/app_theme.dart';
 import 'package:mediashelf/widgets/image_grid.dart';
+import '../support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 1×1 的合法 PNG，给缩略图生成器一张能真解码的原图。
 final _pngBytes = base64Decode(
@@ -58,7 +50,7 @@ void main() {
     tmp = await Directory.systemTemp.createTemp('mediashelf_image_grid');
     albumDir = await Directory(p.join(tmp.path, 'media', '相册')).create(recursive: true);
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();
@@ -198,7 +190,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('这里还没有内容'), findsOneWidget);
-    expect(find.text('添加文件夹或拖拽图片开始导入'), findsOneWidget);
+    expect(find.text('点下面的按钮添加图片文件夹'), findsOneWidget);
   });
 
   Future<void> pumpGridWithTheme(WidgetTester tester, ThemeData theme) {

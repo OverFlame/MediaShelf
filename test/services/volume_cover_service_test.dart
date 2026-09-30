@@ -10,15 +10,8 @@ import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/volume_cover_service.dart';
 import 'package:mediashelf/utils/crop_math.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -86,7 +79,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_volume_cover');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();
@@ -115,6 +108,17 @@ void main() {
       expect(VolumeCoverService.isWhitelistCoverPath('/x/cover.gif'), isFalse);
       expect(VolumeCoverService.isWhitelistCoverPath('/x/cover.jpg.txt'), isFalse);
       expect(VolumeCoverService.isWhitelistCoverPath('/x/cover'), isFalse);
+    });
+
+    test('认另一种分隔符的路径', () {
+      // 目录名与分隔符不该影响白名单判定：Windows 上建的库搬到 Linux 后，
+      // 路径里是反斜杠，p.basenameWithoutExtension 会把整条路径当成文件名。
+      expect(VolumeCoverService.isWhitelistCoverPath(r'D:\Music\cover.jpg'),
+          isTrue);
+      expect(VolumeCoverService.isWhitelistCoverPath(r'D:\Music\COVER.PNG'),
+          isTrue);
+      expect(VolumeCoverService.isWhitelistCoverPath(r'D:\Music\a.jpg'),
+          isFalse);
     });
   });
 
@@ -301,6 +305,18 @@ void main() {
     test('空串与 null 一样算清空', () async {
       await service.setCover(volume, '');
       expect(await service.currentCover(volume), isNull);
+    });
+
+    test('手动封面的文件没了就退回自动候选', () async {
+      final manual = img('picked.jpg');
+      await service.setCover(volume, manual);
+      expect(await service.effectiveCover(volume), manual);
+
+      // 用户把文件删了或搬走了，库里的路径还在
+      existing.remove(manual);
+
+      expect(await service.currentCover(volume), manual);
+      expect(p.basename((await service.effectiveCover(volume))!), 'cover.jpg');
     });
 
     test('effectiveCover 不写库', () async {

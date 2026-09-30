@@ -1077,3 +1077,152 @@
 - `find.text('修改时间')` 在窄屏详情里同时命中菜单项与详情信息，改用 `find.ancestor(of: find.text(...), matching: find.byType(CheckedPopupMenuItem<String>))`；`CheckedPopupMenuItem` 必须带类型参数，`byType` 比对运行时类型。
 - 用 200 宽窗口测 `tiny` 时，点「更多」的偏移打不到按钮，命中链顶端是关着的 Drawer 边缘拖拽层。改用 800 宽加详情面板制造 `tiny`。
 - 改 `pubspec.yaml` 的版本号时漏了 `lib/pages/about_page.dart` 的 `appVersion` 常量。全量测试在版本号改之前跑过，所以是提交后才发现的（`test/widget/settings_page_test.dart` 的「关于页写死的版本号与 pubspec.yaml 同步」把它拦住）。教训：版本号属于最后一步，改完要重跑全量测试再提交。
+
+## 2026-09-29 只读代码质量审查与缺陷修复（P1 全清，P2 批次 A）
+
+目标：先对 `1.4.0+21`（当时 HEAD `dd15076`）做只读代码质量审查，出有源码依据的报告；经用户确认后按报告逐条验证与修复。
+
+审查：
+
+| 项 | 内容 |
+| --- | --- |
+| 范围 | `lib/` 67 个文件 24101 行、`test/` 55 个文件 11434 行。通读加定向 grep，全程未改动文件 |
+| 结论 | 无 P0；P1 九条；P2 三十八条，按性能、数据一致性、重复与死代码、无障碍与国际化、工程与文档分五组 |
+| 报告 | 本次会话内的 `/tmp/mediashelf-review.md`（212 行，仓库外，不入库）。每条给出 file:line、后果、已排除的可能、未验证项 |
+| 写法 | 每条先写能复现的红测试，再改代码，再摘掉修复复跑一次确认用例真的红 |
+
+动作（已修的十八条）：
+
+| 编号 | 缺陷 | 修复 |
+| --- | --- | --- |
+| P1-1 | `logError(..., data)` 的 data 参数从未使用 | `lib/utils/log_util.dart` 重写，data 进正文并作 `dev.log` 的 error |
+| P1-4 | 从不写日志文件，界面却让用户去 logs 目录看 | 同上，`LogUtil.attachFileSink` 写 `logs/app-<日期>.log`，满 2MB 轮转 `.1` |
+| P1-2 | 三处「先删目标再改名」有丢文件窗口 | 新增 `lib/utils/file_io.dart` 的 `writeFileAtomic`，cover、settings、data_dir 三处改用 |
+| P2-8 | 批量删除分批各删各的，中途失败留下一半 | `lib/db/media_dao.dart` 的分批循环包进同一个事务 |
+| P2-19 | `MigrationService` 开已有库不跑 onUpgrade，库被盖上 v8 的章而结构停在 v7 | 抽出 `Tables.createAll` 与 `Tables.applyMigrations`，两处调用点共用 |
+| P1-7 | 深度删除不自增 `mediaRevision`，作品层磁贴残留 | `lib/state/app_state.dart` 的两处 prune 按删除条数自增 |
+| P2-21 | 缩略图布尔守卫吞掉重生成 | 新增 `lib/utils/latest_only_runner.dart`，卡片复用时旧图结果不再盖回来 |
+| P1-3 | 外链播放的成功是假成功 | `lib/services/video_launcher.dart` 给 Android 桥加超时；桌面路径读退出码，留 1.2 秒宽限期 |
+| P2-13 | 数据目录迁移漏搬 `playlist/` | `lib/services/data_dir_service.dart` 补一条 `_copyDirStrict` |
+| P1-6 | 迁移时两个库各自全读进内存逐字节比 | 改成 64KB 分块比较 |
+| P1-8 | 缩略图补齐队列用 `contains` 加 `removeAt(0)`，是 O(n²) | 换成 Set 去重加 `removeLast` |
+| P1-9 | 导入进度逐文件通知，整页重建 | 新增 `lib/utils/progress_throttle.dart`，按千分位整数每 1% 通知一次 |
+| P1-5 | 界面与 README 承诺拖拽导入，代码里没有这个能力 | 按「不做该功能」处置，删两处文案、README 说法与 `desktop_drop` 依赖 |
+| P2-14 | `p.basenameWithoutExtension` 只认当前平台分隔符 | 新增 `lib/services/media_rules.dart` 的 `stemOfPath`，字幕匹配与封面白名单改用 |
+| P2-12 | 手动封面文件被删后仍直接返回，卡片一直空着 | `effectiveCover` 先查存在性，不在了落回自动候选 |
+| P2-15 | 播放列表覆盖写与重名撞车 | 改原子写；只在替换真的改动了名字时补一段短哈希 |
+| P2-16 | 覆盖目标库前先把目标库删掉，而备份只盖源库 | `migration_service.dart` 删之前先备份目标库，报告里给出备份目录 |
+| P2-20 | 导入读文件大小或修改时间失败时静默按 0 入库 | 改 `logWarn`，带上路径与异常 |
+| P2-17 | 阅读进度服务带一秒节流窗口，却从没人收尾 | 换库实例时收掉旧服务；关库前 `disposeReadingService` 先落盘；`dispose` 改成同步失效、异步落盘 |
+
+验证：
+
+- `flutter analyze`：5 条既有 info，0 error 0 warning（`lib/services/import_service.dart:45-47`、`lib/widgets/cover_image.dart:34`）。
+- `flutter test`：505 用例全过（本轮起始基线 462）。
+- 变异验证逐条做过。例：把 `lib/db/media_dao.dart` 的分批事务摘掉，回滚用例报 `Expected: <600> Actual: <100>`；把 `lib/state/app_state.dart` 的 `unawaited(stale.dispose())` 摘掉，新用例报 `database_closed`。
+- 提交：`41da5a6` 迁移 onUpgrade、`fa6e340` 日志、`f3c74f4` 原子写与批量删除、`46d4b42` mediaRevision 与缩略图、`e67ca99` 外链播放与迁移流式、`39b4081` 拖拽文案、`91ea0fd` 路径分隔符、`79e116c` 批次 A。
+
+未完成事项：报告里的 P2 还剩 22（`lib/widgets/dialogs.dart:187-325` 旧 `showTagPickerDialog` 死代码约 139 行，另有 `lib/widgets/works_grid.dart:10-12` 与 `lib/widgets/folder_browser.dart:11` 的化石 `hide`）、23（`lib/widgets/color_picker_dialog.dart` 无调用者，约 360 行）、24 到 27（三份 `_PromptDialog`、四份目录选择、`folder_browser` 两个批量方法、`image_grid` 的网格与列表分支重复）、28（32 份逐字节相同的 `_FakePathProvider`，可抽 `test/support/test_env.dart`）、30（`lib/utils/sql_like.dart` 的 `escapeLike` 与两个 DAO 各自手写的共三份）、31（`AppColors.parseColor` 遇到 8 位 `#RRGGBBAA` 会把红通道与 alpha 对调，与 `lib/utils/color_util.dart` 的 `parseHexColor` 两套语义）、32（`lib/widgets/segment_panel.dart:106`、`lib/widgets/tag_panel.dart:753/754/893/894`、`lib/widgets/image_detail.dart:785` 的 `TextEditingController` 无配对 dispose）、33（全 `lib` 零 `Semantics`，7 个纯图标按钮无 tooltip，`MaterialApp` 无 `localizationsDelegates`）、36（`lib/pages/about_page.dart:28` 版本号硬编码）。
+
+踩坑：
+
+- `lib/db/tables.dart` 的 `import` 要放在库级文档注释之上。夹在注释与 `class Tables` 之间会新增一条 `dangling_library_doc_comments`。
+- `ProgressThrottle` 第一版用 double 比较步长，撞上 `0.21 - 0.2 = 0.00999…` 的浮点边界，改用千分位整数。
+- `ReadingProgressService.dispose` 原本等 `flush()` 完成才置 `_disposed`。调用方是 fire-and-forget 时，紧接着的一次 `record` 会穿过 `_ensureUsable()` 打到已关闭的连接上。
+
+下一步：继续修 P2 剩下的批次，先做「重复与死代码」与「无障碍与国际化」两组。
+
+## 2026-09-29 只读代码质量审查与缺陷修复（P2 批次 B 到 D）
+
+承接上一节。这一节覆盖批次 B、批次 C 前半、批次 D，以及一次重复实现的合并。
+
+动作：
+
+| 编号 | 缺陷 | 修复 |
+| --- | --- | --- |
+| P2-31 | `AppColors.parseColor` 是 `int.parse(...) | 0xFF000000`，8 位 `#RRGGBBAA` 的 alpha 被抹成不透明，`#f00` 这类短格式也不展开 | 改成 `parseHexColor(hex, fallback: accent)`，读写共用同一套语义 |
+| P2-30 | `lib/db/sql_like.dart` 只有测试在引用，`MediaDao`、`TrackDao`、`VolumeCoverService` 各写一份 `_escapeLike`，`ESCAPE '\\'` 子句在三处硬编码（5 + 6 + 2 处） | 三处都改用 `escapeLike` 与 `sqlLikeEscape`，私有副本删除 |
+| P2-32 | 四个对话框的 `TextEditingController` 从不释放，`image_detail` 那个还建在 builder 里，每次重建新建一个 | 新增 `lib/widgets/controller_owner.dart`，挂在对话框内容的上一层，随路由子树一起销毁 |
+| P2-22 | `lib/widgets/dialogs.dart` 的旧 `showTagPickerDialog` 与 `_TagPickerDialog` 已无调用方（约 139 行），`works_grid` 与 `folder_browser` 里的 `hide` 是留给它的 | 删掉，`dialogs.dart` 从 325 行降到 175 行，两条 `hide` 与随之无用的 `tag_dao` import 一并清掉 |
+| P2-28 | 33 个测试文件各抄一份逐字节相同的 `_FakePathProvider` | 抽成 `test/support/test_env.dart` 的 `FakePathProvider`，净删 401 行 |
+| P2-33 | 返回、复制、取消这些系统自带文案在中文界面里是英文；六个纯图标按钮没有 tooltip | pubspec 加 `flutter_localizations`，`main.dart` 的 MaterialApp 补 delegates 与 supportedLocales，配置抽成 `appLocalizationsDelegates` 与 `appSupportedLocales` 两个常量便于测试；六个按钮补 tooltip |
+| P2-24 | `lib/widgets/dialogs.dart` 与 `lib/widgets/folder_panel.dart` 各有一份相同的 `_PromptDialog`，folder_panel 里还有两个包一层 `showDialog` 的小函数 | folder_panel 改走 `promptText`，少 52 行 |
+| P2-36 | 复核后不需要改 | `lib/pages/about_page.dart:28` 的 `appVersion` 已经被 `test/widget/settings_page_test.dart:199` 拿 pubspec.yaml 派生的值断言住 |
+
+验证：
+
+- `flutter analyze`：5 条既有 info，0 error 0 warning。
+- `flutter test`：512 用例全过（批次 B 之前是 508，新增 3 条本地化与 1 条清空按钮用例）。开始动手时的基线是 462。
+- 变异验证：`git stash push -- lib/theme/app_theme.dart` 之后，八位 hex 用例报 `Expected: <2164195328> Actual: <4278190208>`，短格式用例报 `Expected: <4294901760> Actual: <4278193920>`。
+- 提交：`0004df2` 批次 B、`611b2b5` 批次 C 前半、`e60ec60` 批次 D、`d674c4b` 合并重复的文本输入对话框。
+
+更正上一节的一处结论：P2-31 我原先写成「红通道与 alpha 对调」，实际后果是 8 位 hex 的 alpha 被抹成不透明，短格式不展开。红测试的报错数字是上面那两条。
+
+报告文件已经丢失：上一节提到的 `/tmp/mediashelf-review.md`（212 行，本轮修复的唯一需求来源）被 /tmp 的清理带走了。仓库外的临时文件留不住，剩下的事项按编号列在下面。
+
+P2-23 的处置：`lib/widgets/color_picker_dialog.dart` 在 `lib` 里确实没有调用方，但 `test/widget/image_dialogs_test.dart:18` 与 `:138` 在用。删掉它会连带删掉这几条既有测试覆盖，决定保留这份文件与用例，把「无人调用」记在这里。
+
+未完成事项（编号沿用已丢失的那份报告）：
+
+- 25：四份目录选择各写一遍。
+- 26：`lib/widgets/folder_browser.dart` 的两个批量方法重复。
+- 27：`lib/widgets/image_grid.dart` 的网格分支与列表分支重复。
+- 33 的剩余部分：全 `lib` 仍然零 `Semantics`，本轮只补了 tooltip 与本地化配置。
+
+踩坑：
+
+- 用 python 正则删 `lib/db/media_dao.dart` 与 `lib/db/track_dao.dart` 的私有转义方法时，把紧随其后的方法一起删了。那两个私有方法是表达式体（`=> raw...;`），下一个 `\n  }\n` 属于后一个方法。改成匹配到 `;` 结尾再删。
+- 对话框控制器的回收不能写成 `showDialog(...).whenComplete(dispose)`：`Navigator.pop` 之后退场动画还在跑，`TextField` 仍挂在树上，`test/widget/segment_panel_test.dart` 报 `A TextEditingController was used after being disposed`，报错位置在 `_AnimatedState.didUpdateWidget`。
+- 给 `lib/widgets/folder_panel.dart` 加 `import 'dialogs.dart';` 之后要留意与本地名字冲突，`flutter analyze` 会指出来。
+
+下一步：如果还要继续，从 P2-25 到 27 的重复实现收拢做起，再考虑给主要交互控件补 `Semantics`。
+
+## 2026-09-29 四项交互改进（字幕页、音频多选、续播与已播时间）
+
+用户提出的四件事，按「先写红用例、再改、再变异验证」的顺序做，四个都落进
+了提交 `fa962d0`、`ca021ad`、`65f77e3`。
+
+| 需求 | 根因 | 处置 |
+| --- | --- | --- |
+| 正在播放的句子要居中，不要贴在底下 | `lib/pages/subtitle_page.dart` 的 `_scrollTo` 目标多减了一次 `视口高/2 - 行高/2`。列表上下内边距各半个视口，第 index 句本来就在正中，再减这一下就把它推到「视口底部往上 28px」 | 目标改成 `index * _itemExtent`；视口高 448 时旧实现差 196px（用例实测 468 对 272） |
+| 滑走之后的保留时间长一点 | `_resumeTimer` 固定 3 秒 | 提到 8 秒（`_resumeDelay`），用例把「8 秒内不动、之后回正」都断言住 |
+| 不在本句的字幕再透明一些 | 非当前句 `Colors.white38` | 降到 `Colors.white30` |
+| 手机上多选之后退出逻辑不清晰 | 工具条是一条固定 44 高的 Row，宽度不够时右侧被裁掉；退出多选只是个勾选图标，触屏看不到 tooltip | 工具条改 `LayoutBuilder`，窄屏（<560）用图标按钮加 tooltip 并套横向滚动；「退出多选」变成显式按钮；整页套 `PopScope`，返回键先退多选 |
+| 音频磁贴的选择栏没有删除标签的入口 | 同一条 Row 溢出：`批量移除标签` 排在右侧，被挤出屏幕 | 同上；另外补了 `ValueKey`，用例逐个断言五个入口都落在 360 宽屏幕内 |
+| 记住音频播到哪儿了，下次继续播 | `media` 表没有任何位置列，`play_history` 只有时间戳 | schema 升到 v9，加 `play_position_ms`；`lib/services/play_position.dart` 管取舍与节流；播放器加三个钩子，续播是 play 之后再 seek（引擎的 play 没有起始位置参数） |
+| 磁贴右侧显示已播时间与总时长 | 原来只显示总时长 | 改成「已播 / 总时长」，落盘成功后内存里的曲目也换成新位置，磁贴当场刷新 |
+
+验证：
+
+- 新增用例 20 条：`test/widget/subtitle_page_test.dart` 3 条、
+  `test/widget/folder_browser_selection_test.dart` 4 条、
+  `test/services/play_position_test.dart` 10 条、
+  `test/state/app_state_play_position_test.dart` 4 条、
+  `test/widget/track_tile_position_test.dart` 2 条，另在
+  `test/db_migration_test.dart` 补 2 条（v8 升 v9 的迁移、位置字段往返）。
+- `flutter test`：537 用例全过（本批开始前是 512）。`flutter analyze`：5 条既有 info。
+- 变异验证五处，都如期变红：`_scrollTo` 的目标、字幕透明度与保留时间（`git stash` 字幕页后三条用例报 468 对 272、0.384 大于 0.38、140 而不是 0）、
+  工具条宽度判断（`narrow` 写死 false 时用例抓到 `RenderFlex overflowed by 87 pixels`）、
+  `PopScope` 的 `canPop`（写死 true 时 `Navigator.maybePop` 返回 false，多选没退出）、
+  去掉 v9 迁移（`Expected: contains 'play_position_ms'`）、去掉 AppState 的三处接线
+  （`Null check operator used on a null value`）、磁贴退回只显示总时长（文案断言红）。
+- 迁移夹具要一起改：`test/services/migration_service_test.dart` 的 `buildV7Dst` 先按当前
+  建表语句建满再拆掉 v8 的两列模拟 v7，现在当前建表语句已经带 `play_position_ms`，
+  夹具不拆它，v9 的 `ALTER TABLE` 就会撞上已存在的列（`duplicate column name`）。
+
+踩坑：
+
+- `PopScope` 拦住返回时，`Navigator.maybePop` 返回的是 **true**（这一页把返回消费掉了），
+  不是 false。已装 Flutter 的 `navigator.dart` 里先判 `willPop()`，`doNotPop` 分支
+  `return true`。用例一度按 false 断言，改的是用例不是实现。
+- `testWidgets` 的方法体跑在假时钟里，真实文件 IO 的 Future 不会完成：探针脚本里
+  `Directory.systemTemp.createTemp` 写在方法体里直接把用例挂死，IO 必须放 `setUp`。
+- 自动滚动的动画要两帧才推进：`AnimationController` 的第一帧只确立 t0（elapsed 为 0），
+  一次 `pump` 之后读到的 offset 还是旧值。用例里用 `_settleScroll`（两次 `pump(400ms)`）采样。
+
+未验证的部分：续播的 `_engine.seek` 只在真机上才会执行（用例环境没有原生 SoLoud 引擎，
+`_loadAndPlay` 在未初始化时直接返回），所以「停下来再打开是否真的从原位继续」需要在
+装了原生库的机器上手动确认一次。磁贴上的时间文案与落盘链路已用假引擎钩子覆盖。
+
+下一步可选：`play_position_ms` 目前只在播放中每前进 5 秒落一次盘，退出应用时最多丢
+5 秒；若要更精确，可以在暂停与退出时也强制写一次。

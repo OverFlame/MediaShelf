@@ -11,16 +11,8 @@ import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import '../support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 深度删除（deleteFolderDeep / deleteWorkDeep）的行为测试。
 ///
@@ -38,7 +30,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('mediashelf_delete');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();
@@ -172,5 +164,38 @@ void main() {
         reason: '旧 deleteWork 会把文件夹留成未归类，深度删除不该再有这种残留');
     expect(pathsOf(await media.queryByDirs([tmp.path])),
         [p.join(w2Dir, 'b.mp3')]);
+  });
+
+  test('深度删除文件夹后 mediaRevision 自增：作品层磁贴要靠它重查', () async {
+    final dir = p.join(tmp.path, 'album');
+    await Directory(dir).create(recursive: true);
+    final work = await works.create('作品');
+    final album = await folders.create('专辑', workId: work.id);
+    await folders.addPath(album.id!, dir);
+    await addMedia(p.join(dir, '1.jpg'), MediaType.image);
+
+    final before = state.mediaRevision;
+    final deleted = await state.deleteFolderDeep(album.id!);
+
+    expect(deleted, 1);
+    expect(state.mediaRevision, greaterThan(before),
+        reason: '媒体行删了却不动代数，ImageGrid 的 _workItems 缓存不会失效，'
+            '作品层已经查过的那些磁贴会留在界面上');
+  });
+
+  test('深度删除作品后 mediaRevision 自增', () async {
+    final dir = p.join(tmp.path, 'w1');
+    await Directory(dir).create(recursive: true);
+    final w1 = await works.create('作品一');
+    final f1 = await folders.create('一', workId: w1.id);
+    await folders.addPath(f1.id!, dir);
+    await addMedia(p.join(dir, 'a.jpg'), MediaType.image);
+
+    final before = state.mediaRevision;
+    final deleted = await state.deleteWorkDeep(w1.id!);
+
+    expect(deleted, 1);
+    expect(state.mediaRevision, greaterThan(before),
+        reason: '与 deleteFolderDeep 同一个缺口，两条入口都要覆盖');
   });
 }

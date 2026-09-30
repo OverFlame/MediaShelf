@@ -2,7 +2,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../db/tag_dao.dart';
 import '../services/cover_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -127,15 +126,6 @@ Future<int?> showWorkPicker(BuildContext context, {String title = '移动到作�
   );
 }
 
-/// 标签选择对话框，返回选中的标签（含新建的）
-Future<List<Tag>?> showTagPickerDialog(BuildContext context,
-    {String title = '添加标签', Set<int>? selectedTagIds}) {
-  return showDialog<List<Tag>>(
-    context: context,
-    builder: (_) => _TagPickerDialog(title: title, selectedTagIds: selectedTagIds),
-  );
-}
-
 class _PromptDialog extends StatefulWidget {
   final String title;
   final String initial;
@@ -181,145 +171,5 @@ class _PromptDialogState extends State<_PromptDialog> {
             child: const Text('确定')),
       ],
     );
-  }
-}
-
-class _TagPickerDialog extends StatefulWidget {
-  final String title;
-  final Set<int>? selectedTagIds;
-  const _TagPickerDialog({required this.title, this.selectedTagIds});
-
-  @override
-  State<_TagPickerDialog> createState() => _TagPickerDialogState();
-}
-
-class _TagPickerDialogState extends State<_TagPickerDialog> {
-  final _newCtrl = TextEditingController();
-  final Set<int> _selected = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _selected.addAll(widget.selectedTagIds ?? const {});
-  }
-
-  @override
-  void dispose() {
-    _newCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final appState = context.watch<AppState>();
-    final tags = appState.allTags;
-
-    // 按命名空间分组
-    final groups = <String, List<Tag>>{};
-    for (final t in tags) {
-      groups.putIfAbsent(t.namespace, () => []).add(t);
-    }
-
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 360,
-        height: 420,
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                children: [
-                  for (final entry in groups.entries) ...[
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Text(
-                        entry.key,
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.namespaceColor(entry.key)),
-                      ),
-                    ),
-                    for (final t in entry.value)
-                      CheckboxListTile(
-                        dense: true,
-                        secondary: Container(
-                          width: 10,
-                          height: 10,
-                          decoration: BoxDecoration(
-                            color: AppColors.parseColor(t.color),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        value: _selected.contains(t.id),
-                        onChanged: (v) {
-                          setState(() {
-                            if (v == true) {
-                              _selected.add(t.id!);
-                            } else {
-                              _selected.remove(t.id);
-                            }
-                          });
-                        },
-                        title: Text(t.name, style: const TextStyle(fontSize: 13)),
-                      ),
-                  ],
-                ],
-              ),
-            ),
-            const Divider(),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _newCtrl,
-                    decoration: const InputDecoration(
-                      hintText: '新建标签（命名空间:名称）',
-                      isDense: true,
-                    ),
-                    onSubmitted: (_) => _createNew(appState),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add, color: AppColors.accent),
-                  onPressed: () => _createNew(appState),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消')),
-        TextButton(
-          onPressed: () {
-            final selected = tags.where((t) => _selected.contains(t.id)).toList();
-            Navigator.pop(context, selected);
-          },
-          child: const Text('确定'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _createNew(AppState appState) async {
-    final raw = _newCtrl.text.trim();
-    if (raw.isEmpty) return;
-    String ns = 'general';
-    String name = raw;
-    final ci = raw.indexOf(':');
-    if (ci > 0) {
-      ns = raw.substring(0, ci);
-      name = raw.substring(ci + 1);
-    }
-    final tag = await appState.createTag(name, namespace: ns);
-    if (mounted) {
-      setState(() {
-        _selected.add(tag.id!);
-        _newCtrl.clear();
-      });
-    }
   }
 }

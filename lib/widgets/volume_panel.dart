@@ -202,6 +202,7 @@ class _VolumePanelState extends State<VolumePanel> {
           ),
           IconButton(
             key: const ValueKey('volume-close'),
+            tooltip: '关闭',
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.close, size: 18),
           ),

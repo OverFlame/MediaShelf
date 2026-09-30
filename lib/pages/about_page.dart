@@ -198,8 +198,8 @@ class AboutPage extends StatelessWidget {
 
   /// 数据目录来自 [DataDirService]；日志目录是数据目录下的 `logs/`。
   ///
-  /// 本应用目前用 dart:developer.log 输出到控制台，还没有写日志文件，所以
-  /// `logs/` 可能一开始是空的——打开前会先建目录，避免打开失败。
+  /// 运行期日志由 [LogUtil.attachFileSink] 落到 `logs/app-<日期>.log`，
+  /// 目录在启动流程里已建好；这里再建一次只是防用户手删后打不开。
   Future<String> _resolveDir(BuildContext context, {required bool log}) async {
     final dataDir = await DataDirService.instance.dataDir;
     if (!log) return dataDir;

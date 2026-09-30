@@ -2,10 +2,11 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
-import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import '../db/sql_like.dart';
 import '../utils/crop_math.dart';
+import 'media_rules.dart';
 
 /// 卷封面的来源，[priority] 越小越优先（BUILD_GUIDE 第 19.2 节）。
 enum VolumeCoverSource {
@@ -96,8 +97,8 @@ class VolumeCoverService {
 
   /// 路径是否是白名单封面图（只看名字与扩展名，不碰磁盘）
   static bool isWhitelistCoverPath(String path) {
-    final name = p.basenameWithoutExtension(path).toLowerCase();
-    final ext = p.extension(path).toLowerCase();
+    final name = stemOfPath(path).toLowerCase();
+    final ext = extOfPath(path);
     return coverFileNames.contains(name) && coverExtensions.contains(ext);
   }
 
@@ -160,9 +161,15 @@ class VolumeCoverService {
   /// 界面实际该显示的封面：手动指定优先，其次自动候选。
   ///
   /// 这个方法**不写库**，适合列表渲染时调用。
+  ///
+  /// 手动那一份文件可能已经被删掉或搬走了（用户整理目录、换机器），所以
+  /// 也要过一遍存在性判断：直接返回它会让卡片一直空着，而自动候选明明
+  /// 还在，本该兜底。
   Future<String?> effectiveCover(int folderId) async {
     final manual = await currentCover(folderId);
-    if (manual != null && manual.isNotEmpty) return manual;
+    if (manual != null && manual.isNotEmpty && _fileExists(manual)) {
+      return manual;
+    }
     return (await resolve(folderId))?.path;
   }
 
@@ -302,8 +309,8 @@ class VolumeCoverService {
       final clauses = <String>[];
       final args = <Object?>[];
       for (final dir in slice) {
-        clauses.add("path LIKE ? ESCAPE '\\'");
-        args.add('${_escapeLike(_pathPrefix(dir))}%');
+        clauses.add("path LIKE ? $sqlLikeEscape");
+        args.add('${escapeLike(_pathPrefix(dir))}%');
       }
       final rows = await _db.query(
         'media',
@@ -330,8 +337,8 @@ class VolumeCoverService {
       final clauses = <String>[];
       final args = <Object?>[];
       for (final dir in slice) {
-        clauses.add("path LIKE ? ESCAPE '\\'");
-        args.add('${_escapeLike(_pathPrefix(dir))}%');
+        clauses.add("path LIKE ? $sqlLikeEscape");
+        args.add('${escapeLike(_pathPrefix(dir))}%');
       }
       final rows = await _db.query(
         'media',
@@ -358,9 +365,4 @@ class VolumeCoverService {
         (d.contains('\\') || RegExp(r'^[A-Za-z]:').hasMatch(d)) ? '\\' : '/';
     return d.endsWith(sep) ? d : '$d$sep';
   }
-
-  static String _escapeLike(String value) => value
-      .replaceAll(r'\', r'\\')
-      .replaceAll('%', r'\%')
-      .replaceAll('_', r'\_');
 }

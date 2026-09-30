@@ -16,16 +16,8 @@ import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/services/thumbnail_cache.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import '../support/test_env.dart';
 
-/// 把 getApplicationSupportDirectory() 指到临时目录。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 1×1 的合法 PNG：缩略图生成器要真能解码原图。
 final _pngBytes = base64Decode(
@@ -46,7 +38,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('mediashelf_images');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

@@ -8,15 +8,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/subtitle_service.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -94,7 +87,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('audioshelf_subtitle');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     await DatabaseManager.instance.close();
     await DatabaseManager.instance.init();
@@ -139,6 +132,16 @@ void main() {
       expect(SubtitleService.languageOfPath('/m/zh/a.eng.srt'), 'en');
     });
 
+    test('languageOfPath 认另一种分隔符的路径', () {
+      // 库可以在 Windows 与 Linux 之间搬，路径字符串里留的是当初那台机器的
+      // 分隔符。用 p.basenameWithoutExtension 时反斜杠不算目录分隔符，
+      // 整条路径会被当成主干，目录名里的语言字会被当成文件的语言。
+      expect(SubtitleService.languageOfPath(r'D:\日语\a.srt'), isNull);
+      expect(SubtitleService.languageOfPath(r'D:\Music\a.eng.srt'), 'en');
+      expect(SubtitleService.languageOfPath(r'D:\Music\第01话.简日.srt'),
+          'zh-Hans');
+    });
+
     test('languageRank 未知与 null 排最后', () {
       expect(SubtitleService.languageRank('zh-Hans'), 0);
       expect(SubtitleService.languageRank('ko'), 4);
@@ -154,6 +157,14 @@ void main() {
       expect(SubtitleService.matchRank('/m/a.srt', 'a.mp3'), 1);
       expect(SubtitleService.matchRank('/m/a.zh.srt', 'a.mp3'), 2);
       expect(SubtitleService.matchRank('/m/b.zh.srt', 'a.mp3'), 2);
+    });
+
+    test('matchRank 认另一种分隔符的路径', () {
+      // 反斜杠路径在 Linux 上会被 p.basenameWithoutExtension 整条留下，
+      // 完全同名的字幕反而被判定成最低档（2），默认字幕就选错了。
+      expect(SubtitleService.matchRank(r'D:\Music\a.mp3.srt', 'a.mp3'), 0);
+      expect(SubtitleService.matchRank(r'D:\Music\a.srt', 'a.mp3'), 1);
+      expect(SubtitleService.matchRank(r'D:\Music\a.zh.srt', 'a.mp3'), 2);
     });
   });
 
@@ -249,6 +260,29 @@ void main() {
       expect(list.map((e) => e.id).toList(), <int>[rank1, rank0, rank2]);
       expect(list.first.isDefault, isTrue);
       expect(list.first.filename, 'a.srt');
+    });
+
+    test('listForAudio 反斜杠路径的库也能排出正确档位', () async {
+      // 音频名与字幕名都取不到 filename 列时，会退回从 path 现算。
+      // 路径带的是建库那台机器的分隔符，现算必须两种都认，否则同名
+      // 字幕（档位 0）会被判成最低档，排到别的字幕后面。
+      final audio = await insertMedia(
+          path: r'D:\Music\a.mp3', type: 'audio', filename: '');
+      final exact = await insertMedia(
+          path: r'D:\Music\z\a.mp3.srt',
+          type: 'subtitle',
+          filename: '',
+          subtitleOf: audio);
+      final other = await insertMedia(
+          path: r'D:\Music\a\a.zh.srt',
+          type: 'subtitle',
+          filename: '',
+          subtitleOf: audio);
+
+      final list = await service.listForAudio(audio);
+
+      expect(list.map((e) => e.id).toList(), <int>[exact, other]);
+      expect(list.first.filename, 'a.mp3.srt');
     });
 
     test('listForAudio 只回本音频的字幕', () async {

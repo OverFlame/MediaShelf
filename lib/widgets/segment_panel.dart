@@ -6,6 +6,7 @@ import '../state/app_state.dart';
 import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
+import 'controller_owner.dart';
 
 /// 收藏选段面板（BUILD_GUIDE 第 24.3 节）。
 ///
@@ -106,25 +107,28 @@ class _SegmentPanelState extends State<SegmentPanel> {
     final controller = TextEditingController(text: initial ?? '');
     return showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('选段名称'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '例如：副歌'),
-          onSubmitted: (v) => Navigator.of(ctx).pop(v),
+      builder: (ctx) => ControllerOwner(
+        controllers: [controller],
+        child: AlertDialog(
+          title: const Text('选段名称'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '例如：副歌'),
+            onSubmitted: (v) => Navigator.of(ctx).pop(v),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              key: const ValueKey('segment-name-ok'),
+              onPressed: () => Navigator.of(ctx).pop(controller.text),
+              child: const Text('确定'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            key: const ValueKey('segment-name-ok'),
-            onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: const Text('确定'),
-          ),
-        ],
       ),
     );
   }

@@ -15,15 +15,8 @@ import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -36,7 +29,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_settings_page');
-    PathProviderPlatform.instance = _FakePathProvider(p.join(tmp.path, 'support'));
+    PathProviderPlatform.instance = FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     settingsFile = File(p.join(tmp.path, 'support', 'AudioShelf', 'settings.json'));

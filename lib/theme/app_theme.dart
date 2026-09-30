@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/color_util.dart';
+
 /// 应用配色与主题 — 原创深色配色，语义化命名。
 ///
 /// 提供统一色板与 Material 3 主题，浅色/深色双主题。
@@ -48,15 +50,14 @@ class AppColors {
   static Color namespaceColor(String namespace) =>
       namespaceColors[namespace] ?? accent;
 
-  /// 解析 "#rrggbb" 十六进制颜色（标签色点用）
-  static Color parseColor(String hex) {
-    try {
-      final h = hex.replaceFirst('#', '');
-      return Color(int.parse(h, radix: 16) | 0xFF000000);
-    } catch (_) {
-      return accent;
-    }
-  }
+  /// 解析十六进制颜色字符串（标签色点用），支持 `#RGB` / `#RRGGBB` /
+  /// `#RRGGBBAA`，解析失败回落到 [accent]。
+  ///
+  /// 旧实现是 `int.parse(h, radix: 16) | 0xFF000000`，遇到 8 位
+  /// `#RRGGBBAA` 会把红通道当 alpha 用：`#7A3E5FAA` 读出 `0xAA7A3E5F`，
+  /// 红蓝对调还带上了旧的 alpha。写入口（`colorToHex`）已经是 RRGGBBAA，
+  /// 这里跟 [parseHexColor] 共用一套语义，免得读写两头不一致。
+  static Color parseColor(String hex) => parseHexColor(hex, fallback: accent);
 
   // ── 浅色常量（与深色一一对应）──
   static const Color backgroundLight = Color(0xFFF1F2F7);

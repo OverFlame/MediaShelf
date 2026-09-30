@@ -112,20 +112,26 @@ class MigrationService {
     final images = await _openReadOnly(srcImageDb, 'PictureViewer2', report);
 
     if (File(dstDb).existsSync() && overwriteDst) {
+      // 目标库是已经在用的库，删掉就没了：先按和老库同样的办法备份一份，
+      // 合库中途出错时还能把原库放回去。
+      for (final dir in await _backup(<String>[dstDb])) {
+        report.note('目标库已备份到 $dir');
+      }
       report.note('目标库已存在，按 overwrite 参数先删除：$dstDb');
       await factory.deleteDatabase(dstDb);
     }
 
+    // 目标库可能是应用已经在用的旧版库（BUILD_GUIDE 8.5 的续跑场景），
+    // 所以这里必须和应用主库一样接上 onCreate/onUpgrade：只给 version 的话，
+    // sqflite 会把 user_version 直接抬成 v8，结构却留在旧版。
     final dst = await factory.openDatabase(
       dstDb,
       options: OpenDatabaseOptions(
         version: Tables.version,
         onConfigure: (db) => db.execute('PRAGMA foreign_keys=ON'),
-        onCreate: (db, version) async {
-          for (final sql in Tables.createStatements) {
-            await db.execute(sql);
-          }
-        },
+        onCreate: (db, version) => Tables.createAll(db),
+        onUpgrade: (db, oldVersion, newVersion) =>
+            Tables.applyMigrations(db, oldVersion, newVersion),
       ),
     );
 

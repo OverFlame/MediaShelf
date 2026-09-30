@@ -77,6 +77,45 @@ void main() {
     });
   });
 
+  group('writeFileAtomic', () {
+    test('目标已存在时直接改名覆盖，不留 .tmp', () async {
+      final target = File(p.join(tmp.path, 'settings.json'));
+      await target.writeAsString('old');
+
+      await writeFileAtomic(
+          target, (t) => t.writeAsString('new', flush: true));
+
+      expect(await target.readAsString(), 'new');
+      expect(File('${target.path}.tmp').existsSync(), isFalse);
+    });
+
+    test('目标不存在时把目录一起建出来', () async {
+      final target = File(p.join(tmp.path, 'logs', 'deep', '.datadir'));
+
+      await writeFileAtomic(
+          target, (t) => t.writeAsString('/custom/dir', flush: true));
+
+      expect(await target.readAsString(), '/custom/dir');
+    });
+
+    test('写入失败时目标保持旧内容，临时文件清掉', () async {
+      final target = File(p.join(tmp.path, 'settings.json'));
+      await target.writeAsString('old');
+
+      await expectLater(
+        writeFileAtomic(target, (t) async {
+          await t.writeAsString('half', flush: true);
+          throw StateError('写坏了');
+        }),
+        throwsA(isA<StateError>()),
+      );
+
+      // 先删目标再改名的写法会在这里留下「文件没了」，这条就是防线。
+      expect(await target.readAsString(), 'old');
+      expect(File('${target.path}.tmp').existsSync(), isFalse);
+    });
+  });
+
   group('AtomicFileWriter', () {
     test('并发 40 次写入后内容是完整的最后一次', () async {
       final path = p.join(tmp.path, 'settings.json');

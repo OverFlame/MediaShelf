@@ -8,7 +8,7 @@ import '../state/app_state.dart';
 import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/format.dart';
-import 'dialogs.dart' hide showTagPickerDialog;
+import 'dialogs.dart';
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
 import 'subtitle_assign_dialog.dart';
@@ -21,13 +21,22 @@ class FolderBrowser extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    return Column(
-      children: [
-        _breadcrumbBar(context, appState),
-        _toolbar(context, appState),
-        const Divider(height: 1),
-        Expanded(child: _content(context, appState)),
-      ],
+    // 手机上从磁贴长按进多选之后，返回键先退出多选，而不是直接离开这一页。
+    return PopScope(
+      canPop: !appState.selectionMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && appState.selectionMode) {
+          appState.clearTrackSelection();
+        }
+      },
+      child: Column(
+        children: [
+          _breadcrumbBar(context, appState),
+          _toolbar(context, appState),
+          const Divider(height: 1),
+          Expanded(child: _content(context, appState)),
+        ],
+      ),
     );
   }
 
@@ -97,88 +106,175 @@ class FolderBrowser extends StatelessWidget {
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       color: AppColors.backgroundOf(context),
-      child: Row(
-        children: [
-          FilledButton.icon(
-            onPressed:
-                appState.tracks.isEmpty ? null : () => appState.playAllCurrent(),
-            icon: const Icon(Icons.play_arrow, size: 16),
-            label: Text(isWorkLevel ? '播放全部' : '播放本文件夹'),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              foregroundColor: AppColors.backgroundOf(context),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-            ),
-          ),
-          if (isWorkLevel && appState.currentWork != null) ...[
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              // 导入进行中再点一次会开第二个导入，这里跟 tag_panel 保持一致都禁用。
-              onPressed: appState.importing
-                  ? null
-                  : () => _addFolderToWork(context, appState),
-              icon: const Icon(Icons.create_new_folder_outlined, size: 15),
-              label: const Text('添加文件夹到本作品'),
-            ),
-          ],
-          const Spacer(),
-          IconButton(
-            key: const ValueKey('track-toolbar-select'),
-            tooltip: appState.selectionMode ? '退出多选' : '多选',
-            icon: Icon(
-              appState.selectionMode
-                  ? Icons.check_box
-                  : Icons.check_box_outline_blank,
-              size: 18,
-              color: appState.selectionMode ? AppColors.accent : null,
-            ),
-            onPressed: appState.selectionMode
-                ? () => appState.clearTrackSelection()
-                : () => appState.enterTrackSelectionMode(),
-          ),
-          if (appState.selectedTrackIds.isNotEmpty) ...[
-            Text('已选 ${appState.selectedTrackIds.length} 首',
-                style: TextStyle(
-                    color: AppColors.mutedLightOf(context), fontSize: 12)),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              key: const ValueKey('track-select-all'),
-              onPressed: appState.selectAllTracks,
-              icon: const Icon(Icons.select_all, size: 15),
-              label: const Text('全选'),
-            ),
-            const SizedBox(width: 4),
-            TextButton.icon(
-              onPressed: () => _batchAddTags(context, appState),
-              icon: const Icon(Icons.sell_outlined, size: 15),
-              label: const Text('批量加标签'),
-            ),
-            const SizedBox(width: 4),
-            TextButton.icon(
-              onPressed: () => _batchRemoveTags(context, appState),
-              icon: const Icon(Icons.label_off_outlined, size: 15),
-              label: const Text('批量移除标签'),
-            ),
-            const SizedBox(width: 4),
-            TextButton.icon(
-              key: const ValueKey('track-remove-records'),
-              onPressed: () => _batchRemoveRecords(context, appState),
-              icon: const Icon(Icons.playlist_remove, size: 15),
-              label: Text('移除记录',
-                  style: TextStyle(color: AppColors.danger)),
-            ),
-            const SizedBox(width: 4),
-            IconButton(
-              onPressed: () => appState.clearTrackSelection(),
-              icon: Icon(Icons.close, size: 16, color: AppColors.mutedOf(context)),
-              tooltip: '清除选择',
-            ),
-          ],
-          Text('${appState.tracks.length} 首',
-              style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12)),
-          const SizedBox(width: 8),
-          _sortMenu(context, appState),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 手机竖屏放不下多选时那一长串（已选 N 首 / 全选 / 批量加标签 / 批量移除
+          // 标签 / 移除记录…），早期实现是固定高度的 Row，超出的按钮直接被裁掉，
+          // 「批量移除标签」的入口就是这样在手机上消失的。窄屏改成图标按钮 +
+          // 提示气泡，动作区再套一层横向滚动兜底。
+          final narrow = constraints.maxWidth < 560;
+          final tight = constraints.maxWidth < 320;
+          final side = tight ? 30.0 : 36.0;
+          final iconStyle = IconButton.styleFrom(
+            padding: EdgeInsets.zero,
+            minimumSize: Size.square(side),
+            maximumSize: Size.square(side),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          );
+          Widget action({
+            required Key key,
+            required String tooltip,
+            required IconData icon,
+            required VoidCallback onPressed,
+            required String label,
+            Color? color,
+          }) {
+            if (!narrow) {
+              return TextButton.icon(
+                key: key,
+                onPressed: onPressed,
+                icon: Icon(icon, size: 15),
+                label: Text(label, style: TextStyle(fontSize: 12, color: color)),
+              );
+            }
+            return IconButton(
+              key: key,
+              tooltip: tooltip,
+              icon: Icon(icon, size: tight ? 16 : 18, color: color),
+              onPressed: onPressed,
+              style: iconStyle,
+            );
+          }
+
+          if (appState.selectionMode) {
+            final count = appState.selectedTrackIds.length;
+            final actions = <Widget>[
+              // 退出多选写成带文字的按钮：原来只用一个勾选框图标加提示气泡，
+              // 触屏上既看不出那是开关、也看不到气泡，退出路径不清楚。
+              action(
+                key: const ValueKey('track-toolbar-select'),
+                tooltip: '退出多选',
+                icon: Icons.close,
+                onPressed: appState.clearTrackSelection,
+                label: '退出多选',
+              ),
+              action(
+                key: const ValueKey('track-select-all'),
+                tooltip: '全选',
+                icon: Icons.select_all,
+                onPressed: appState.selectAllTracks,
+                label: '全选',
+              ),
+              action(
+                key: const ValueKey('track-batch-add-tags'),
+                tooltip: '批量加标签',
+                icon: Icons.sell_outlined,
+                onPressed: () => _batchAddTags(context, appState),
+                label: '批量加标签',
+              ),
+              action(
+                key: const ValueKey('track-batch-remove-tags'),
+                tooltip: '批量移除标签',
+                icon: Icons.label_off_outlined,
+                onPressed: () => _batchRemoveTags(context, appState),
+                label: '批量移除标签',
+              ),
+              action(
+                key: const ValueKey('track-remove-records'),
+                tooltip: '移除记录',
+                icon: Icons.playlist_remove,
+                onPressed: () => _batchRemoveRecords(context, appState),
+                label: '移除记录',
+                color: AppColors.danger,
+              ),
+            ];
+            // reverse 让动作贴右，跟宽屏上 Spacer 的观感一致；
+            // 再窄也只是滚动，不会把入口裁掉。
+            return Row(
+              children: [
+                Text(tight ? '$count 首' : '已选 $count 首',
+                    style: TextStyle(
+                        color: AppColors.textPrimaryOf(context), fontSize: 12)),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              if (narrow)
+                IconButton(
+                  key: const ValueKey('track-play-all'),
+                  tooltip: isWorkLevel ? '播放全部' : '播放本文件夹',
+                  icon: Icon(Icons.play_arrow,
+                      size: 22,
+                      color: appState.tracks.isEmpty ? null : AppColors.accent),
+                  onPressed: appState.tracks.isEmpty
+                      ? null
+                      : () => appState.playAllCurrent(),
+                  style: iconStyle,
+                )
+              else
+                FilledButton.icon(
+                  onPressed: appState.tracks.isEmpty
+                      ? null
+                      : () => appState.playAllCurrent(),
+                  icon: const Icon(Icons.play_arrow, size: 16),
+                  label: Text(isWorkLevel ? '播放全部' : '播放本文件夹'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: AppColors.backgroundOf(context),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                ),
+              if (isWorkLevel && appState.currentWork != null) ...[
+                const SizedBox(width: 8),
+                if (narrow)
+                  IconButton(
+                    key: const ValueKey('track-add-folder'),
+                    // 导入进行中再点一次会开第二个导入，这里跟 tag_panel 保持一致都禁用。
+                    onPressed: appState.importing
+                        ? null
+                        : () => _addFolderToWork(context, appState),
+                    tooltip: '添加文件夹到本作品',
+                    icon: const Icon(Icons.create_new_folder_outlined, size: 20),
+                    style: iconStyle,
+                  )
+                else
+                  OutlinedButton.icon(
+                    // 导入进行中再点一次会开第二个导入，这里跟 tag_panel 保持一致都禁用。
+                    onPressed: appState.importing
+                        ? null
+                        : () => _addFolderToWork(context, appState),
+                    icon: const Icon(Icons.create_new_folder_outlined, size: 15),
+                    label: const Text('添加文件夹到本作品'),
+                  ),
+              ],
+              const Spacer(),
+              Text('${appState.tracks.length} 首',
+                  style: TextStyle(
+                      color: AppColors.mutedLightOf(context), fontSize: 12)),
+              const SizedBox(width: 4),
+              IconButton(
+                key: const ValueKey('track-toolbar-select'),
+                tooltip: '多选',
+                icon: const Icon(Icons.check_box_outline_blank, size: 18),
+                onPressed: appState.enterTrackSelectionMode,
+                style: iconStyle,
+              ),
+              const SizedBox(width: 4),
+              _sortMenu(context, appState),
+            ],
+          );
+        },
       ),
     );
   }
@@ -593,7 +689,9 @@ class _TrackTile extends StatelessWidget {
               ),
             if (track.durationMs != null)
               Text(
-                formatDuration(Duration(milliseconds: track.durationMs!)),
+                // 已播时间 / 总时长：没播过的显示 0:00，播过的能一眼看出听到哪里
+                '${formatDuration(Duration(milliseconds: track.playPositionMs))}'
+                ' / ${formatDuration(Duration(milliseconds: track.durationMs!))}',
                 style: TextStyle(color: AppColors.mutedLightOf(context), fontSize: 12),
               ),
             PopupMenuButton<String>(

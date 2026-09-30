@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import '../utils/log_util.dart';
 import 'media_dao.dart';
+import 'sql_like.dart';
 
 /// 音频曲目
 class TrackItem {
@@ -18,6 +19,10 @@ class TrackItem {
   final String? coverPath;
   final int addedAt;
 
+  /// 上一次播到的位置（毫秒）。0 表示没播过，续播取舍见
+  /// lib/services/play_position.dart。
+  final int playPositionMs;
+
   const TrackItem({
     this.id,
     required this.path,
@@ -32,6 +37,7 @@ class TrackItem {
     this.subtitlePath,
     this.coverPath,
     required this.addedAt,
+    this.playPositionMs = 0,
   });
 
   /// 显示标题：直接显示源文件名（含扩展名）
@@ -44,6 +50,7 @@ class TrackItem {
     String? artist,
     String? album,
     int? durationMs,
+    int? playPositionMs,
   }) {
     return TrackItem(
       id: id,
@@ -59,6 +66,7 @@ class TrackItem {
       subtitlePath: subtitlePath ?? this.subtitlePath,
       coverPath: coverPath ?? this.coverPath,
       addedAt: addedAt,
+      playPositionMs: playPositionMs ?? this.playPositionMs,
     );
   }
 
@@ -76,6 +84,7 @@ class TrackItem {
         'subtitle_path': subtitlePath,
         'cover_path': coverPath,
         'added_at': addedAt,
+        'play_position_ms': playPositionMs,
       };
 
   factory TrackItem.fromMap(Map<String, dynamic> map) => TrackItem(
@@ -92,6 +101,7 @@ class TrackItem {
         subtitlePath: map['subtitle_path'] as String?,
         coverPath: map['cover_path'] as String?,
         addedAt: map['added_at'] as int,
+        playPositionMs: map['play_position_ms'] as int? ?? 0,
       );
 }
 
@@ -162,16 +172,16 @@ class TrackDao {
   Future<List<TrackItem>> queryDirectInDir(String dirPath,
       {String? search, String orderBy = 'filename'}) async {
     final (prefix, sep) = _directPrefix(dirPath);
-    final head = _escapeLike(prefix);
+    final head = escapeLike(prefix);
     final conditions = <String>[
-      "path LIKE ? ESCAPE '\\'",
-      "path NOT LIKE ? ESCAPE '\\'",
+      "path LIKE ? $sqlLikeEscape",
+      "path NOT LIKE ? $sqlLikeEscape",
     ];
-    final args = <dynamic>['$head%', '$head%${_escapeLike(sep)}%'];
+    final args = <dynamic>['$head%', '$head%${escapeLike(sep)}%'];
     if (search != null && search.isNotEmpty) {
-      conditions.add("(filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\')");
-      args.add('%${_escapeLike(search)}%');
-      args.add('%${_escapeLike(search)}%');
+      conditions.add("(filename LIKE ? $sqlLikeEscape OR title LIKE ? $sqlLikeEscape)");
+      args.add('%${escapeLike(search)}%');
+      args.add('%${escapeLike(search)}%');
     }
     final rows = await _db.query(
       'tracks',
@@ -197,8 +207,8 @@ class TrackDao {
           : i + _queryBatchSize;
       final batch = dirPaths.sublist(i, end);
       final conditions =
-          batch.map((_) => "path LIKE ? ESCAPE '\\'").join(' OR ');
-      final args = batch.map((p) => '${_escapeLike(p)}%').toList();
+          batch.map((_) => "path LIKE ? $sqlLikeEscape").join(' OR ');
+      final args = batch.map((p) => '${escapeLike(p)}%').toList();
       final rows = await _db.query('tracks',
           where: conditions, whereArgs: args, orderBy: orderBy);
       for (final item in rows.map(TrackItem.fromMap)) {
@@ -211,11 +221,11 @@ class TrackDao {
 
   /// 按文件名/标题/艺术家模糊搜索
   Future<List<TrackItem>> searchByName(String q, {int limit = 100000}) async {
-    final like = '%${_escapeLike(q)}%';
+    final like = '%${escapeLike(q)}%';
     final rows = await _db.query(
       'tracks',
-      where: "filename LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\' "
-          "OR artist LIKE ? ESCAPE '\\' OR album LIKE ? ESCAPE '\\'",
+      where: "filename LIKE ? $sqlLikeEscape OR title LIKE ? $sqlLikeEscape "
+          "OR artist LIKE ? $sqlLikeEscape OR album LIKE ? $sqlLikeEscape",
       whereArgs: [like, like, like, like],
       orderBy: 'filename',
       limit: limit,
@@ -305,14 +315,6 @@ class TrackDao {
   /// 一条 SQL 里的最大占位符数量，超过就分批查
   static const int _queryBatchSize = 500;
 
-  /// 转义 LIKE 通配符，配合 `ESCAPE '\'` 使用。
-  ///
-  /// 不转义时搜索 `%` 会命中全部曲目，`_` 会命中任意单字符；目录名里的
-  /// `_` 还会让「本目录直属曲目」的边界判断失效。
-  static String _escapeLike(String raw) => raw
-      .replaceAll('\\', '\\\\')
-      .replaceAll('%', '\\%')
-      .replaceAll('_', '\\_');
 
   /// 分批查询后按同一列重排；单批时顺序仍由 SQLite 决定
   static void _sortBy(String orderBy, List<TrackItem> items) {

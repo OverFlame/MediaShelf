@@ -15,20 +15,13 @@ import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/subtitle_assign_dialog.dart';
+import '../support/test_env.dart';
 
 /// 一个可变标志，用来观察对话框是否已经关闭。
 class _Flag {
   bool value = false;
 }
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 字幕归属对话框的真实点击验收（BUILD_GUIDE 第 23.6 节）。
 void main() {
@@ -51,7 +44,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_subtitle_dialog');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

@@ -23,6 +23,9 @@ class SubtitlePage extends StatefulWidget {
 class _SubtitlePageState extends State<SubtitlePage> {
   static const double _itemExtent = 56.0;
 
+  /// 用户滑过之后先留住视线，这段时间内不自动回到正在播放的那一句。
+  static const Duration _resumeDelay = Duration(seconds: 8);
+
   final ScrollController _scroll = ScrollController();
   bool _userScrolling = false;
   int _lastIndex = -1;
@@ -115,6 +118,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
       child: Row(
         children: [
           IconButton(
+            tooltip: '收起',
             icon: const Icon(Icons.keyboard_arrow_down,
                 size: 28, color: Colors.white70),
             onPressed: () => Navigator.of(context).pop(),
@@ -203,7 +207,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
           _userScrolling = true;
         } else if (n is ScrollEndNotification && n.dragDetails != null) {
           _resumeTimer?.cancel();
-          _resumeTimer = Timer(const Duration(seconds: 3), () {
+          _resumeTimer = Timer(_resumeDelay, () {
             if (mounted) setState(() => _userScrolling = false);
           });
         }
@@ -228,7 +232,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: active ? Colors.white : Colors.white38,
+                  color: active ? Colors.white : Colors.white30,
                   fontSize: active ? 22 : 16,
                   fontWeight: active ? FontWeight.w700 : FontWeight.w400,
                   height: 1.3,
@@ -292,10 +296,12 @@ class _SubtitlePageState extends State<SubtitlePage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               IconButton(
+                tooltip: '上一首',
                 icon: const Icon(Icons.skip_previous, color: Colors.white, size: 30),
                 onPressed: () => player.previous(),
               ),
               IconButton(
+                tooltip: player.playing ? '暂停' : '播放',
                 icon: Icon(
                   player.playing
                       ? Icons.pause_circle_filled
@@ -306,6 +312,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
                 onPressed: () => player.togglePlay(),
               ),
               IconButton(
+                tooltip: '下一首',
                 icon: const Icon(Icons.skip_next, color: Colors.white, size: 30),
                 onPressed: () => player.next(),
               ),
@@ -331,8 +338,9 @@ class _SubtitlePageState extends State<SubtitlePage> {
 
   void _scrollTo(int index) {
     if (!_scroll.hasClients) return;
-    final target =
-        index * _itemExtent - _viewportHeight / 2 + _itemExtent / 2;
+    // 列表上下内边距各留了半个视口，所以第 index 句的中心本来就在视口正中；
+    // 滚到 index * _itemExtent 就是把它摆正，多余的偏移会把它推到视口底部。
+    final target = index * _itemExtent;
     final maxExtent = _scroll.position.maxScrollExtent;
     final clamped = target.clamp(0.0, maxExtent < 0 ? 0.0 : maxExtent);
     _scroll.animateTo(clamped,

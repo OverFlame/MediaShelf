@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../db/tag_dao.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import 'controller_owner.dart';
 import 'dialogs.dart';
 import 'scan_access_snack.dart';
 
@@ -442,6 +443,7 @@ class _TagPanelState extends State<TagPanel> {
                 size: 14, color: AppColors.mutedLightOf(context)),
             suffixIcon: _tagSearch.isNotEmpty
                 ? IconButton(
+                    tooltip: '清空搜索',
                     icon: Icon(Icons.clear,
                         size: 14, color: AppColors.mutedLightOf(context)),
                     onPressed: () {
@@ -768,122 +770,125 @@ class _TagPanelState extends State<TagPanel> {
 
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) {
-          final name = nameCtrl.text.trim();
-          final ns = nsCtrl.text.trim().isEmpty
-              ? 'general'
-              : nsCtrl.text.trim();
-          final exact =
-              name.isEmpty ? null : appState.findTagByName(name, namespace: ns);
-          final other = name.isEmpty ? null : appState.findTagByName(name);
-          final warning = exact != null
-              ? '「${exact.toString()}」已经存在，换个名字或改命名空间'
-              : (other != null
-                  ? '「${other.toString()}」在别的命名空间，继续创建会得到两个同名标签'
-                  : null);
-          return AlertDialog(
-            title: const Text('新建标签'),
-            content: SizedBox(
-              width: 300,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    key: const ValueKey('create-tag-name'),
-                    controller: nameCtrl,
-                    autofocus: true,
-                    onChanged: (_) => setLocal(() {}),
-                    decoration: const InputDecoration(
-                        labelText: '标签名', hintText: '例如：纯音乐'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    key: const ValueKey('create-tag-ns'),
-                    controller: nsCtrl,
-                    onChanged: (_) => setLocal(() {}),
-                    decoration: const InputDecoration(
-                        labelText: '命名空间 (可选)', hintText: '例如：风格'),
-                  ),
-                  if (suggestions.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: suggestions.map((ns) {
-                          return ActionChip(
-                            key: ValueKey('ns-suggestion-$ns'),
-                            label: Text(ns,
-                                style: const TextStyle(fontSize: 11)),
-                            visualDensity: VisualDensity.compact,
-                            onPressed: () => setLocal(() => nsCtrl.text = ns),
-                          );
-                        }).toList(),
-                      ),
+      builder: (ctx) => ControllerOwner(
+        controllers: [nameCtrl, nsCtrl],
+        child: StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final name = nameCtrl.text.trim();
+            final ns = nsCtrl.text.trim().isEmpty
+                ? 'general'
+                : nsCtrl.text.trim();
+            final exact =
+                name.isEmpty ? null : appState.findTagByName(name, namespace: ns);
+            final other = name.isEmpty ? null : appState.findTagByName(name);
+            final warning = exact != null
+                ? '「${exact.toString()}」已经存在，换个名字或改命名空间'
+                : (other != null
+                    ? '「${other.toString()}」在别的命名空间，继续创建会得到两个同名标签'
+                    : null);
+            return AlertDialog(
+              title: const Text('新建标签'),
+              content: SizedBox(
+                width: 300,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      key: const ValueKey('create-tag-name'),
+                      controller: nameCtrl,
+                      autofocus: true,
+                      onChanged: (_) => setLocal(() {}),
+                      decoration: const InputDecoration(
+                          labelText: '标签名', hintText: '例如：纯音乐'),
                     ),
-                  ],
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: presetColors.map((c) {
-                      final selected = color == c;
-                      return GestureDetector(
-                        onTap: () => setLocal(() => color = c),
-                        child: Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: AppColors.parseColor(c),
-                            shape: BoxShape.circle,
-                            border: selected
-                                ? Border.all(
-                                    color: AppColors.textPrimaryOf(ctx),
-                                    width: 2)
-                                : null,
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                  if (warning != null) ...[
                     const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        warning,
-                        key: const ValueKey('create-tag-warning'),
-                        style: TextStyle(
-                            fontSize: 11,
-                            color: exact != null
-                                ? AppColors.danger
-                                : AppColors.mutedOf(ctx)),
-                      ),
+                    TextField(
+                      key: const ValueKey('create-tag-ns'),
+                      controller: nsCtrl,
+                      onChanged: (_) => setLocal(() {}),
+                      decoration: const InputDecoration(
+                          labelText: '命名空间 (可选)', hintText: '例如：风格'),
                     ),
+                    if (suggestions.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: suggestions.map((ns) {
+                            return ActionChip(
+                              key: ValueKey('ns-suggestion-$ns'),
+                              label: Text(ns,
+                                  style: const TextStyle(fontSize: 11)),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => setLocal(() => nsCtrl.text = ns),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: presetColors.map((c) {
+                        final selected = color == c;
+                        return GestureDetector(
+                          onTap: () => setLocal(() => color = c),
+                          child: Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: AppColors.parseColor(c),
+                              shape: BoxShape.circle,
+                              border: selected
+                                  ? Border.all(
+                                      color: AppColors.textPrimaryOf(ctx),
+                                      width: 2)
+                                  : null,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    if (warning != null) ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          warning,
+                          key: const ValueKey('create-tag-warning'),
+                          style: TextStyle(
+                              fontSize: 11,
+                              color: exact != null
+                                  ? AppColors.danger
+                                  : AppColors.mutedOf(ctx)),
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('取消')),
-              TextButton(
-                key: const ValueKey('create-tag-submit'),
-                onPressed: (name.isEmpty || exact != null)
-                    ? null
-                    : () {
-                        appState.createTag(name,
-                            namespace: nsCtrl.text.trim(), color: color);
-                        Navigator.pop(ctx);
-                      },
-                child: const Text('创建'),
-              ),
-            ],
-          );
-        },
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('取消')),
+                TextButton(
+                  key: const ValueKey('create-tag-submit'),
+                  onPressed: (name.isEmpty || exact != null)
+                      ? null
+                      : () {
+                          appState.createTag(name,
+                              namespace: nsCtrl.text.trim(), color: color);
+                          Navigator.pop(ctx);
+                        },
+                  child: const Text('创建'),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -901,68 +906,71 @@ class _TagPanelState extends State<TagPanel> {
 
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('编辑标签'),
-          content: SizedBox(
-            width: 300,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: '标签名'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: nsCtrl,
-                  decoration: const InputDecoration(
-                      labelText: '命名空间 (可选)', hintText: '留空为 general'),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: presetColors.map((c) {
-                    final selected = color == c;
-                    return GestureDetector(
-                      onTap: () => setLocal(() => color = c),
-                      child: Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: AppColors.parseColor(c),
-                          shape: BoxShape.circle,
-                          border: selected
-                              ? Border.all(
-                                  color: AppColors.textPrimaryOf(ctx), width: 2)
-                              : null,
+      builder: (ctx) => ControllerOwner(
+        controllers: [nameCtrl, nsCtrl],
+        child: StatefulBuilder(
+          builder: (ctx, setLocal) => AlertDialog(
+            title: const Text('编辑标签'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: '标签名'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nsCtrl,
+                    decoration: const InputDecoration(
+                        labelText: '命名空间 (可选)', hintText: '留空为 general'),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: presetColors.map((c) {
+                      final selected = color == c;
+                      return GestureDetector(
+                        onTap: () => setLocal(() => color = c),
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: AppColors.parseColor(c),
+                            shape: BoxShape.circle,
+                            border: selected
+                                ? Border.all(
+                                    color: AppColors.textPrimaryOf(ctx), width: 2)
+                                : null,
+                          ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
+                      );
+                    }).toList(),
+                  ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('取消')),
+              TextButton(
+                onPressed: () {
+                  final name = nameCtrl.text.trim();
+                  if (name.isNotEmpty) {
+                    final ns = nsCtrl.text.trim();
+                    appState.updateTag(tag.id!, name,
+                        namespace: ns.isEmpty ? 'general' : ns, color: color);
+                    Navigator.pop(ctx);
+                  }
+                },
+                child: const Text('保存'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('取消')),
-            TextButton(
-              onPressed: () {
-                final name = nameCtrl.text.trim();
-                if (name.isNotEmpty) {
-                  final ns = nsCtrl.text.trim();
-                  appState.updateTag(tag.id!, name,
-                      namespace: ns.isEmpty ? 'general' : ns, color: color);
-                  Navigator.pop(ctx);
-                }
-              },
-              child: const Text('保存'),
-            ),
-          ],
         ),
       ),
     );

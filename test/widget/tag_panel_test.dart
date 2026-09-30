@@ -16,15 +16,8 @@ import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/tag_panel.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 标签面板：命名空间折叠、规则标签保护、新建标签的联想与重名提醒。
 void main() {
@@ -44,7 +37,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_tag_panel');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();
@@ -237,6 +230,22 @@ void main() {
     await tester.tap(find.widgetWithText(TextButton, '删除'));
     await settleIo(tester);
     expect(app.allTags.any((t) => t.id == styleTag.id), isFalse);
+  });
+
+  testWidgets('标签搜索框的清空按钮有 tooltip，点了能清空', (tester) async {
+    await pumpPanel(tester);
+    final search = find.byWidgetPredicate((w) =>
+        w is TextField && w.decoration?.hintText == '搜索标签...');
+    expect(search, findsOneWidget);
+    expect(find.byTooltip('清空搜索'), findsNothing, reason: '没输入时不显示清空按钮');
+
+    await tester.enterText(search, '风景');
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('清空搜索'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('清空搜索'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(search).controller?.text, '');
   });
 
   testWidgets('滚动标签列表时表头与搜索框不跟着移动', (tester) async {

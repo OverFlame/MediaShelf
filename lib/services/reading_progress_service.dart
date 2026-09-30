@@ -269,16 +269,21 @@ class ReadingProgressService {
     await _db.delete(_table);
   }
 
-  /// 先落盘再停止使用。之后任何写操作都会抛 [StateError]。
+  /// 先停止使用，再把攒着的进度落盘。之后任何写操作都会抛 [StateError]。
+  ///
+  /// `_disposed` 在第一个 await 之前就置位：调用方常常是 fire-and-forget
+  /// （换库实例时 `unawaited(stale.dispose())`），若等落盘完才失效，紧接着的
+  /// 一次 [record] 会穿过 `_ensureUsable()` 打到已经关掉的连接上。
+  /// [flush] 自己不查 `_ensureUsable`，所以置位后照样能把 pending 写下去。
   Future<void> dispose() async {
     if (_disposed) return;
+    _disposed = true;
     try {
       await flush();
     } catch (error, stack) {
       logError('ReadingProgressService', 'dispose 落盘失败', error);
       logDebug('ReadingProgressService', '$stack');
     }
-    _disposed = true;
     _cancelTimer();
   }
 

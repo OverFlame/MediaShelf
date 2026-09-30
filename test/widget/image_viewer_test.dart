@@ -14,6 +14,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import '../support/test_env.dart';
 
 /// 1×1 的合法 PNG。文件必须真的存在，否则查看器的 `_checkFileExists`
 /// 会把画面换成「文件不存在」占位卡，树里就没有 `Image` 可断言了。
@@ -30,14 +31,6 @@ const List<int> _png1x1 = <int>[
   0xAE, 0x42, 0x60, 0x82,
 ];
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -54,7 +47,7 @@ void main() {
     imageDir = await Directory(
       p.join(tmp.path, 'images'),
     ).create(recursive: true);
-    PathProviderPlatform.instance = _FakePathProvider(
+    PathProviderPlatform.instance = FakePathProvider(
       p.join(tmp.path, 'support'),
     );
     DataDirService.instance.resetCache();

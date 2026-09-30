@@ -13,6 +13,7 @@ import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/utils/filter_expression.dart';
+import 'support/test_env.dart';
 
 /// 建一个空的 v5 库。
 ///
@@ -77,6 +78,29 @@ const List<String> _v6Statements = [
     work_id   INTEGER REFERENCES works(id) ON DELETE SET NULL,
     UNIQUE(name, parent)
   )
+  ''',
+];
+
+/// v8 的 media 表（v9 之前），只有升级用例用到的部分：没有 play_position_ms。
+const List<String> _v8MediaStatements = [
+  '''
+  CREATE TABLE media (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    path         TEXT    NOT NULL UNIQUE,
+    media_type   TEXT    NOT NULL CHECK (media_type IN ('audio', 'image', 'video', 'subtitle')),
+    ext          TEXT    NOT NULL DEFAULT '',
+    name_lower   TEXT    NOT NULL DEFAULT '',
+    filename     TEXT    NOT NULL,
+    added_at     INTEGER NOT NULL,
+    cover_path   TEXT,
+    sort_key     TEXT,
+    duration_ms  INTEGER,
+    subtitle_of  INTEGER REFERENCES media(id) ON DELETE SET NULL,
+    is_default_subtitle INTEGER NOT NULL DEFAULT 0
+  )
+  ''',
+  '''
+  CREATE VIEW tracks AS SELECT * FROM media WHERE media_type = 'audio'
   ''',
 ];
 
@@ -453,6 +477,114 @@ void main() {
     await db.close();
   });
 
+  test('v8 升 v9：media 多出播放位置列，老行与图片行都按 0 处理', () async {
+    final path = '${dir.path}/v8.db';
+    final old = await databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 8,
+        onConfigure: (db) async {
+          await db.execute('PRAGMA foreign_keys=ON');
+        },
+        onCreate: (db, version) async {
+          for (final sql in _v8MediaStatements) {
+            await db.execute(sql);
+          }
+        },
+      ),
+    );
+    final audioId = await old.insert('media', {
+      'path': '/m/听过一半.mp3',
+      'media_type': 'audio',
+      'ext': 'mp3',
+      'name_lower': '听过一半.mp3',
+      'filename': '听过一半.mp3',
+      'added_at': 7,
+      'duration_ms': 200000,
+    });
+    final imageId = await old.insert('media', {
+      'path': '/m/封面.png',
+      'media_type': 'image',
+      'ext': 'png',
+      'name_lower': '封面.png',
+      'filename': '封面.png',
+      'added_at': 8,
+    });
+    expect(await old.getVersion(), 8);
+    await old.close();
+
+    final db = await reopenWithMigrations(path);
+    expect(await db.getVersion(), Tables.version);
+    expect(await _columns(db, 'media'), contains('play_position_ms'));
+
+    // 老行拿默认值 0，其余列一个字都不动
+    final audio = (await db.query('media',
+            where: 'id = ?', whereArgs: [audioId]))
+        .single;
+    expect(audio['play_position_ms'], 0);
+    expect(audio['duration_ms'], 200000);
+    expect(audio['filename'], '听过一半.mp3');
+    expect(TrackItem.fromMap(audio).playPositionMs, 0);
+
+    // 写入只在音频行上生效：图片行的 id 撞上了也不动
+    final media = MediaDao(db);
+    await media.setPlayPosition(audioId, 83000);
+    expect(
+        (await db.query('media', where: 'id = ?', whereArgs: [audioId]))
+            .single['play_position_ms'],
+        83000);
+    await media.setPlayPosition(imageId, 5000);
+    expect(
+        (await db.query('media', where: 'id = ?', whereArgs: [imageId]))
+            .single['play_position_ms'],
+        0,
+        reason: '播放位置是音频的事，不该写到图片行上');
+
+    final viaView = await TrackDao(db).getById(audioId);
+    expect(viaView, isNotNull);
+    expect(viaView!.playPositionMs, 83000,
+        reason: 'tracks 视图是 SELECT *，新列要能跟着读出来');
+
+    expect(
+        (await db.rawQuery('PRAGMA integrity_check')).first.values.first, 'ok');
+    await db.close();
+  });
+
+  test('TrackItem 的播放位置能往返，copyWith 能改也能清零', () async {
+    final db = await openV5('${dir.path}/playpos.db');
+    final tracks = TrackDao(db);
+
+    final id = await tracks.insert(const TrackItem(
+      path: '/m/a.mp3',
+      filename: 'a.mp3',
+      addedAt: 1,
+      durationMs: 200000,
+      playPositionMs: 83000,
+    ));
+    expect((await tracks.getById(id))!.playPositionMs, 83000);
+    expect((await tracks.getById(id))!.toMap()['play_position_ms'], 83000);
+
+    // 清零也要能写回去（一首听完就该从头播）
+    await tracks.update(TrackItem(
+      id: id,
+      path: '/m/a.mp3',
+      filename: 'a.mp3',
+      addedAt: 1,
+      durationMs: 200000,
+      playPositionMs: 0,
+    ));
+    expect((await tracks.getById(id))!.playPositionMs, 0);
+
+    // 不给位置就是 0：老调用点不用改
+    final other = await tracks.insert(
+        const TrackItem(path: '/m/b.mp3', filename: 'b.mp3', addedAt: 2));
+    expect((await tracks.getById(other))!.playPositionMs, 0);
+    final otherTrack = (await tracks.getById(other))!;
+    expect(otherTrack.copyWith(playPositionMs: 9000).playPositionMs, 9000);
+
+    await db.close();
+  });
+
   test('MediaDao 落 sort_key，查询按自然序返回', () async {
     final db = await openV5('${dir.path}/sort.db');
     final media = MediaDao(db);
@@ -512,7 +644,7 @@ void main() {
   });
 
   test('DatabaseManager.init 给老行回填 sort_key（补零，修自然序）', () async {
-    PathProviderPlatform.instance = _FakePathProvider(
+    PathProviderPlatform.instance = FakePathProvider(
       p.join(dir.path, 'support'),
     );
     DataDirService.instance.resetCache();
@@ -576,12 +708,3 @@ void main() {
   });
 }
 
-/// 把 getApplicationSupportDirectory() 指到临时目录（回填用例要真开库）。
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import 'db/database.dart';
@@ -23,6 +25,10 @@ Future<void> main() async {
 
   try {
     await DataDirService.instance.init();
+    // 界面提示「详情见 logs 目录」，启动时就把文件 sink 挂上，
+    // 否则用户按提示去找，目录永远是空的。
+    LogUtil.attachFileSink(
+        p.join(await DataDirService.instance.dataDir, 'logs'));
     await SettingsService.instance.init();
     await DatabaseManager.instance.init();
 
@@ -48,6 +54,17 @@ Future<void> main() async {
   }
 }
 
+/// 系统自带文案（返回、复制、取消等）的本地化配置，[MediaShelfApp] 用这套。
+const List<LocalizationsDelegate<dynamic>> appLocalizationsDelegates =
+    <LocalizationsDelegate<dynamic>>[
+  GlobalMaterialLocalizations.delegate,
+  GlobalWidgetsLocalizations.delegate,
+  GlobalCupertinoLocalizations.delegate,
+];
+
+/// 界面文案以中文为主，英文兜底。
+const List<Locale> appSupportedLocales = <Locale>[Locale('zh'), Locale('en')];
+
 class MediaShelfApp extends StatelessWidget {
   const MediaShelfApp({super.key});
 
@@ -60,6 +77,9 @@ class MediaShelfApp extends StatelessWidget {
       theme: AppColors.lightThemeData,
       darkTheme: AppColors.darkThemeData,
       themeMode: themeMode,
+      // 不加这段的话，返回、复制、取消这些系统自带的提示一律是英文
+      localizationsDelegates: appLocalizationsDelegates,
+      supportedLocales: appSupportedLocales,
       home: const HomePage(),
     );
   }
@@ -79,7 +99,9 @@ class _ErrorApp extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: SelectableText(
-              '启动失败：\n\n$message',
+              '启动失败：\n\n$message\n\n'
+              '详情见应用数据目录下的 logs/ 文件夹'
+              '（启动失败发生在数据目录就绪之前时，只有控制台输出）。',
               style: const TextStyle(fontSize: 14),
             ),
           ),

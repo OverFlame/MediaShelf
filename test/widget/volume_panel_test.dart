@@ -18,15 +18,8 @@ import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/volume_panel.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 1×1 的合法 PNG，只为让 `Image.file` 有东西可解。
 const String _pngBase64 =
@@ -51,7 +44,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     tmp = await Directory.systemTemp.createTemp('mediashelf_volume_panel');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();
@@ -158,6 +151,8 @@ void main() {
     }
     expect(find.text('没有阅读记录'), findsOneWidget);
     expect(find.text('还没有封面'), findsNothing, reason: 'vol 里有 cover.png');
+    expect(find.byTooltip('关闭'), findsOneWidget,
+        reason: '纯图标按钮要带 tooltip，不然读屏和悬停都看不出是干什么的');
   });
 
   testWidgets('空卷提示没有图片，点阅读不打开查看器', (tester) async {

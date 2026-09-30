@@ -12,15 +12,8 @@ import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
+import '../support/test_env.dart';
 
-class _FakePathProvider extends PathProviderPlatform {
-  _FakePathProvider(this.root);
-
-  final String root;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => root;
-}
 
 /// 「字幕标签默认排除并持久化」的验收（BUILD_GUIDE 第 18.5、11 节阶段 6）。
 void main() {
@@ -31,7 +24,7 @@ void main() {
   setUp(() async {
     tmp = await Directory.systemTemp.createTemp('mediashelf_not_tags');
     PathProviderPlatform.instance =
-        _FakePathProvider(p.join(tmp.path, 'support'));
+        FakePathProvider(p.join(tmp.path, 'support'));
     DataDirService.instance.resetCache();
     SettingsService.instance.resetForTest();
     await DatabaseManager.instance.close();

@@ -1,7 +1,7 @@
-import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../utils/log_util.dart';
+import 'media_rules.dart';
 
 /// 一条字幕行（`media` 表里 `media_type = 'subtitle'` 的行）。
 class SubtitleEntry {
@@ -115,7 +115,7 @@ class SubtitleService {
   /// 语言字（`第01话.简日.srt` → `zh-Hans`）。同一文件里认出多个语言时取
   /// 优先级最高的那个。
   static String? languageOfPath(String path) {
-    final stem = p.basenameWithoutExtension(path);
+    final stem = stemOfPath(path);
     String? best;
     var bestRank = 1 << 30;
     for (final token in stem.split(RegExp(r'[.\-_\s&+]+'))) {
@@ -134,10 +134,10 @@ class SubtitleService {
 
   /// 文件名的匹配档位：0 最好，数值越小越优先
   static int matchRank(String subtitlePath, String audioFilename) {
-    final stem = p.basenameWithoutExtension(subtitlePath).toLowerCase();
+    final stem = stemOfPath(subtitlePath).toLowerCase();
     final audio = audioFilename.toLowerCase();
     if (stem == audio) return 0;
-    if (stem == p.basenameWithoutExtension(audio)) return 1;
+    if (stem == stemOfPath(audio)) return 1;
     return 2;
   }
 
@@ -372,7 +372,7 @@ class SubtitleService {
     if (rows.isEmpty) return '';
     final filename = rows.first['filename'] as String?;
     if (filename != null && filename.isNotEmpty) return filename;
-    return p.basename(rows.first['path'] as String? ?? '');
+    return baseNameOfPath(rows.first['path'] as String? ?? '');
   }
 
   /// 按三级顺序定下 [audioId] 的默认字幕，返回被选中的行。
@@ -420,7 +420,7 @@ class SubtitleService {
     if (rows.isEmpty) return '';
     final filename = rows.first['filename'] as String?;
     if (filename != null && filename.isNotEmpty) return filename;
-    return p.basename(rows.first['path'] as String? ?? '');
+    return baseNameOfPath(rows.first['path'] as String? ?? '');
   }
 
   static Future<List<Map<String, Object?>>> _queryRows(
@@ -440,10 +440,10 @@ class SubtitleService {
   static SubtitleEntry _entryFromRow(Map<String, Object?> row) {
     final path = row['path'] as String? ?? '';
     var filename = row['filename'] as String? ?? '';
-    if (filename.isEmpty) filename = p.basename(path);
+    if (filename.isEmpty) filename = baseNameOfPath(path);
     // ext 列可能是空串（早期导入只写了 path / filename），按文件名补出来
     var ext = row['ext'] as String? ?? '';
-    if (ext.isEmpty) ext = p.extension(filename);
+    if (ext.isEmpty) ext = extOfPath(filename);
     return SubtitleEntry(
       id: row['id']! as int,
       path: path,

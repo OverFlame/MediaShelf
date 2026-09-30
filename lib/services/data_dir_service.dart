@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../utils/file_io.dart';
 import '../utils/log_util.dart';
 
 /// 数据目录服务：统一管理数据库 / 封面缓存 / 设置文件的根目录。
@@ -91,17 +92,14 @@ class DataDirService {
     await _copyFileStrict(
         p.join(oldDir, 'settings.json'), p.join(newD, 'settings.json'));
     await _copyDirStrict(p.join(oldDir, 'covers'), p.join(newD, 'covers'));
+    // 外链播放写出的 m3u8 也在这里，一起搬走，用户能在新目录找到刚生成的列表。
+    await _copyDirStrict(p.join(oldDir, 'playlist'), p.join(newD, 'playlist'));
 
-    // 指针最后写，且先写临时文件再 rename，避免写一半留下坏指针。
+    // 指针最后写。这里绝不能「先删旧指针、再改名」：删完成功而改名之前被打断，
+    // 指针就没了，应用会回落默认目录并建一个空库，用户以为数据丢了。
     final def = await defaultDir();
-    await Directory(def).create(recursive: true);
-    final pointer = p.join(def, '.datadir');
-    final tmp = File('$pointer.tmp');
-    await tmp.writeAsString(newD, flush: true);
-    if (File(pointer).existsSync()) {
-      await File(pointer).delete();
-    }
-    await tmp.rename(pointer);
+    final pointer = File(p.join(def, '.datadir'));
+    await writeFileAtomic(pointer, (tmp) => tmp.writeAsString(newD, flush: true));
 
     _dataDir = newD;
     logInfo('DataDir', 'Migrated data dir: $oldDir -> $newD');
@@ -140,14 +138,30 @@ class DataDirService {
     }
   }
 
+  /// 逐块比较两个文件是否完全一致。
+  ///
+  /// 比的是可能上百 MB 的 SQLite 库：两边各 readAsBytes 一次要吃掉几百 MB
+  /// 常驻内存，低端机直接 OOM。块大小取 64KB，够大不费 syscall，
+  /// 够小不会把内存顶起来。
   Future<bool> _sameBytes(File a, File b) async {
     if (await a.length() != await b.length()) return false;
-    final ab = await a.readAsBytes();
-    final bb = await b.readAsBytes();
-    for (int i = 0; i < ab.length; i++) {
-      if (ab[i] != bb[i]) return false;
+    final ra = await a.open();
+    final rb = await b.open();
+    try {
+      const chunk = 64 * 1024;
+      while (true) {
+        final ab = await ra.read(chunk);
+        final bb = await rb.read(chunk);
+        if (ab.length != bb.length) return false;
+        for (var i = 0; i < ab.length; i++) {
+          if (ab[i] != bb[i]) return false;
+        }
+        if (ab.isEmpty) return true;
+      }
+    } finally {
+      await ra.close();
+      await rb.close();
     }
-    return true;
   }
 
   Future<void> _copyDirStrict(String src, String dst) async {
