@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../utils/file_io.dart';
 import '../utils/log_util.dart';
 import 'data_dir_service.dart';
+import 'subtitle_style.dart';
 
 /// 持久化设置服务（JSON 文件，位于数据目录 settings.json）。
 class SettingsService {
@@ -248,4 +249,46 @@ class SettingsService {
     _data['play_speed'] = speed.clamp(0.5, 2.0).toDouble();
     await _save();
   }
+
+  // ── 字幕页 ──
+  //
+  // 两次间隔：非当前句的透明度（由用户固定，或按当前音轨封面的明暗自动算）
+  // 与用户滑过之后不再自动回正的秒数。
+
+  /// 非当前句的透明度是否按封面亮度自动算。默认开。
+  bool get subtitleOpacityAuto =>
+      (_data['subtitle_opacity_auto'] as bool?) ?? true;
+
+  Future<void> setSubtitleOpacityAuto(bool auto) async {
+    _data['subtitle_opacity_auto'] = auto;
+    await _save();
+  }
+
+  /// 固定模式下非当前句的透明度。
+  double get subtitleInactiveOpacity {
+    final v = _data['subtitle_inactive_opacity'];
+    final d = v is num ? v.toDouble() : SubtitleStyle.defaultInactiveOpacity;
+    return SubtitleStyle.clampInactiveOpacity(d);
+  }
+
+  Future<void> setSubtitleInactiveOpacity(double value) async {
+    _data['subtitle_inactive_opacity'] =
+        SubtitleStyle.clampInactiveOpacity(value);
+    await _save();
+  }
+
+  /// 滑动之后留在原地的秒数：这段时间内不自动回到正在播放的那一句。
+  int get subtitleResumeSeconds =>
+      ((_data['subtitle_resume_seconds'] as int?) ?? defaultSubtitleResumeSeconds)
+          .clamp(minSubtitleResumeSeconds, maxSubtitleResumeSeconds);
+
+  Future<void> setSubtitleResumeSeconds(int seconds) async {
+    _data['subtitle_resume_seconds'] =
+        seconds.clamp(minSubtitleResumeSeconds, maxSubtitleResumeSeconds);
+    await _save();
+  }
+
+  static const int minSubtitleResumeSeconds = 2;
+  static const int maxSubtitleResumeSeconds = 60;
+  static const int defaultSubtitleResumeSeconds = 8;
 }
