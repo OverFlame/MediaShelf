@@ -162,9 +162,9 @@ void main() {
 
   test('批量移除记录只删数据库行，磁盘文件与其它库的记录不受影响', () async {
     final work = await WorkDao(DatabaseManager.instance.db)
-        .create('图库', library: 'image');
+        .create('图库', library: 'media');
     final folder = await folders.create('照片',
-        workId: work.id, library: 'image');
+        workId: work.id, library: 'media');
     await folders.addPath(folder.id!, tmp.path);
 
     final mp3a = File(p.join(tmp.path, 'a.mp3'))..writeAsStringSync('a');
@@ -174,12 +174,13 @@ void main() {
     final idb = await addMedia(mp3b.path, MediaType.audio);
     final idc = await addMedia(png.path, MediaType.image);
 
-    // 进图片库文件夹，让这张图成为当前中心列表里的可见项；
+    // 进这个多媒体作品下的文件夹：多媒体栏把三种类型一起平铺，
     // 刷新时选中的可见项才会留住。
     await state.enterWork(work.id!);
     await state.enterFolder(folder.id!);
     await Future<void>.delayed(const Duration(milliseconds: 400));
-    expect(state.images.map((i) => i.id).toList(), [idc]);
+    expect(state.images.map((i) => i.id).toList(), [ida, idb, idc],
+        reason: '多媒体栏平铺本层的音频与图片');
     final tag = await state.createTag('风景');
     await state.addTagsToMedia([ida, idb], [tag]);
 

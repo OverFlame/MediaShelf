@@ -25,7 +25,7 @@ void main() {
         'works',
         <String, Object?>{
           'name': name,
-          'library': 'image',
+          'library': 'media',
           'cover_path': coverPath,
           'created_at': 1,
         },
@@ -38,7 +38,7 @@ void main() {
   }) =>
       db.insert('folders', <String, Object?>{
         'name': name,
-        'library': 'image',
+        'library': 'media',
         'parent': parent,
         'work_id': workId,
       });

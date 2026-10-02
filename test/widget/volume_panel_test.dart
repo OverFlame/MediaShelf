@@ -61,7 +61,7 @@ void main() {
       await File(p.join(dir, name)).writeAsBytes(bytes);
     }
 
-    imageWorkId = (await WorkDao(db).create('图库', library: 'image')).id!;
+    imageWorkId = (await WorkDao(db).create('图库', library: 'media')).id!;
     imageIds = <int>[];
     for (final name in const ['01.png', '02.png', '03.png']) {
       imageIds.add(await mediaDao.insertRow({
@@ -77,10 +77,10 @@ void main() {
     // 建卷要落库，必须在 setUp 里做：测试体跑在假时钟里，真实 I/O 不会完成。
     final folderDao = FolderDao(db);
     volWithPaths = await folderDao.create('卷A',
-        workId: imageWorkId, library: 'image');
+        workId: imageWorkId, library: 'media');
     await folderDao.addPath(volWithPaths.id!, dir);
     volEmpty = await folderDao.create('空卷',
-        workId: imageWorkId, library: 'image');
+        workId: imageWorkId, library: 'media');
   });
 
   tearDown(() async {

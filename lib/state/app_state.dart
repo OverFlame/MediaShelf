@@ -25,6 +25,7 @@ import '../services/subtitle_parser.dart';
 import '../services/subtitle_style.dart';
 import '../services/subtitle_service.dart';
 import '../services/thumbnail_cache.dart';
+import '../services/video_cover_service.dart';
 import '../services/video_launcher.dart';
 import '../services/volume_cover_service.dart';
 import '../utils/filter_expression.dart';
@@ -289,18 +290,12 @@ class AppState extends ChangeNotifier {
 
   String _imageSortKey = 'name';
   bool _imageSortDesc = false;
-  String _videoSortKey = 'name';
-  bool _videoSortDesc = false;
 
-  /// 当前是不是视频库（排序设置按库分开存）。
-  bool get _isVideoLibrary => currentLibrary == 'video';
+  /// 多媒体库的排序字段。图片与视频合并成一个库之后只剩这一套设置。
+  String get visualSortKey => _imageSortKey;
 
-  /// 当前视觉库的排序字段。
-  String get visualSortKey => _isVideoLibrary ? _videoSortKey : _imageSortKey;
-
-  /// 当前视觉库是否降序。
-  bool get visualSortDescending =>
-      _isVideoLibrary ? _videoSortDesc : _imageSortDesc;
+  /// 多媒体库是否降序。
+  bool get visualSortDescending => _imageSortDesc;
 
   /// 当前视觉库的排序比较器。
   ///
@@ -333,25 +328,15 @@ class AppState extends ChangeNotifier {
   Future<void> setVisualSortKey(String key) async {
     if (!visualSortLabels.containsKey(key)) return;
     final ss = SettingsService.instance;
-    if (_isVideoLibrary) {
-      _videoSortKey = key;
-      await ss.setVideoSortKey(key);
-    } else {
-      _imageSortKey = key;
-      await ss.setImageSortKey(key);
-    }
+    _imageSortKey = key;
+    await ss.setImageSortKey(key);
     await _afterVisualSortChanged();
   }
 
   Future<void> setVisualSortDescending(bool desc) async {
     final ss = SettingsService.instance;
-    if (_isVideoLibrary) {
-      _videoSortDesc = desc;
-      await ss.setVideoSortDescending(desc);
-    } else {
-      _imageSortDesc = desc;
-      await ss.setImageSortDescending(desc);
-    }
+    _imageSortDesc = desc;
+    await ss.setImageSortDescending(desc);
     await _afterVisualSortChanged();
   }
 
@@ -375,8 +360,12 @@ class AppState extends ChangeNotifier {
   SegmentService get _segmentService =>
       SegmentService(DatabaseManager.instance.db);
 
-  AppState({required this.player, VideoLauncher? videoLauncher})
-      : _launcher = videoLauncher ?? VideoLauncher();
+  AppState({
+    required this.player,
+    VideoLauncher? videoLauncher,
+    VideoCoverService? videoCovers,
+  })  : _launcher = videoLauncher ?? VideoLauncher(),
+        _videoCoversOverride = videoCovers;
 
   Future<void> init() async {
     logInfo('AppState', 'Initializing...');
@@ -495,8 +484,6 @@ class AppState extends ChangeNotifier {
       _sortDescending = ss.sortDescending;
       _imageSortKey = ss.imageSortKey;
       _imageSortDesc = ss.imageSortDescending;
-      _videoSortKey = ss.videoSortKey;
-      _videoSortDesc = ss.videoSortDescending;
       _gridColumns = ss.gridColumns;
       _viewMode = ss.viewMode;
       _subtitleOpacityAuto = ss.subtitleOpacityAuto;
@@ -614,26 +601,34 @@ class AppState extends ChangeNotifier {
 
   // ═══════════════ 图片列表 / 选中 / 查看器 ═══════════════
 
-  /// 当前浏览上下文的库标识：`audio` / `image` / `video`，没有上下文时为 null。
+  /// 当前浏览上下文的库标识：`audio` / `media`，没有上下文时为 null。
   String? get currentLibrary =>
       _currentWork?.library ?? _currentFolder?.library;
 
-  /// 当前是否在图片库。
-  bool get isImageLibrary => currentLibrary == 'image';
-
-  /// 当前是否在视觉库（图片或视频）。
+  /// 界面当前选中的页签库：`audio`（音频栏）或 `media`（多媒体栏）。
   ///
-  /// 视觉库的媒体行在 `media` 表里，音频库走 `tracks` 视图；[_loadCenter] 据此
-  /// 决定填 [_images] 还是 [_tracks]。视频与图片在这一层同构，区别只在查询用的
-  /// [MediaType]。
-  bool get isVisualLibrary {
-    final lib = currentLibrary;
-    return lib == 'image' || lib == 'video';
+  /// 页签决定中心区怎么装填，而不是当前作品的库归属：多媒体栏里点进一个音频
+  /// 作品，它的目录层也要按「所有类型一起列」装填，否则中心区一片空白。
+  String _browsingLibrary = 'audio';
+
+  /// 切页签时调用（见 `HomePage._switchLibrary`）。
+  void setBrowsingLibrary(String library) {
+    if (library == _browsingLibrary) return;
+    _browsingLibrary = library;
+    logInfo('AppState', 'browsingLibrary=$library');
   }
 
-  /// 视觉库查询该用的媒体类型；音频上下文返回图片类型，调用方只在视觉分支用它。
-  MediaType get _visualMediaType =>
-      currentLibrary == 'video' ? MediaType.video : MediaType.image;
+  /// 中心区是否按「所有类型」装填：多媒体栏，或当前就是多媒体作品。
+  bool get _fillsImages => _browsingLibrary == 'media' || isVisualLibrary;
+
+  /// 当前是否在多媒体库。图片与视频合并后只有音频、多媒体两个库。
+  bool get isImageLibrary => currentLibrary == 'media';
+
+  /// 当前是否在多媒体库。
+  ///
+  /// 多媒体库的媒体行在 `media` 表里（音频、图片、视频同表），音频库走
+  /// `tracks` 视图；[_loadCenter] 据此决定装填方式。
+  bool get isVisualLibrary => currentLibrary == 'media';
 
   /// 单选（普通点击）
   void selectImage(int? id) {
@@ -845,10 +840,10 @@ class AppState extends ChangeNotifier {
     try {
       final search = _searchQuery.trim();
       final filterActive = hasAdvancedFilter || _tagFilter.active;
-      final visual = isVisualLibrary;
-      final visualType = _visualMediaType;
-      // 标签筛选要按当前库的媒体类型查：视频行不是音频，落进曲目集合就全被滤掉。
-      final matchType = visual ? visualType : MediaType.audio;
+      final visual = _fillsImages;
+      // 多媒体库不限类型：音频、图片、视频行都在 media 表里，一起装填。音频库
+      // 只看音频行。标签筛选也按这个取值，null 表示不限媒体类型。
+      final MediaType? matchType = visual ? null : MediaType.audio;
 
       List<VirtualFolder> folders;
       List<TrackItem> tracks;
@@ -858,7 +853,7 @@ class AppState extends ChangeNotifier {
         folders = const [];
         if (visual) {
           tracks = const [];
-          var list = await _mediaDao.searchByName(search, type: visualType);
+          var list = await _mediaDao.searchByName(search, type: null);
           if (filterActive) {
             final ids = await _computeMatchingIds(matchType);
             list =
@@ -882,7 +877,7 @@ class AppState extends ChangeNotifier {
             images = _currentFolderPath == null
                 ? const <MediaItem>[]
                 : await _mediaDao.queryDirectInDir(_currentFolderPath!,
-                    type: visualType);
+                    type: null);
           } else {
             images = const [];
             tracks = _currentFolderPath == null
@@ -970,8 +965,8 @@ class AppState extends ChangeNotifier {
   }
 
   /// 当前筛选下命中的媒体 id 集合。[type] 是当前库的媒体类型：音频库用
-  /// `MediaType.audio`，图片库与视频库分别用各自的类型。
-  Future<Set<int>> _computeMatchingIds(MediaType type) async {
+  /// `MediaType.audio`，多媒体库传 null（不限类型）。
+  Future<Set<int>> _computeMatchingIds(MediaType? type) async {
     if (hasAdvancedFilter) {
       return _tagDao.getIdsByExpression(type, _advancedFilter, _allTags);
     }
@@ -984,7 +979,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<List<VirtualFolder>> _filterFolders(
-      List<VirtualFolder> folders, Set<int> matchingIds, MediaType type) async {
+      List<VirtualFolder> folders, Set<int> matchingIds, MediaType? type) async {
     if (folders.isEmpty) return [];
     final matchingPaths = matchingIds.isEmpty
         ? <String>[]
@@ -1514,22 +1509,26 @@ class AppState extends ChangeNotifier {
 
   /// 按扫描结果推断库归属。
   ///
-  /// 优先级：音频 > 图片 > 视频。混合目录按音频处理，和改动前的行为一致。
+  /// 优先级：音频 > 多媒体。目录里只要有音频，走音频栏那套导入（时长、内嵌封面、
+  /// 字幕配对都在那里做）；纯图片与视频目录归多媒体库。
   static String _libraryForScan(ScanResult scan) {
     if (scan.audioPaths.isNotEmpty) return 'audio';
-    if (scan.imagePaths.isNotEmpty) return 'image';
-    if (scan.videoPaths.isNotEmpty) return 'video';
-    return 'audio';
+    return 'media';
   }
 
-  /// 图片与视频的单目录列表，按库归属取。
-  static List<String> _visualPaths(ScanResult scan, String library) =>
-      library == 'video' ? scan.videoPaths : scan.imagePaths;
+  /// 多媒体库要落行的文件：图片与视频一起。音频走 [ImportService]，因为时长、
+  /// 内嵌封面与字幕配对都在那条链上。
+  static List<String> _visualPaths(ScanResult scan) =>
+      <String>[...scan.imagePaths, ...scan.videoPaths];
 
-  /// 新建一个图片或视频作品，把扫描到的文件落库并挂上虚拟文件夹。
+  /// 新建一个多媒体作品，把扫描到的图片、视频与音频一起落库并挂上虚拟文件夹。
+  ///
+  /// 图片与视频直接写 media 表；音频交给 [ImportService]，这样时长、内嵌封面、
+  /// 字幕配对与音频栏一致。同一个目录两条链都跑，作品与文件夹共用一份。
   Future<Work?> _importVisualWork(
       String dirPath, String library, ScanResult scan) async {
-    final paths = _visualPaths(scan, library);
+    final visualPaths = _visualPaths(scan);
+    final paths = <String>[...visualPaths, ...scan.audioPaths];
     if (paths.isEmpty) {
       logWarn('AppState', '$library 库没有可导入的文件: $dirPath');
       return null;
@@ -1540,7 +1539,14 @@ class AppState extends ChangeNotifier {
       return null;
     }
     final work = await _workDao.create(_baseName(dirPath), library: library);
-    final imported = await _runVisualImport(dirPath, work.id!, library, paths);
+    var imported = 0;
+    if (visualPaths.isNotEmpty) {
+      imported += await _runVisualImport(dirPath, work.id!, library, visualPaths);
+    }
+    if (scan.audioPaths.isNotEmpty) {
+      imported +=
+          await _runImport(dirPath, work.id!, scan: scan, library: library);
+    }
     if (imported == 0) {
       final why = _importError ?? '没有新条目落库';
       logWarn('AppState', '导入没有落库（$why），删除空作品: ${work.name}');
@@ -1550,7 +1556,7 @@ class AppState extends ChangeNotifier {
     return work;
   }
 
-  /// 把图片或视频写进 media 表，并在目标库下建/复用虚拟文件夹。
+  /// 把图片与视频写进 media 表，并在目标库下建/复用虚拟文件夹。
   Future<int> _runVisualImport(
       String dirPath, int workId, String library, List<String> paths) async {
     var imported = 0;
@@ -1574,7 +1580,9 @@ class AppState extends ChangeNotifier {
         }
         rows.add({
           'path': path,
-          'media_type': library,
+          // 落到多媒体作品里的行按文件自己的类型写，[library] 只决定作品与文件夹
+          // 的归属。这样图片、视频、音频在同一个目录里也能各算各的类型。
+          'media_type': mediaTypeOfPath(path) ?? library,
           'ext': extOfPath(path),
           'name_lower': nameLowerOfPath(path),
           'filename': baseNameOfPath(path),
@@ -1664,11 +1672,14 @@ class AppState extends ChangeNotifier {
     if (!_beginImport('importDirectoryIntoWork')) return;
     try {
       final work = await _workDao.getById(workId);
+      final scan = await FileScanner.scanDirectoryOffThread(dirPath);
       if (work != null && work.library != 'audio') {
-        final scan = await FileScanner.scanDirectoryOffThread(dirPath);
-        final paths = _visualPaths(scan, work.library);
+        final paths = _visualPaths(scan);
         if (paths.isNotEmpty) {
           await _runVisualImport(dirPath, workId, work.library, paths);
+        }
+        if (scan.audioPaths.isNotEmpty) {
+          await _runImport(dirPath, workId, scan: scan, library: work.library);
         }
         return;
       }
@@ -1708,12 +1719,13 @@ class AppState extends ChangeNotifier {
 
   /// 真正干活的部分。调用方负责用 [_beginImport] / [_endImport] 圈住导入期。
   /// 返回处理过的新曲目数，0 表示这次导入没有新增内容。
-  Future<int> _runImport(String dirPath, int workId, {ScanResult? scan}) async {
+  Future<int> _runImport(String dirPath, int workId,
+      {ScanResult? scan, String library = 'audio'}) async {
     var imported = 0;
     try {
       final importService = ImportService.fromDB();
-      final stream =
-          importService.importDirectory(dirPath, workId: workId, scan: scan);
+      final stream = importService.importDirectory(dirPath,
+          workId: workId, scan: scan, library: library);
       // 导入流按文件吐进度。逐条 notifyListeners 会让整页重建上千次，
       // 进度条却看不出差别，所以按 1% 粒度通知。
       final throttle = ProgressThrottle();
@@ -2003,7 +2015,7 @@ class AppState extends ChangeNotifier {
         logWarn('AppState', '音频库请用「导入系列」把子目录当成卷: $dirPath');
         return 0;
       }
-      final children = await _childDirsWithMedia(dirPath, lib);
+      final children = await _childDirsWithMedia(dirPath);
       if (children.isEmpty) {
         logInfo('AppState', '子目录里没有 $lib 媒体，按单目录导入: $dirPath');
         final work = await _importVisualWork(dirPath, lib, scan);
@@ -2028,18 +2040,21 @@ class AppState extends ChangeNotifier {
     return created;
   }
 
-  /// 直接子目录里含该库媒体的那些，按名字自然序。
-  Future<List<String>> _childDirsWithMedia(
-    String dirPath,
-    String library,
-  ) async {
+  /// 直接子目录里含媒体（图片、视频或音频）的那些，按名字自然序。
+  ///
+  /// 多媒体栏的作品也收音频，所以子目录只放音频时同样算「有内容」。
+  Future<List<String>> _childDirsWithMedia(String dirPath) async {
     final dir = Directory(dirPath);
     if (!await dir.exists()) return const <String>[];
     final hits = <String>[];
     await for (final entity in dir.list(followLinks: false)) {
       if (entity is! Directory) continue;
       final scan = await FileScanner.scanDirectoryOffThread(entity.path);
-      final paths = library == 'video' ? scan.videoPaths : scan.imagePaths;
+      final paths = <String>[
+        ...scan.imagePaths,
+        ...scan.videoPaths,
+        ...scan.audioPaths,
+      ];
       if (paths.isNotEmpty) hits.add(entity.path);
     }
     hits.sort((a, b) => naturalCompare(_baseName(a), _baseName(b)));
@@ -2562,6 +2577,42 @@ class AppState extends ChangeNotifier {
     await playTracks(tracks, 0);
   }
 
+  /// 播放某个目录下的音频（多媒体栏点音频磁贴走这里）。
+  ///
+  /// 目录里的音频行组成本目录的专辑队列：先按音频类型取行，排成与网格一致的
+  /// 顺序，再换成 TrackItem，与音频栏同源。传 [startMediaId] 就从那一首开始。
+  /// 本目录里的音频，按当前排序拍成播放队列（多媒体栏的音频专辑式播放）。
+  ///
+  /// 图片与视频行不进来：专辑只装音频，双击视频是外链、双击图片是阅读。
+  Future<List<TrackItem>> audioQueueInDir(String dirPath) async {
+    final rows =
+        await _mediaDao.queryDirectInDir(dirPath, type: MediaType.audio);
+    if (rows.isEmpty) return const <TrackItem>[];
+    final ids = _sortImages(rows).map((m) => m.id).whereType<int>().toList();
+    if (ids.isEmpty) return const <TrackItem>[];
+    final byId = {
+      for (final t in await _trackDao.queryByIds(ids.toSet())) t.id: t,
+    };
+    return <TrackItem>[
+      for (final id in ids)
+        if (byId[id] != null) byId[id]!,
+    ];
+  }
+
+  /// [startMediaId] 在队列里的位置；不在队列里（或没指定）就从第一首开始。
+  static int queueStartIndex(List<TrackItem> queue, int? startMediaId) {
+    if (startMediaId == null) return 0;
+    final i = queue.indexWhere((t) => t.id == startMediaId);
+    return i < 0 ? 0 : i;
+  }
+
+  /// 播放本目录的音频（专辑式），[startMediaId] 指定从哪一首开始。
+  Future<void> playAudioInDir(String dirPath, {int? startMediaId}) async {
+    final queue = await audioQueueInDir(dirPath);
+    if (queue.isEmpty) return;
+    await playTracks(queue, queueStartIndex(queue, startMediaId));
+  }
+
   /// 播放某个作品全部卷下的曲目
   Future<void> playWorkAll(int workId) async {
     final paths = await _folderDao.getPathsByWork(workId);
@@ -2573,19 +2624,25 @@ class AppState extends ChangeNotifier {
 
   /// 用外部播放器播放这个卷（BUILD_GUIDE 第 24.2 节）
   ///
-  /// 优先取卷内的视频行，没有视频时退回该卷的全部媒体行。
+  /// 推哪些行按卷的归属定：音频卷推音频，多媒体卷只推视频。
   Future<LaunchResult> playFolderExternal(int folderId) async {
     final folder = await _folderDao.getById(folderId);
     final paths = await _collectFolderPaths(folderId);
-    return _launchExternal(folder?.name ?? '播放列表', paths);
+    final type = _externalType(folder?.library);
+    return _launchExternal(folder?.name ?? '播放列表', paths, type);
   }
 
   /// 用外部播放器播放这个作品下的全部卷
   Future<LaunchResult> playWorkExternal(int workId) async {
     final work = await _workDao.getById(workId);
     final paths = await _folderDao.getPathsByWork(workId);
-    return _launchExternal(work?.name ?? '播放列表', paths);
+    final type = _externalType(work?.library);
+    return _launchExternal(work?.name ?? '播放列表', paths, type);
   }
+
+  /// 外链播放列表推的行类型：音频作品推音频，其余只推视频。
+  static MediaType _externalType(String? library) =>
+      library == 'audio' ? MediaType.audio : MediaType.video;
 
   /// 收集一个卷及其全部子卷的目录路径
   Future<List<String>> _collectFolderPaths(int folderId) async {
@@ -2603,12 +2660,14 @@ class AppState extends ChangeNotifier {
     return paths;
   }
 
-  /// 生成 m3u8 并交给系统默认播放器
+  /// 生成 m3u8 并交给系统默认播放器。
+  ///
+  /// [type] 决定推哪些行：多媒体作品只推视频，音频作品推音频。图片进系统播放
+  /// 器没有意义；要求的类型一行都没有时直接失败，让调用方提示用户。
   Future<LaunchResult> _launchExternal(
-      String title, List<String> dirPaths) async {
+      String title, List<String> dirPaths, MediaType type) async {
     if (dirPaths.isEmpty) return LaunchResult.failed;
-    var rows = await _mediaDao.queryByDirs(dirPaths, type: MediaType.video);
-    if (rows.isEmpty) rows = await _mediaDao.queryByDirs(dirPaths);
+    final rows = await _mediaDao.queryByDirs(dirPaths, type: type);
     if (rows.isEmpty) return LaunchResult.failed;
     final dir = await DataDirService.instance.dataDir;
     final writer = PlaylistWriter(outputDir: p.join(dir, 'playlist'));
@@ -2737,6 +2796,70 @@ class AppState extends ChangeNotifier {
         .map((t) => t.id == trackId ? t.copyWith(subtitlePath: null) : t)
         .toList();
     notifyListeners();
+  }
+
+  // ═══════════════ 媒体行自己的缩略图 ═══════════════
+
+  /// 给一条媒体行指定或清除它自己的缩略图。
+  ///
+  /// 音频单文件手选封面就写在这里（`media.cover_path`）；视频的封面走
+  /// [videoCoverFor] 的三级取图，不占这列。
+  Future<void> setMediaCover(int id, String? path) async {
+    await _mediaDao.setCoverPath(id, path);
+    // 手选的封面要能立刻盖住三级取图的结果，所以把视频封面的内存缓存一起清掉。
+    _videoCoverFutures.clear();
+    // 在屏的磁贴读的是内存里那一行，换掉它，用户点完菜单立刻看到新封面。
+    final updated = await _mediaDao.getById(id);
+    if (updated != null && _images.any((m) => m.id == id)) {
+      _setImages(_images.map((m) => m.id == id ? updated : m).toList());
+    }
+    _mediaRevision++;
+    notifyListeners();
+  }
+
+  final VideoCoverService? _videoCoversOverride;
+  VideoCoverService? _videoCoversLazy;
+  final Map<String, Future<String?>> _videoCoverFutures = {};
+
+  /// 视频封面的取图服务。延迟到第一次用才建：ThumbnailService 要 init 过，
+  /// 缓存目录才拿得到（AppState.init 里初始化它）。
+  VideoCoverService get _videoCovers =>
+      _videoCoversLazy ??=
+          _videoCoversOverride ??
+          VideoCoverService(
+            outputDir: ThumbnailService.instance.isInitialized
+                ? ThumbnailService.instance.cacheDir
+                : null,
+          );
+
+  /// 取一条视频行的封面路径：行自己的 `cover_path` 优先，否则走
+  /// [VideoCoverService] 的三级取图（系统缩略图 → 容器内嵌封面 → 首帧）。
+  ///
+  /// 同一个路径只取一次，结果留在内存里；取不到返回 null，由界面退回图标。
+  Future<String?> videoCoverFor(MediaItem item) {
+    final own = item.coverPath;
+    if (own != null && own.isNotEmpty && File(own).existsSync()) {
+      return Future<String?>.value(own);
+    }
+    return _videoCoverFutures.putIfAbsent(item.path, () async {
+      try {
+        return await _videoCovers.coverFor(item.path);
+      } catch (e) {
+        logDebug('AppState', 'videoCoverFor(${item.path}) failed: $e');
+        return null;
+      }
+    });
+  }
+
+  /// 一条媒体行显示用的封面：先看行自己的 `cover_path`，再退回当前作品的封面。
+  ///
+  /// 只管库里已经记下来的路径；音频内嵌封面与视频首帧由各自的取图通道负责。
+  String? coverForMedia(MediaItem item) {
+    final own = item.coverPath;
+    if (own != null && own.isNotEmpty && File(own).existsSync()) return own;
+    final workCover = _currentWork?.coverPath;
+    if (workCover != null && File(workCover).existsSync()) return workCover;
+    return null;
   }
 
   /// 当前曲目封面：优先队列来源作品的封面，否则曲目内嵌封面。

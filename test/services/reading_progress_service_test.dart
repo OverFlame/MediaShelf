@@ -71,7 +71,7 @@ void main() {
 
   Future<int> insertFolder(String name) => db.insert('folders', <String, Object?>{
         'name': name,
-        'library': 'image',
+        'library': 'media',
       });
 
   Future<int> insertImage(String path) => db.insert('media', <String, Object?>{

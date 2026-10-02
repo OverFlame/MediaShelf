@@ -41,7 +41,7 @@ void main() {
   /// 阅读进度挂在卷上（= folders 行），外键开着，得先有这条。
   Future<int> addVolume() => DatabaseManager.instance.db.insert(
         'folders',
-        <String, Object?>{'name': 'vol', 'library': 'image'},
+        <String, Object?>{'name': 'vol', 'library': 'media'},
       );
 
   test('换库实例后旧服务被 dispose，再用它会抛 StateError', () async {

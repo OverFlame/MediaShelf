@@ -83,7 +83,7 @@ void main() {
     final work = await state.importDirectory(dir.path);
 
     expect(work, isNotNull, reason: '封面图是图片，目录该进图片库');
-    expect(work!.library, 'image');
+    expect(work!.library, 'media');
     final rows = await db.query('media', where: 'media_type = ?', whereArgs: ['image']);
     expect(rows, hasLength(1));
     expect(state.importing, isFalse);

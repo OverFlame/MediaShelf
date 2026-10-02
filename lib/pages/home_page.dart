@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -18,16 +19,17 @@ import '../widgets/tag_picker_dialog.dart';
 import '../widgets/works_grid.dart';
 import 'settings_page.dart';
 
-/// 音频库的库名。图片、视频库的常量在 `folder_panel.dart` 里（与 `folders.library`
-/// 和 `media.media_type` 同一套取值），这里 import 过来复用。
+/// 音频页的库名。多媒体库的常量在 `folder_panel.dart` 里（与 `works.library`
+/// 和 `folders.library` 同一套取值），这里 import 过来复用。
 const String kAudioLibrary = 'audio';
 
-/// 主页面：顶部先选库（音频 / 图片 / 视频），再渲染该库的面板。
+/// 主页面：顶部先选库（音频 / 多媒体），再渲染该库的面板。
 /// - 宽屏（>=720）：左侧面板 + 中间内容（图片库还能展开右侧详情面板）
 /// - 窄屏（手机）：抽屉（汉堡菜单）+ 中间内容
 ///
 /// 音频库沿用合并前的布局与行为（作品网格 + 文件夹树 + 播放条）；
-/// 图片、视频库换成 `FolderPanel` + `ImageGrid` 这套资源管理器式界面。
+/// 多媒体库换成 `FolderPanel` + `ImageGrid` 这套资源管理器式界面，图片、视频、
+/// 音频都在同一个网格里。
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -36,7 +38,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  /// 当前库：`audio` / `image` / `video`
+  /// 当前库：`audio` / `media`
   String _library = kAudioLibrary;
 
   /// 图片库右侧详情面板是否展开（窄屏改成推一个页面）
@@ -51,6 +53,8 @@ class _HomePageState extends State<HomePage> {
     if (lib == _library) return;
     final appState = context.read<AppState>();
     setState(() => _library = lib);
+    // 页签告诉状态层按哪一侧装填：多媒体栏里点进音频作品也要平铺所有类型。
+    appState.setBrowsingLibrary(lib);
     // 换库必须丢掉上一个库的导航位置，否则中间区会拿着另一个库的 currentWork
     await appState.goHome();
   }
@@ -59,18 +63,17 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
     final isWide = MediaQuery.of(context).size.width >= 720;
-    final showSearch = _library != kVideoLibrary;
 
     return Stack(
       children: [
         Scaffold(
           appBar: AppBar(
-            title: isWide || !showSearch
+            title: isWide
                 ? const Text('MediaShelf',
                     style: TextStyle(fontWeight: FontWeight.bold))
                 : _searchField(appState),
             actions: [
-              if (isWide && showSearch)
+              if (isWide)
                 SizedBox(width: 220, child: _searchField(appState)),
               IconButton(
                 icon: const Icon(Icons.settings_outlined),
@@ -224,7 +227,7 @@ class _HomePageState extends State<HomePage> {
       ],
     );
 
-    if (_library != kImageLibrary || !_detailOpen || !isWide) {
+    if (_library == kAudioLibrary || !_detailOpen || !isWide) {
       return centerColumn;
     }
     return Row(
@@ -271,11 +274,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _searchField(AppState appState) {
-    final hint = switch (_library) {
-      kImageLibrary => '搜索图片...',
-      kVideoLibrary => '搜索视频...',
-      _ => '搜索曲目...',
-    };
+    final hint =
+        _library == kAudioLibrary ? '搜索曲目...' : '搜索图片、视频或音频...';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: TextField(
@@ -301,8 +301,7 @@ class _LibrarySwitcher extends StatelessWidget {
 
   static const List<({String id, String label, IconData icon})> _tabs = [
     (id: kAudioLibrary, label: '音频', icon: Icons.library_music_outlined),
-    (id: kImageLibrary, label: '图片', icon: Icons.photo_outlined),
-    (id: kVideoLibrary, label: '视频', icon: Icons.movie_outlined),
+    (id: kMediaLibrary, label: '多媒体', icon: Icons.photo_library_outlined),
   ];
 
   @override
@@ -377,7 +376,7 @@ class _VisualToolbar extends StatelessWidget {
     required this.onToggleDetail,
   });
 
-  bool get _isImage => library == kImageLibrary;
+  bool get _isImage => library == kMediaLibrary;
 
   @override
   Widget build(BuildContext context) {
@@ -498,6 +497,22 @@ class _VisualToolbar extends StatelessWidget {
                     ? appState.exitVisualSelectionMode()
                     : appState.enterVisualSelectionMode(),
               ),
+              // 音频侧独有的两个动作并进这里：本目录音频成队播放，以及往当前作品
+              // 再补一个文件夹（图片、视频、音频都收）。
+              if (appState.currentFolderPath != null)
+                iconButton(
+                  key: ValueKey('$library-toolbar-play-all'),
+                  tooltip: '播放本目录的音频',
+                  icon: Icons.play_circle_outline,
+                  onPressed: () => _playAllAudio(context),
+                ),
+              if (!compact && appState.currentWork != null)
+                IconButton(
+                  key: ValueKey('$library-toolbar-add-folder'),
+                  tooltip: '添加文件夹到本作品',
+                  icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+                  onPressed: () => _addFolderToWork(context),
+                ),
               if (!compact) ...[
                 IconButton(
                   key: ValueKey('$library-toolbar-tags'),
@@ -601,6 +616,18 @@ class _VisualToolbar extends StatelessWidget {
                         value: 'advancedFilter',
                         child: const Text('高级筛选',
                             style: TextStyle(fontSize: 13))),
+                    if (appState.currentFolderPath != null)
+                      PopupMenuItem(
+                          key: ValueKey('$library-toolbar-play-all'),
+                          value: 'playAll',
+                          child: const Text('播放本目录的音频',
+                              style: TextStyle(fontSize: 13))),
+                    if (appState.currentWork != null)
+                      PopupMenuItem(
+                          key: ValueKey('$library-toolbar-add-folder'),
+                          value: 'addFolder',
+                          child: const Text('添加文件夹到本作品',
+                              style: TextStyle(fontSize: 13))),
                     if (_isImage)
                       PopupMenuItem(
                           key: const ValueKey('image-toolbar-detail'),
@@ -638,12 +665,39 @@ class _VisualToolbar extends StatelessWidget {
       case 'sortDir':
         appState.setVisualSortDescending(!appState.visualSortDescending);
         break;
+      case 'playAll':
+        _playAllAudio(context);
+        break;
+      case 'addFolder':
+        _addFolderToWork(context);
+        break;
       default:
         // 极窄时排序项挂在「更多」里，值形如 sort:name
         if (action.startsWith('sort:')) {
           appState.setVisualSortKey(action.substring(5));
         }
     }
+  }
+
+  /// 播放本目录下的音频（专辑式队列）。目录里没有音频时 `playAudioInDir` 自己
+  /// 就是个空操作，不弹提示。
+  Future<void> _playAllAudio(BuildContext context) async {
+    final appState = context.read<AppState>();
+    final dir = appState.currentFolderPath;
+    if (dir == null) return;
+    await appState.playAudioInDir(dir);
+  }
+
+  /// 把磁盘上的一个文件夹补进当前作品：图片、视频、音频一次都收。
+  Future<void> _addFolderToWork(BuildContext context) async {
+    final appState = context.read<AppState>();
+    final workId = appState.currentWork?.id;
+    if (workId == null) return;
+    final dir = await FilePicker.getDirectoryPath(
+      dialogTitle: '选择要加入本作品的文件夹',
+    );
+    if (dir == null) return;
+    await appState.importDirectoryIntoWork(dir, workId);
   }
 
   void _showTagFilter(BuildContext context) {
@@ -686,9 +740,7 @@ class _BreadcrumbBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
     final crumb = appState.breadcrumb;
-    final rootLabel = appState.currentWork?.library == kVideoLibrary
-        ? '全部视频'
-        : '全部图片';
+    const rootLabel = '全部媒体';
     return SizedBox(
       height: 32,
       child: Row(

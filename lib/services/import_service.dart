@@ -60,7 +60,7 @@ class ImportService {
   /// [scan] 可由调用方预先扫描并传入，省掉一次目录遍历（AppState 建作品前要先确认
   /// 目录里有音频）。
   Stream<ImportProgress> importDirectory(String dirPath,
-      {required int workId, ScanResult? scan}) async* {
+      {required int workId, ScanResult? scan, String library = 'audio'}) async* {
     if (_isImporting) return;
     _isImporting = true;
     try {
@@ -81,7 +81,8 @@ class ImportService {
       //
       // 反过来的话，建树失败时曲目已经落库、却没有任何 folder_paths 覆盖它们：
       // 曲目搜得到、树里进不去，而且调用方看到的是「导入完成」。
-      await _mirrorFolderTree(dirPath, scanned.audioPaths, workId);
+      await _mirrorFolderTree(dirPath, scanned.audioPaths, workId,
+          library: library);
 
       // 元数据解析整批丢到单独 isolate，主 isolate 只做落库和进度（报告第 25 项）。
       //
@@ -161,7 +162,8 @@ class ImportService {
 
   /// 按物理磁盘目录镜像建立文件夹父子层级，全部归属 [workId]。
   Future<void> _mirrorFolderTree(
-      String root, List<String> audioPaths, int workId) async {
+      String root, List<String> audioPaths, int workId,
+      {String library = 'audio'}) async {
     final rootNorm = _normPath(root);
     if (rootNorm.isEmpty) return;
 
@@ -194,6 +196,7 @@ class ImportService {
         name: base.isEmpty ? dir : base,
         parentId: expectedParentId,
         workId: workId,
+        library: library,
       );
     }
   }

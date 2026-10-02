@@ -48,7 +48,7 @@ class _FakeFilePicker extends FilePickerPlatform {
   }
 }
 
-/// 主界面（HomePage）的库切换与图片/视频库面板用例。
+/// 主界面（HomePage）的库切换与音频栏 / 多媒体栏面板用例。
 ///
 /// 全程用 `tester.tap` 点真实按钮。sqflite ffi 在独立 isolate 上跑，
 /// testWidgets 里必须用 `tester.runAsync` 包住建库与造数据（见 [settleIo]）。
@@ -66,6 +66,9 @@ void main() {
   late _FakeFilePicker picker;
 
   late int audioWorkId;
+  late Directory audioDir;
+  late int audioFolderId;
+  late int audioId;
   late int imageWorkId;
   late int albumFolderId;
   late List<int> imageIds;
@@ -88,17 +91,32 @@ void main() {
     picker = _FakeFilePicker();
     FilePickerPlatform.instance = picker;
 
-    // 音频作品（切回音频库时要能看到它）
+    // 音频作品 + 一个带路径的音频卷 + 一条音频媒体行。
+    // 音频行现在也落在 media 表里，多媒体栏要能把它一起平铺出来。
     audioWorkId = (await WorkDao(db).create('音频库', library: 'audio')).id!;
+    audioDir = await Directory(p.join(tmp.path, 'media', '曲库'))
+        .create(recursive: true);
+    final song = File(p.join(audioDir.path, 'song.mp3'));
+    await song.writeAsBytes(const <int>[0, 0, 0, 1]);
+    final audioFolder =
+        await FolderDao(db).create('曲库', workId: audioWorkId, library: 'audio');
+    audioFolderId = audioFolder.id!;
+    await FolderDao(db).addPath(audioFolderId, audioDir.path);
+    audioId = await MediaDao(db).insertRow({
+      'path': song.path,
+      'media_type': 'audio',
+      'filename': 'song.mp3',
+      'added_at': 3000,
+    });
 
     // 视频作品 + 一个带路径的视频虚拟文件夹 + 一个真实视频文件
-    videoWorkId = (await WorkDao(db).create('视频库', library: 'video')).id!;
+    videoWorkId = (await WorkDao(db).create('视频库', library: 'media')).id!;
     final filmDir = await Directory(p.join(tmp.path, 'media', '片库'))
         .create(recursive: true);
     final clip = File(p.join(filmDir.path, 'a.mp4'));
     await clip.writeAsBytes(const <int>[0, 0, 0, 24]);
     final film = await FolderDao(db)
-        .create('片库', workId: videoWorkId, library: 'video');
+        .create('片库', workId: videoWorkId, library: 'media');
     videoFolderId = film.id!;
     await FolderDao(db).addPath(videoFolderId, filmDir.path);
     videoId = await MediaDao(db).insertRow({
@@ -109,9 +127,9 @@ void main() {
     });
 
     // 图片作品 + 一个带路径的虚拟文件夹 + 两张真实图片
-    imageWorkId = (await WorkDao(db).create('图片库', library: 'image')).id!;
+    imageWorkId = (await WorkDao(db).create('图片库', library: 'media')).id!;
     final album = await FolderDao(db)
-        .create('相册', workId: imageWorkId, library: 'image');
+        .create('相册', workId: imageWorkId, library: 'media');
     albumFolderId = album.id!;
     await FolderDao(db).addPath(albumFolderId, albumDir.path);
 
@@ -170,27 +188,33 @@ void main() {
 
   Finder tile(int id) => find.byKey(ValueKey('image-tile-$id'));
 
-  testWidgets('切到图片库：出现文件夹面板与作品网格', (tester) async {
+  testWidgets('切到多媒体栏：出现文件夹面板与作品网格', (tester) async {
+    // 三张作品卡片要同屏可见，窗口给宽一点
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     await pumpHome(tester);
 
-    // 初始在音频库：标签面板 + 全部作品
+    // 初始在音频库：只列音频作品
     expect(find.byType(WorksGrid), findsOneWidget);
     expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsOneWidget);
     expect(find.byType(FolderPanel), findsNothing);
 
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
     expect(find.byType(FolderPanel), findsOneWidget);
-    expect(find.text('全部图片'), findsOneWidget);
+    expect(find.text('全部媒体'), findsOneWidget);
     expect(find.byType(WorksGrid), findsOneWidget);
-    // 只列图片作品，音频作品不出现
+    // 多媒体栏 WorksGrid._libs 是 {'audio','media'}：音频作品与多媒体作品一起列出
     expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsOneWidget);
-    expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsNothing);
+    expect(find.byKey(ValueKey('work-card-$videoWorkId')), findsOneWidget);
+    expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsOneWidget);
   });
 
-  testWidgets('进入图片作品后网格渲染出图片磁贴', (tester) async {
+  testWidgets('多媒体栏：进入图片作品后网格渲染出图片磁贴', (tester) async {
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
@@ -206,7 +230,7 @@ void main() {
 
   testWidgets('双击磁贴后 showViewer 为真', (tester) async {
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -225,14 +249,14 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('图片库能打开单图详情面板', (tester) async {
+  testWidgets('多媒体栏能打开单图详情面板', (tester) async {
     // 详情面板占 320 宽，窗口要给够，否则工具栏会走紧凑模式
     tester.view.physicalSize = const Size(1600, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -258,7 +282,7 @@ void main() {
 
   testWidgets('切回音频库后音频作品网格仍在', (tester) async {
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsOneWidget);
 
     await switchLibrary(tester, kAudioLibrary);
@@ -266,23 +290,13 @@ void main() {
     expect(find.byType(WorksGrid), findsOneWidget);
     expect(find.byType(FolderPanel), findsNothing);
     expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsOneWidget);
-    // 三个库各看各的：音频库不再混进图片、视频作品
+    // 音频栏与多媒体栏各看各的：音频栏不再混进图片、视频作品
     expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsNothing);
   });
 
-  testWidgets('视频库：文件夹面板与视频作品网格', (tester) async {
+  testWidgets('多媒体栏：作品层平铺视频，进虚拟文件夹后也能列出本层视频', (tester) async {
     await pumpHome(tester);
-    await switchLibrary(tester, kVideoLibrary);
-
-    expect(find.byType(FolderPanel), findsOneWidget);
-    expect(find.text('全部视频'), findsOneWidget);
-    expect(find.byKey(ValueKey('work-card-$videoWorkId')), findsOneWidget);
-    expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsNothing);
-  });
-
-  testWidgets('视频库：作品层平铺视频，进虚拟文件夹后也能列出本层视频', (tester) async {
-    await pumpHome(tester);
-    await switchLibrary(tester, kVideoLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
     await tester.tap(find.byKey(ValueKey('work-card-$videoWorkId')));
     await tester.pump();
@@ -294,7 +308,7 @@ void main() {
     expect(find.byKey(ValueKey('folder-tile-$videoFolderId')), findsNothing,
         reason: '入口文件夹与作品同名，不再多画一层磁贴');
 
-    // 左栏树进虚拟文件夹：视频库也要按 MediaType.video 查本层媒体
+    // 左栏树进虚拟文件夹：多媒体栏也要按这一层的媒体行查
     await tester.tap(find.byKey(ValueKey('folder-$videoFolderId')));
     await tester.pump();
     await settleIo(tester);
@@ -304,7 +318,7 @@ void main() {
         reason: '文件夹层要能列出本层视频，而不是走曲目查询');
   });
 
-  testWidgets('视频库：工具栏给标签筛选，卡片菜单能给视频打标签', (tester) async {
+  testWidgets('多媒体栏：工具栏给标签筛选，卡片菜单能给视频打标签', (tester) async {
     late Tag trip;
     await tester.runAsync(() async {
       trip = await TagDao(db).insert(const Tag(name: '旅行', color: '#89b4fa'));
@@ -312,10 +326,10 @@ void main() {
       await app.loadTags();
     });
     await pumpHome(tester);
-    await switchLibrary(tester, kVideoLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
-    // 工具栏入口此前只给图片库，视频库现在也有
-    await tester.tap(find.byKey(const ValueKey('video-toolbar-tags')));
+    // 工具栏的标签筛选入口现在只有多媒体栏有（图片与视频合并后同一套）
+    await tester.tap(find.byKey(const ValueKey('media-toolbar-tags')));
     await tester.pumpAndSettle();
     expect(find.text('全部作品'), findsNothing,
         reason: '筛选对话框只给标签区，不露音频专用的导入与作品集');
@@ -360,8 +374,8 @@ void main() {
     expect(tags!.map((t) => t.name).toList(), ['旅行']);
   });
 
-  testWidgets('图片库空态出现「添加文件夹」入口，点击不抛异常', (tester) async {
-    // 清空作品，模拟全新的图片库
+  testWidgets('多媒体栏空态出现「添加文件夹」入口，点击不抛异常', (tester) async {
+    // 清空作品，模拟全新的多媒体栏
     await tester.runAsync(() async {
       for (final w in await WorkDao(db).listAll()) {
         await WorkDao(db).delete(w.id!);
@@ -369,9 +383,9 @@ void main() {
       await app.refresh();
     });
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
-    expect(find.text('还没有图片作品'), findsOneWidget);
+    expect(find.text('还没有作品'), findsOneWidget);
     final addButtons = find.text('添加文件夹');
     expect(addButtons, findsWidgets);
 
@@ -383,13 +397,13 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('图片库多选：长按进多选，全选后批量移除记录', (tester) async {
+  testWidgets('多媒体栏多选：长按进多选，全选后批量移除记录', (tester) async {
     tester.view.physicalSize = const Size(1600, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -438,40 +452,33 @@ void main() {
     }
   });
 
-  testWidgets('图片库左栏：文件夹 / 标签两个页签可切换', (tester) async {
+  testWidgets('多媒体栏左栏：文件夹 / 标签两个页签可切换', (tester) async {
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
     // 默认是文件夹页签
     expect(find.byType(FolderPanel), findsOneWidget);
-    expect(find.byKey(const ValueKey('image-left-tab-folders')), findsOneWidget);
-    expect(find.byKey(const ValueKey('image-left-tab-tags')), findsOneWidget);
+    expect(find.byKey(const ValueKey('media-left-tab-folders')), findsOneWidget);
+    expect(find.byKey(const ValueKey('media-left-tab-tags')), findsOneWidget);
 
     // 切到标签页签：换成标签面板，文件夹面板让位
-    await tester.tap(find.byKey(const ValueKey('image-left-tab-tags')));
+    await tester.tap(find.byKey(const ValueKey('media-left-tab-tags')));
     await tester.pump();
     await settleIo(tester);
 
-    expect(find.byType(TagPanel), findsOneWidget, reason: '图片库也要有标签栏');
+    expect(find.byType(TagPanel), findsOneWidget, reason: '多媒体栏也要有标签栏');
     expect(find.byType(FolderPanel), findsNothing);
     expect(find.byKey(const ValueKey('tag-expand-all')), findsOneWidget);
-
-    // 视频库同样有两个页签，且各自记住自己的选择
-    await switchLibrary(tester, kVideoLibrary);
-    expect(find.byType(FolderPanel), findsOneWidget, reason: '视频库默认文件夹页签');
-    await tester.tap(find.byKey(const ValueKey('video-left-tab-tags')));
-    await tester.pump();
-    await settleIo(tester);
-    expect(find.byType(TagPanel), findsOneWidget);
-
-    await switchLibrary(tester, kImageLibrary);
-    expect(find.byType(TagPanel), findsOneWidget,
-        reason: '回到图片库时保持上次选的标签页签');
 
     // 音频库没有文件夹页签，左栏直接就是标签面板
     await switchLibrary(tester, kAudioLibrary);
     expect(find.byType(TagPanel), findsOneWidget);
     expect(find.byKey(const ValueKey('audio-left-tab-tags')), findsNothing);
+
+    // 切回多媒体栏：按库记住上次选的标签页签
+    await switchLibrary(tester, kMediaLibrary);
+    expect(find.byType(TagPanel), findsOneWidget,
+        reason: '回到多媒体栏时保持上次选的标签页签');
   });
 
   testWidgets('视觉库排序菜单：选反序后网格顺序真的跟着变', (tester) async {
@@ -480,7 +487,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -493,7 +500,7 @@ void main() {
     );
 
     // 工具栏的排序入口：四个字段 + 反序
-    await tester.tap(find.byKey(const ValueKey('image-toolbar-sort')));
+    await tester.tap(find.byKey(const ValueKey('media-toolbar-sort')));
     await tester.pumpAndSettle();
     expect(find.text('文件名'), findsOneWidget);
     expect(find.text('修改时间'), findsOneWidget);
@@ -511,21 +518,13 @@ void main() {
       greaterThan(xOf(imageIds[1])),
       reason: '反序后 b.png 在前',
     );
-
-    // 视频库有自己的排序入口
-    await switchLibrary(tester, kVideoLibrary);
-    expect(
-      find.byKey(const ValueKey('video-toolbar-sort')),
-      findsOneWidget,
-      reason: '视频库也要能排序',
-    );
   });
 
   testWidgets('视觉库工具栏：窄窗口下不会 RenderFlex 溢出', (tester) async {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
     // 500 是工具栏收进「更多」菜单的阈值，排序按钮加进来后阈值附近最容易溢出
     for (final width in [420.0, 440.0, 500.0, 560.0, 820.0]) {
@@ -542,7 +541,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -570,7 +569,7 @@ void main() {
     }
     expect(find.byType(ImageDetail), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('image-toolbar-more')),
+      find.byKey(const ValueKey('media-toolbar-more')),
       findsOneWidget,
       reason: '218 宽下工具栏要走紧凑样式',
     );
@@ -583,7 +582,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -602,10 +601,10 @@ void main() {
     expect(find.byType(ImageDetail), findsOneWidget);
 
     // 218 宽连排序按钮都放不下，让它进菜单，而不是把工具栏挤爆
-    expect(find.byKey(const ValueKey('image-toolbar-sort')), findsNothing);
+    expect(find.byKey(const ValueKey('media-toolbar-sort')), findsNothing);
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byKey(const ValueKey('image-toolbar-more')));
+    await tester.tap(find.byKey(const ValueKey('media-toolbar-more')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
     expect(find.text('排序'), findsOneWidget, reason: '菜单里要有排序分组');
@@ -626,7 +625,7 @@ void main() {
     }
 
     expect(app.visualSortKey, 'mtime', reason: '从「更多」里选的排序要真的生效');
-    expect(find.byKey(const ValueKey('image-toolbar-sort')), findsNothing);
+    expect(find.byKey(const ValueKey('media-toolbar-sort')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -636,7 +635,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
     await tester.pump();
     await settleIo(tester);
@@ -689,7 +688,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
     expect(find.byType(WorksGrid), findsOneWidget);
 
     await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
@@ -714,7 +713,7 @@ void main() {
     addTearDown(tester.view.reset);
 
     await pumpHome(tester);
-    await switchLibrary(tester, kImageLibrary);
+    await switchLibrary(tester, kMediaLibrary);
 
     final card = find.byKey(ValueKey('work-card-$imageWorkId'));
     await tester.tap(
@@ -724,5 +723,71 @@ void main() {
 
     expect(find.text('添加标签...'), findsOneWidget);
     expect(find.text('移除标签...'), findsOneWidget);
+  });
+
+  testWidgets('多媒体栏：音频作品与多媒体作品一起列出，点进音频作品也能平铺它的媒体行',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kMediaLibrary);
+
+    // 多媒体栏 WorksGrid._libs = {'audio','media'}：两类作品都要出现
+    expect(find.byKey(ValueKey('work-card-$audioWorkId')), findsOneWidget);
+    expect(find.byKey(ValueKey('work-card-$imageWorkId')), findsOneWidget);
+    expect(find.byKey(ValueKey('work-card-$videoWorkId')), findsOneWidget);
+
+    await tester.tap(find.byKey(ValueKey('work-card-$audioWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(find.byType(ImageGrid), findsOneWidget,
+        reason: '多媒体栏即使进了音频作品，中心区也还是图片墙');
+    expect(find.byKey(ValueKey('audio-tile-$audioId')), findsOneWidget,
+        reason: '作品层平铺要包含音频行（AudioTile），不能只查图片/视频');
+  });
+
+  testWidgets('多媒体栏工具条：作品层能「添加文件夹」，进入目录后有「播放本目录的音频」',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kMediaLibrary);
+
+    await tester.tap(find.byKey(ValueKey('work-card-$imageWorkId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    // 作品层：能往本作品加文件夹；还没进任何目录，所以没有「播放本目录的音频」
+    expect(find.byKey(const ValueKey('media-toolbar-add-folder')), findsOneWidget);
+    expect(find.byKey(const ValueKey('media-toolbar-play-all')), findsNothing);
+
+    // 从文件夹树进「曲库」（音频作品的根文件夹）
+    await tester.tap(find.byKey(ValueKey('folder-$audioFolderId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(app.currentFolderPath, audioDir.path);
+    expect(find.byKey(const ValueKey('media-toolbar-play-all')), findsOneWidget,
+        reason: '进了某个目录才出现「播放本目录的音频」');
+
+    // 换到没有音频行的「相册」，这时点播放是安全的（空队列直接返回）
+    await tester.tap(find.byKey(ValueKey('folder-$albumFolderId')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(app.currentFolderPath, albumDir.path);
+    expect(find.byKey(const ValueKey('media-toolbar-play-all')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('media-toolbar-play-all')));
+    await tester.pump();
+    await settleIo(tester);
+
+    expect(tester.takeException(), isNull,
+        reason: '相册里没有音频行，播放动作应该什么都不做而不是抛异常');
   });
 }
