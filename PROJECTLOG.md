@@ -1347,3 +1347,36 @@ Windows 系统缩略图没实现（只做了 Linux 的 `~/.cache/thumbnails/norm
 历史文档 `BUILD_GUIDE.md` 与 `PROJECT_STEPS.md` 里还留着「新建 migration_service.dart」
 「跑 tool/migrate_check.dart」这类步骤，它们记的是当时的跨库迁移计划。本轮把那套工具删了，
 文件已经不在了，读到那几段按本节为准。
+
+## 2026-09-30 启动失败修复：v9 老库残留 reading_spreads 撞上外键
+
+现象（用户在 Windows 侧报告）：`SqfliteFfiException(sqlite_error: 1, , SqliteException(1): while
+executing, no such table: main.media, SQL logic error (code 1)`，报错的语句是
+`DROP TABLE IF EXISTS folders`，应用直接起不来。
+
+根因：`Tables.dropAll` 按固定清单删表，而 v10 从 `createStatements` 里删掉的 `reading_spreads`
+不在清单里。用户的 v9 库里还留着它，它的外键指向 `media` 与 `folders`（v9 原文见
+`git show 426279b:lib/db/tables.dart`）。`Database.init` 的 `onConfigure` 开着
+`PRAGMA foreign_keys=ON`，删掉 `media` 之后下一次 DDL 要重建整份 schema，于是报
+`no such table: main.media`，整个升级事务回滚，启动失败。
+
+修法：`dropAll` 直接扫 `sqlite_master`（跳过 `sqlite_%` 与 `android_metadata`），先删全部视图，
+再按 `PRAGMA foreign_key_list` 拓扑排序删表——子表在前，只要还有别的表引用它就往后排，
+自引用（`media.subtitle_of`、`folders.parent`）不算依赖，环状引用则整体追加兜底。表名统一走
+`_quote` 包双引号。原来的 `tableNames` / `viewNames` 两个常量清单删掉，库内没有别的使用点。
+
+为什么不在 `onUpgrade` 里关外键：`sqflite_common-2.5.11` 的 `database_mixin.dart:1127-1182`
+里 `onConfigure` 在版本事务之外，`onCreate` / `onUpgrade` 在独占事务之内；SQLite 规定
+`PRAGMA foreign_keys` 在事务内无效，所以那句是空操作。修法必须让 `dropAll` 自己在外键开着时也安全。
+
+验证：`flutter test test/db_migration_test.dart` 13 条全过（新增「v9 老库带着 reading_spreads
+升级：外键开着也能清库重建」，夹具 `_v9Statements` 换成照 `426279b:lib/db/tables.dart` 抄的完整
+v9 结构，断言升级后 `sqlite_master` 除 `sqlite_*` 外只剩 v10 的 10 张表与 `tracks` 视图）；
+全量 `flutter test` 577 条全过；`flutter analyze` 5 条既有 info。变异验证两处：改回固定清单会复现
+用户那条 `no such table: main.media`；取消拓扑排序（`for (final name in tables)`）同样报
+`DROP TABLE IF EXISTS "folders"` 失败——扫表与排序各自承重。
+
+教训：删表清单当常量维护，删表时就漏掉已删的表；改结构的迁移要按实际 schema 清，不能按纸面清单清。
+做变异验证要备份**改后**版本，否则 `cp` 回去会把修复冲掉（这轮踩过一次）。
+
+老库数据没有被改坏：升级事务失败后整体回滚，用户的 v9 库原样保留，装上新版后会正常清空重建。
