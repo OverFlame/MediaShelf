@@ -12,23 +12,6 @@ class Tables {
 
   static const int version = 10;
 
-  /// 全部表名，按子表在前的顺序排。删表重建与测试夹具都照这个顺序清库。
-  static const List<String> tableNames = <String>[
-    'media_tags',
-    'folder_tags',
-    'media_segments',
-    'play_history',
-    'reading_progress',
-    'media',
-    'folder_paths',
-    'folders',
-    'works',
-    'tags',
-  ];
-
-  /// 视图名。`images` 是 v10 之前遗留的，列在这里只为删掉它。
-  static const List<String> viewNames = <String>['tracks', 'images'];
-
   static const List<String> createStatements = [
     // 作品集：音频侧是系列，多媒体侧是剧集或漫画系列
     '''
@@ -197,14 +180,72 @@ class Tables {
   }
 
   /// 清掉全部视图与表：删表重建之前、以及测试造空库时用。
+  ///
+  /// 为什么不按固定清单删：旧库会留着本轮已经删掉的表。v9 库里有
+  /// `reading_spreads`，它的外键指向 `media` 与 `folders`。清单里没有它，
+  /// 删掉 `media` 之后外键就指向了不存在的表。外键开着时，下一次 DDL 要重建
+  /// 整份 schema，于是报 `no such table: main.media`，整个升级回滚。
+  ///
+  /// 现在直接扫 `sqlite_master`，一张不留；顺序按 `PRAGMA foreign_key_list`
+  /// 拓扑排序，子表在前，父表在后。删父表时还有别的表引用它就同样会炸。
   static Future<void> dropAll(DatabaseExecutor db) async {
-    for (final name in viewNames) {
-      await db.execute('DROP VIEW IF EXISTS $name');
+    final rows = await db.rawQuery(
+      "SELECT type, name FROM sqlite_master "
+      "WHERE name NOT LIKE 'sqlite_%' AND name <> 'android_metadata'",
+    );
+    final views = <String>[];
+    final tables = <String>[];
+    for (final row in rows) {
+      final name = row['name'] as String? ?? '';
+      if (name.isEmpty) continue;
+      if (row['type'] == 'view') {
+        views.add(name);
+      } else {
+        tables.add(name);
+      }
     }
-    for (final name in tableNames) {
-      await db.execute('DROP TABLE IF EXISTS $name');
+    for (final name in views) {
+      await db.execute('DROP VIEW IF EXISTS ${_quote(name)}');
+    }
+    for (final name in await _dropOrder(db, tables)) {
+      await db.execute('DROP TABLE IF EXISTS ${_quote(name)}');
     }
   }
+
+  /// 子表在前：只要还有别的表引用它，就排到后面再删。
+  static Future<List<String>> _dropOrder(
+      DatabaseExecutor db, List<String> tables) async {
+    final present = tables.toSet();
+    final parents = <String, Set<String>>{};
+    for (final name in tables) {
+      final fks = await db.rawQuery('PRAGMA foreign_key_list(${_quote(name)})');
+      parents[name] = fks
+          .map((fk) => fk['table'] as String? ?? '')
+          // 自引用（media.subtitle_of、folders.parent）随本表一起消失，不算依赖
+          .where((p) => p.isNotEmpty && p != name && present.contains(p))
+          .toSet();
+    }
+    final remaining = <String>{...tables};
+    final order = <String>[];
+    while (remaining.isNotEmpty) {
+      final droppable = remaining
+          .where((t) => !remaining.any((o) => o != t && parents[o]!.contains(t)))
+          .toList();
+      if (droppable.isEmpty) {
+        // 环状引用（SQLite 不拦建表）。剩下的按名字删，保证库是空的。
+        order.addAll(remaining);
+        break;
+      }
+      for (final t in droppable) {
+        order.add(t);
+        remaining.remove(t);
+      }
+    }
+    return order;
+  }
+
+  /// 表名与列名进语句前包一层双引号。
+  static String _quote(String name) => '"${name.replaceAll('"', '""')}"';
 
   /// 版本号对不上就删表重建：开库时 onUpgrade 用。
   ///

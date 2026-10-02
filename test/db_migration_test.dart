@@ -76,49 +76,116 @@ const List<String> _v6Statements = [
   ''',
 ];
 
-/// v9 的老结构（本轮之前的真实形态），只保留升级用例用到的部分。
+/// v9 的真实老结构（本轮之前的形态），照 `426279b:lib/db/tables.dart` 抄。
 ///
 /// works 与 folders 的 library 还认 image / video，media 还有 hash 与 note，
-/// 库里还留着 images 视图：v10 删表重建后这些都不该再出现。
+/// 库里还有 `reading_spreads` 表与 `images` 视图。删表重建的升级路径必须能把这一堆
+/// 全清掉：`reading_spreads` 的外键指向 media 与 folders，漏删它会让下一次 DDL
+/// 重建 schema 时报 `no such table: main.media`。
 const List<String> _v9Statements = [
   '''
   CREATE TABLE works (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT    NOT NULL,
-    library     TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
-    cover_path  TEXT,
-    cover_crop  TEXT,
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  INTEGER NOT NULL
-  )
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      library     TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
+      cover_path  TEXT,
+      cover_crop  TEXT,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL
+    )
   ''',
   '''
   CREATE TABLE media (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    path         TEXT    NOT NULL UNIQUE,
-    media_type   TEXT    NOT NULL CHECK (media_type IN ('audio', 'image', 'video', 'subtitle')),
-    ext          TEXT    NOT NULL DEFAULT '',
-    name_lower   TEXT    NOT NULL DEFAULT '',
-    filename     TEXT    NOT NULL,
-    added_at     INTEGER NOT NULL,
-    play_position_ms INTEGER NOT NULL DEFAULT 0,
-    hash         TEXT,
-    note         TEXT,
-    cover_path   TEXT,
-    sort_key     TEXT
-  )
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      path         TEXT    NOT NULL UNIQUE,
+      media_type   TEXT    NOT NULL CHECK (media_type IN ('audio', 'image', 'video', 'subtitle')),
+      ext          TEXT    NOT NULL DEFAULT '',
+      name_lower   TEXT    NOT NULL DEFAULT '',
+      filename     TEXT    NOT NULL,
+      added_at     INTEGER NOT NULL,
+      play_position_ms INTEGER NOT NULL DEFAULT 0,
+      hash         TEXT,
+      note         TEXT,
+      cover_path   TEXT,
+      sort_key     TEXT,
+      subtitle_of  INTEGER REFERENCES media(id) ON DELETE SET NULL
+    )
   ''',
   '''
   CREATE TABLE folders (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT    NOT NULL,
-    parent     INTEGER REFERENCES folders(id),
-    library    TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
-    work_id    INTEGER REFERENCES works(id) ON DELETE SET NULL,
-    cover_path TEXT,
-    cover_crop TEXT,
-    UNIQUE(name, parent)
-  )
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT    NOT NULL,
+      parent     INTEGER REFERENCES folders(id),
+      library    TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
+      work_id    INTEGER REFERENCES works(id) ON DELETE SET NULL,
+      cover_path TEXT,
+      cover_crop TEXT,
+      UNIQUE(name, parent)
+    )
+  ''',
+  '''
+  CREATE TABLE folder_paths (
+      folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+      path      TEXT    NOT NULL,
+      recursive INTEGER NOT NULL DEFAULT 1
+    )
+  ''',
+  '''
+  CREATE TABLE tags (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      namespace  TEXT    NOT NULL DEFAULT 'general',
+      name       TEXT    NOT NULL,
+      color      TEXT    NOT NULL DEFAULT '#cba6f7',
+      UNIQUE(namespace, name)
+    )
+  ''',
+  '''
+  CREATE TABLE media_tags (
+      media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+      tag_id   INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
+      PRIMARY KEY (media_id, tag_id)
+    )
+  ''',
+  '''
+  CREATE TABLE folder_tags (
+      folder_id INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+      tag_id    INTEGER NOT NULL REFERENCES tags(id)    ON DELETE CASCADE,
+      PRIMARY KEY (folder_id, tag_id)
+    )
+  ''',
+  '''
+  CREATE TABLE play_history (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id  INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+      played_at INTEGER NOT NULL
+    )
+  ''',
+  '''
+  CREATE TABLE media_segments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      media_id   INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+      start_ms   INTEGER NOT NULL,
+      end_ms     INTEGER NOT NULL,
+      name       TEXT,
+      created_at INTEGER NOT NULL
+    )
+  ''',
+  '''
+  CREATE TABLE reading_spreads (
+      volume_id      INTEGER NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+      left_media_id  INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
+      right_media_id INTEGER NOT NULL REFERENCES media(id)   ON DELETE CASCADE,
+      PRIMARY KEY (volume_id, left_media_id)
+    )
+  ''',
+  '''
+  CREATE TABLE reading_progress (
+      volume_id  INTEGER PRIMARY KEY REFERENCES folders(id) ON DELETE CASCADE,
+      media_id   INTEGER REFERENCES media(id) ON DELETE SET NULL,
+      page_index INTEGER NOT NULL DEFAULT 0,
+      finished   INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    )
   ''',
   "CREATE VIEW images AS SELECT * FROM media WHERE media_type = 'image'",
   "CREATE VIEW tracks AS SELECT * FROM media WHERE media_type = 'audio'",
@@ -431,6 +498,65 @@ void main() {
     final exts = await tags.listByNamespace(TagDao.extNamespace);
     expect(kinds.map((t) => t.name).toSet(), MediaType.allValues.toSet());
     expect(exts.map((t) => t.name).toSet(), {'mp3', 'vtt'});
+    await db.close();
+  });
+
+  test('v9 老库带着 reading_spreads 升级：外键开着也能清库重建', () async {
+    final path = '${dir.path}/v9_real.db';
+    final old = await openLegacy(path, 9, _v9Statements);
+    await old.insert('works', {
+      'name': '图集',
+      'library': 'image',
+      'sort_order': 0,
+      'created_at': 1,
+    });
+    await old.insert('folders', {
+      'name': '第1卷',
+      'parent': null,
+      'library': 'image',
+      'work_id': 1,
+    });
+    await old.insert('media', {
+      'path': '/m/a.png',
+      'media_type': 'image',
+      'filename': 'a.png',
+      'added_at': 1,
+    });
+    // 这张表 v10 已经删掉。旧库里有它，它的外键指向 media 与 folders：
+    // 清库时漏删它，删掉 media 之后下一次 DDL 就会报 no such table: main.media。
+    await old.insert('reading_spreads', {
+      'volume_id': 1,
+      'left_media_id': 1,
+      'right_media_id': 1,
+    });
+    await old.close();
+
+    final db = await reopenLatest(path);
+
+    final names = (await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"))
+        .map((r) => r['name'] as String)
+        // sqlite_sequence 是 AUTOINCREMENT 自带的，不算残留
+        .where((n) => !n.startsWith('sqlite_'))
+        .toSet();
+    // 一张不留：老库里的 reading_spreads 与 images 视图都不该剩下来
+    expect(names, {
+      'works',
+      'media',
+      'folders',
+      'folder_paths',
+      'tags',
+      'media_tags',
+      'folder_tags',
+      'play_history',
+      'media_segments',
+      'reading_progress',
+      'tracks',
+    });
+    expect(await db.getVersion(), Tables.version);
+    // 重建之后照常能用
+    await WorkDao(db).create('新作品', library: 'media');
+    expect((await db.query('works')).length, 1);
     await db.close();
   });
 
