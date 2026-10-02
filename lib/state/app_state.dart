@@ -22,6 +22,7 @@ import '../services/reading_progress_service.dart';
 import '../services/segment_service.dart';
 import '../services/settings_service.dart';
 import '../services/subtitle_parser.dart';
+import '../services/subtitle_style.dart';
 import '../services/subtitle_service.dart';
 import '../services/thumbnail_cache.dart';
 import '../services/video_launcher.dart';
@@ -200,6 +201,22 @@ class AppState extends ChangeNotifier {
 
   String _viewMode = 'grid';
   String get viewMode => _viewMode;
+
+  // ── 字幕页外观 ──
+  bool _subtitleOpacityAuto = true;
+
+  /// 非当前句的透明度是否按封面明暗自动算。
+  bool get subtitleOpacityAuto => _subtitleOpacityAuto;
+
+  double _subtitleInactiveOpacity = SubtitleStyle.defaultInactiveOpacity;
+
+  /// 固定模式下非当前句的透明度。
+  double get subtitleInactiveOpacity => _subtitleInactiveOpacity;
+
+  int _subtitleResumeSeconds = SettingsService.defaultSubtitleResumeSeconds;
+
+  /// 滑动之后留在原地的秒数。
+  int get subtitleResumeSeconds => _subtitleResumeSeconds;
 
   /// 缩略图缓存世代。清空缓存时自增，图片卡片据此重新生成缩略图。
   int _thumbEpoch = 0;
@@ -482,6 +499,9 @@ class AppState extends ChangeNotifier {
       _videoSortDesc = ss.videoSortDescending;
       _gridColumns = ss.gridColumns;
       _viewMode = ss.viewMode;
+      _subtitleOpacityAuto = ss.subtitleOpacityAuto;
+      _subtitleInactiveOpacity = ss.subtitleInactiveOpacity;
+      _subtitleResumeSeconds = ss.subtitleResumeSeconds;
       player.setRepeatMode(_repeatModeFromName(ss.repeatModeName));
       player.setShuffle(ss.shuffle);
       await player.setSpeed(ss.playSpeed);
@@ -555,6 +575,30 @@ class AppState extends ChangeNotifier {
   /// 缩略图缓存上限。与封面缓存上限共用 `cover_cache_mb` 设置键，
   /// 落到 [setCoverCacheLimit] 上，避免同一份配额存两遍。
   Future<void> setCacheSizeMB(int mb) => setCoverCacheLimit(mb);
+
+  // ── 字幕页外观 ──
+
+  Future<void> setSubtitleOpacityAuto(bool auto) async {
+    _subtitleOpacityAuto = auto;
+    await SettingsService.instance.setSubtitleOpacityAuto(auto);
+    notifyListeners();
+  }
+
+  Future<void> setSubtitleInactiveOpacity(double value) async {
+    _subtitleInactiveOpacity = SubtitleStyle.clampInactiveOpacity(value);
+    await SettingsService.instance
+        .setSubtitleInactiveOpacity(_subtitleInactiveOpacity);
+    notifyListeners();
+  }
+
+  Future<void> setSubtitleResumeSeconds(int seconds) async {
+    _subtitleResumeSeconds = seconds.clamp(
+        SettingsService.minSubtitleResumeSeconds,
+        SettingsService.maxSubtitleResumeSeconds);
+    await SettingsService.instance
+        .setSubtitleResumeSeconds(_subtitleResumeSeconds);
+    notifyListeners();
+  }
 
   Future<void> setViewMode(String mode) async {
     _viewMode = mode == 'list' ? 'list' : 'grid';

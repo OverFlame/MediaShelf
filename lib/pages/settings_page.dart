@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/settings_service.dart';
+import '../services/subtitle_style.dart';
 import '../services/thumbnail_cache.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -23,6 +24,12 @@ class SettingsPage extends StatelessWidget {
           // ── 外观 ──
           const _SectionHeader('外观'),
           _themeSelector(context, appState),
+          const Divider(height: 1),
+
+          // ── 字幕 ──
+          const _SectionHeader('字幕'),
+          _subtitleOpacityTile(context, appState),
+          _subtitleResumeTile(context, appState),
           const Divider(height: 1),
 
           // ── 图片网格 ──
@@ -192,6 +199,143 @@ class SettingsPage extends StatelessWidget {
             option('theme-dark', '深色', Icons.dark_mode, ThemeMode.dark),
           ],
         ),
+      ),
+    );
+  }
+
+  // ── 字幕：非当前句的透明度，可以自动，也可以自己定 ──
+
+  Widget _subtitleOpacityTile(BuildContext context, AppState appState) {
+    final auto = appState.subtitleOpacityAuto;
+    final track = appState.player.currentTrack;
+    final cover = track == null ? null : appState.coverForTrack(track);
+    final fixed = appState.subtitleInactiveOpacity;
+    // 自动模式下列出当前曲目那张封面算出来的值，让用户看见调的是哪个数。
+    return FutureBuilder<double?>(
+      future: auto && cover != null
+          ? SubtitleStyle.luminanceOfCover(cover)
+          : Future<double?>.value(),
+      builder: (context, snap) {
+        final effective =
+            auto ? SubtitleStyle.autoInactiveOpacity(snap.data) : fixed;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text('非当前句的透明度',
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.textPrimaryOf(context))),
+                  ),
+                  Text(
+                    '${(effective * 100).round()}%',
+                    key: const ValueKey('subtitle-opacity-value'),
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Switch(
+                    key: const ValueKey('subtitle-opacity-auto'),
+                    value: auto,
+                    onChanged: (v) => appState.setSubtitleOpacityAuto(v),
+                  ),
+                  Expanded(
+                    child: Slider(
+                      key: const ValueKey('subtitle-opacity-slider'),
+                      value: auto ? effective : fixed,
+                      min: SubtitleStyle.minInactiveOpacity,
+                      max: SubtitleStyle.maxInactiveOpacity,
+                      divisions: 14,
+                      label: '${(effective * 100).round()}%',
+                      onChanged: auto
+                          ? null
+                          : (v) => appState.setSubtitleInactiveOpacity(v),
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceOf(context),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '不在当前句上的歌词就长这样',
+                  key: const ValueKey('subtitle-opacity-preview'),
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: effective),
+                      fontSize: 14),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                auto
+                    ? '自动：按当前音轨封面（加了模糊滤镜的那张）的明暗算。'
+                        '封面越亮，字越实；没有封面时用 '
+                        '${(SubtitleStyle.defaultInactiveOpacity * 100).round()}%。'
+                    : '固定：滑到别的句子上时用这个透明度。',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.mutedOf(context),
+                    height: 1.4),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ── 字幕：滑动之后留在原地的秒数 ──
+
+  Widget _subtitleResumeTile(BuildContext context, AppState appState) {
+    final seconds = appState.subtitleResumeSeconds;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('滑动后留在原地',
+                    style: TextStyle(
+                        fontSize: 13, color: AppColors.textPrimaryOf(context))),
+              ),
+              Text(
+                '$seconds 秒',
+                key: const ValueKey('subtitle-resume-value'),
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          Slider(
+            key: const ValueKey('subtitle-resume-slider'),
+            value: seconds.toDouble(),
+            min: SettingsService.minSubtitleResumeSeconds.toDouble(),
+            max: SettingsService.maxSubtitleResumeSeconds.toDouble(),
+            divisions: SettingsService.maxSubtitleResumeSeconds -
+                SettingsService.minSubtitleResumeSeconds,
+            label: '$seconds 秒',
+            onChanged: (v) => appState.setSubtitleResumeSeconds(v.round()),
+          ),
+          Text(
+            '这段时间内不会自动回到正在播放的那一句，方便往回看。',
+            style: TextStyle(
+                fontSize: 11, color: AppColors.mutedOf(context), height: 1.4),
+          ),
+        ],
       ),
     );
   }

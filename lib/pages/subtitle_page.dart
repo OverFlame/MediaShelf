@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../db/track_dao.dart';
 import '../services/subtitle_parser.dart';
+import '../services/subtitle_style.dart';
 import '../state/app_state.dart';
 import '../state/player_controller.dart';
 import '../theme/app_theme.dart';
@@ -23,14 +24,16 @@ class SubtitlePage extends StatefulWidget {
 class _SubtitlePageState extends State<SubtitlePage> {
   static const double _itemExtent = 56.0;
 
-  /// 用户滑过之后先留住视线，这段时间内不自动回到正在播放的那一句。
-  static const Duration _resumeDelay = Duration(seconds: 8);
-
   final ScrollController _scroll = ScrollController();
   bool _userScrolling = false;
   int _lastIndex = -1;
   Timer? _resumeTimer;
   double _viewportHeight = 400;
+
+  /// 自动模式的输入：当前封面解码后算出的平均亮度。
+  String? _coverPath;
+  double? _coverLuminance;
+  bool _decodingCover = false;
 
   @override
   void dispose() {
@@ -50,6 +53,10 @@ class _SubtitlePageState extends State<SubtitlePage> {
         : appState.subtitleFor(track);
     final lines = doc.lines;
     final cover = track == null ? null : appState.coverForTrack(track);
+    // 自动模式按封面明暗算透明度，固定模式用用户设的值。
+    final inactiveOpacity = appState.subtitleOpacityAuto
+        ? SubtitleStyle.autoInactiveOpacity(_luminanceOf(cover))
+        : appState.subtitleInactiveOpacity;
 
     // 无时间标签的歌词（纯文本 LRC）不做逐行同步，整篇静态显示。
     final currentIndex = doc.hasTiming ? _currentIndex(lines, player.position) : -1;
@@ -75,7 +82,13 @@ class _SubtitlePageState extends State<SubtitlePage> {
                   child: LayoutBuilder(
                     builder: (context, constraints) {
                       _viewportHeight = constraints.maxHeight;
-                      return _lyricsView(doc, currentIndex, player);
+                      return _lyricsView(
+                        doc,
+                        currentIndex,
+                        player,
+                        inactiveOpacity,
+                        Duration(seconds: appState.subtitleResumeSeconds),
+                      );
                     },
                   ),
                 ),
@@ -152,8 +165,28 @@ class _SubtitlePageState extends State<SubtitlePage> {
     );
   }
 
-  Widget _lyricsView(
-      SubtitleDocument doc, int currentIndex, PlayerController player) {
+  /// 当前封面的平均亮度。第一次遇到这张封面时在后台解码，先返回 null。
+  double? _luminanceOf(String? cover) {
+    if (cover == null || cover.isEmpty) return null;
+    if (cover == _coverPath) return _coverLuminance;
+    if (!_decodingCover) {
+      _decodingCover = true;
+      _coverPath = cover;
+      _coverLuminance = null;
+      unawaited(SubtitleStyle.luminanceOfCover(cover).then((value) {
+        if (!mounted) return;
+        _decodingCover = false;
+        // 解码期间可能已经换了另一首，只认还在用的那张封面。
+        if (cover == _coverPath) {
+          setState(() => _coverLuminance = value);
+        }
+      }));
+    }
+    return null;
+  }
+
+  Widget _lyricsView(SubtitleDocument doc, int currentIndex,
+      PlayerController player, double inactiveOpacity, Duration resumeDelay) {
     // 占位格式（.ass/.ssa/.ttml 等）：解析器只回了提示文案。
     if (!doc.parsed) {
       return Center(
@@ -207,7 +240,7 @@ class _SubtitlePageState extends State<SubtitlePage> {
           _userScrolling = true;
         } else if (n is ScrollEndNotification && n.dragDetails != null) {
           _resumeTimer?.cancel();
-          _resumeTimer = Timer(_resumeDelay, () {
+          _resumeTimer = Timer(resumeDelay, () {
             if (mounted) setState(() => _userScrolling = false);
           });
         }
@@ -232,7 +265,9 @@ class _SubtitlePageState extends State<SubtitlePage> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: active ? Colors.white : Colors.white30,
+                  color: active
+                      ? Colors.white
+                      : Colors.white.withValues(alpha: inactiveOpacity),
                   fontSize: active ? 22 : 16,
                   fontWeight: active ? FontWeight.w700 : FontWeight.w400,
                   height: 1.3,

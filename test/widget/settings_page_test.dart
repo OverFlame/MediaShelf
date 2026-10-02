@@ -13,6 +13,7 @@ import 'package:mediashelf/pages/about_page.dart';
 import 'package:mediashelf/pages/settings_page.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
+import 'package:mediashelf/services/subtitle_style.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import '../support/test_env.dart';
@@ -186,6 +187,61 @@ void main() {
 
     expect(app.thumbEpoch, before + 1);
     expect(find.textContaining('缩略图缓存'), findsWidgets);
+  });
+
+  testWidgets('字幕透明度：默认自动，关掉开关后滑杆可调并落盘', (tester) async {
+    bigView(tester);
+    await pumpPage(tester);
+
+    // 默认是自动：滑杆禁用，数值是按封面算出来的（这里没有封面，用默认值）
+    expect(app.subtitleOpacityAuto, isTrue);
+    expect(
+        tester
+            .widget<Slider>(
+                find.byKey(const ValueKey<String>('subtitle-opacity-slider')))
+            .onChanged,
+        isNull,
+        reason: '自动模式下不该让用户再滑');
+    expect(find.text('${(SubtitleStyle.defaultInactiveOpacity * 100).round()}%'),
+        findsOneWidget);
+
+    // 关掉自动，改成固定
+    await tester.tap(find.byKey(const ValueKey<String>('subtitle-opacity-auto')));
+    await settleIo(tester);
+    expect(app.subtitleOpacityAuto, isFalse);
+    expect((await readSettings(tester))['subtitle_opacity_auto'], false);
+    expect(
+        tester
+            .widget<Slider>(
+                find.byKey(const ValueKey<String>('subtitle-opacity-slider')))
+            .onChanged,
+        isNotNull,
+        reason: '固定模式下必须能滑');
+
+    // 滑到最右 → 上限
+    final slider = find.byKey(const ValueKey<String>('subtitle-opacity-slider'));
+    await tester.drag(slider, const Offset(600, 0));
+    await settleIo(tester);
+    expect(app.subtitleInactiveOpacity, SubtitleStyle.maxInactiveOpacity);
+    expect((await readSettings(tester))['subtitle_inactive_opacity'],
+        SubtitleStyle.maxInactiveOpacity);
+    expect(find.text('80%'), findsOneWidget);
+  });
+
+  testWidgets('滑动后留原地的秒数：拖到下限后落盘', (tester) async {
+    bigView(tester);
+    await pumpPage(tester);
+    expect(find.text('8 秒'), findsOneWidget);
+
+    final slider = find.byKey(const ValueKey<String>('subtitle-resume-slider'));
+    await tester.drag(slider, const Offset(-600, 0));
+    await settleIo(tester);
+
+    expect(app.subtitleResumeSeconds,
+        SettingsService.minSubtitleResumeSeconds);
+    expect((await readSettings(tester))['subtitle_resume_seconds'],
+        SettingsService.minSubtitleResumeSeconds);
+    expect(find.text('2 秒'), findsOneWidget);
   });
 
   test('关于页写死的版本号与 pubspec.yaml 同步', () async {

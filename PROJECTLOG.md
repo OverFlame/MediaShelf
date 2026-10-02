@@ -1226,3 +1226,44 @@ P2-23 的处置：`lib/widgets/color_picker_dialog.dart` 在 `lib` 里确实没�
 
 下一步可选：`play_position_ms` 目前只在播放中每前进 5 秒落一次盘，退出应用时最多丢
 5 秒；若要更精确，可以在暂停与退出时也强制写一次。
+
+## 2026-09-29 字幕透明度与停留时间可自定义（含按封面自动算）
+
+用户要求：非当前句的透明度与滑动后的停留时间都能自己定，另外内置一套按当前音轨封面
+（加了模糊滤镜的那张）算出来的透明度；做完立刻推 GitHub。
+
+| 需求 | 原状 | 处置 |
+| --- | --- | --- |
+| 非当前句的透明度可自定义 | 写死 `Colors.white30` | 新增 `subtitle_inactive_opacity` 设置（0.10 到 0.80），设置页新增「字幕」段给滑杆与数值 |
+| 没自定义时按封面算一个合适值 | 没有这套逻辑 | 新建 `lib/services/subtitle_style.dart`：封面缩到 16x16 取平均亮度 L，`lib/pages/subtitle_page.dart` 的背景是 `sigma 36` 模糊加 0.55 黑遮罩，白字盖上去的亮度差是 `α(1-0.45L)`，反解 `α = 目标差 / (1-0.45L)`；目标差取 0.30，于是全黑封面给 0.30（与旧行为接上），纯白封面给 0.545，没有封面回落 0.30 |
+| 滑动后留原地的秒数可自定义 | `lib/pages/subtitle_page.dart` 的 `_resumeDelay` 写死 8 秒 | 新增 `subtitle_resume_seconds`（2 到 60，默认 8），设置页同一段给滑杆，字幕页按读出来的值建 `Timer` |
+| 自动与固定可切换 | 无 | 新增 `subtitle_opacity_auto`（默认开）；设置页用 `Switch`，自动模式下滑杆禁用但显示当前算出来的值，另有一行白字预览实时显示效果 |
+
+验证：
+
+- 新增用例 17 条：`test/services/subtitle_style_test.dart` 12 条、
+  `test/widget/subtitle_page_test.dart` 从 3 条加到 6 条、
+  `test/widget/settings_page_test.dart` 加 2 条。
+  `flutter test` 554 用例全过（本批开始前是 537）。`flutter analyze` 仍是 5 条既有 info。
+- 变异验证四处，都如期变红：`targetContrast` 从 0.30 改回 0.20（`Expected: a numeric value within <0.000001> of <0.3> / Actual: <0.2>`）；
+  字幕页把非当前句写回 `alpha: 0.30`（固定模式用例报 `of <0.55> / Actual: <0.3>`，
+  自动模式报 `of <0.5454545454545454> / Actual: <0.3>`）；
+  字幕页把 `Timer` 写死 8 秒（「3 秒就恢复跟随」用例报 `of <272.0> / Actual: <508.0>`）；
+  设置页让滑杆在自动模式下也能滑（`Expected: null / Actual: <Closure: (double) => void>`）。
+  四处装回后与备份逐字节一致，受影响的 26 条用例重跑全过。
+
+踩坑：
+
+- 封面亮度用 `ui.instantiateImageCodec(bytes, targetWidth: 16, targetHeight: 16)` 先缩再读
+  `rawRgba`。用例里要造真图就用 `ui.PictureRecorder` 画 16x16 再 `toByteData(format: png)`，
+  这一步必须放进 `tester.runAsync`，假时钟不会推进 `toImage`。
+- 设置项的 setter 在 `await SettingsService...` 之后才 `notifyListeners()`，而 `testWidgets`
+  的假时钟不推进真实文件 IO。用例里改设置要包进 `tester.runAsync`，否则界面拿不到新值。
+- 亮封面算出来的 0.545 比默认的 0.30 高得多，用例不能只断言「大于默认值」，
+  要直接对齐公式结果，公式被改坏时才会报红。
+
+未验证的部分：亮度只看缩到 16x16 之后的平均色，不识别封面上的高光位置。
+封面若一半纯白一半纯黑，平均值与观感会有偏差。真机上那张图是 `sigma 36` 的高斯模糊，
+平均值与 16x16 采样应当接近，但没有在真机上对比过。
+
+用户同批提出的「图片视频栏合并为多媒体栏」本轮只做探索，没有改代码。
