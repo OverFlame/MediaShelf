@@ -99,7 +99,10 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// 造一个卷，里面放 [video]，返回卷的名字
+  /// 造一个音频作品，里面放 [video] 时塞一首歌，返回卷的名字。
+  ///
+  /// 这个文件测的是音频栏（FolderBrowser / WorksGrid 的音频页）那条外链通路，
+  /// 所以作品与卷都归 'audio' 库，外链播放按库归属挑音频行。
   Future<String> seedFolder(String name, {required bool video}) async {
     final workId = (await WorkDao(db).create('作品A')).id!;
     final dir = await Directory(p.join(media.path, name)).create();
@@ -107,9 +110,9 @@ void main() {
     await FolderDao(db).addPath(folder.id!, dir.path);
     if (video) {
       await db.insert('media', {
-        'path': p.join(dir.path, '01.mp4'),
-        'media_type': 'video',
-        'filename': '01.mp4',
+        'path': p.join(dir.path, '01.mp3'),
+        'media_type': 'audio',
+        'filename': '01.mp3',
         'added_at': 1,
         'duration_ms': 1454999,
       });
@@ -140,8 +143,8 @@ void main() {
 
     final written = await tester.runAsync(() => File(listPath).readAsString());
     expect(written, startsWith('#EXTM3U\n'));
-    expect(written, contains('#EXTINF:1455,01.mp4'));
-    expect(written, contains('01.mp4'));
+    expect(written, contains('#EXTINF:1455,01.mp3'));
+    expect(written, contains('01.mp3'));
 
     expect(find.text('已交给系统默认播放器'), findsOneWidget);
     await drainSnackBar(tester);
@@ -186,7 +189,7 @@ void main() {
 
     final written = await tester.runAsync(
         () => File(calls.single[1]).readAsString());
-    expect(written, contains('01.mp4'));
+    expect(written, contains('01.mp3'));
     await drainSnackBar(tester);
   });
 }

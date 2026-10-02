@@ -77,7 +77,7 @@ void main() {
     await folders.addPath(sub.id!, subDir);
     // 同一条物理目录也挂在图片库里
     final imageFolder =
-        await folders.create('专辑图片', workId: null, library: 'image');
+        await folders.create('专辑图片', workId: null, library: 'media');
     await folders.addPath(imageFolder.id!, albumDir);
 
     await addMedia(mp3.path, MediaType.audio);

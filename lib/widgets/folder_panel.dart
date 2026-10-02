@@ -16,23 +16,22 @@ import 'tag_picker_dialog.dart';
 import 'volume_panel.dart';
 import 'scan_access_snack.dart';
 
-/// 图片库虚拟文件夹在 `folders.library` 里的库名。
-const String kImageLibrary = 'image';
-
-/// 视频库虚拟文件夹在 `folders.library` 里的库名（与 `media.media_type` 同一套取值）。
-const String kVideoLibrary = 'video';
+/// 多媒体库虚拟文件夹在 `folders.library` 里的库名。
+///
+/// 图片与视频合并成一个库之后就剩这一个值，与 `works.library` 同一套取值。
+const String kMediaLibrary = 'media';
 
 /// 左侧文件夹面板：导入 + 树形文件夹浏览（资源管理器式）
 ///
 /// 文件夹树不经过 [AppState]（它没有全量文件夹表），而是直接用 [FolderDao]
 /// 按图片库读取；[AppState.folderVersion] 只当「结构变了」的刷新信号。
 class FolderPanel extends StatefulWidget {
-  /// 本面板所属的库：`image` 或 `video`。
+  /// 本面板所属的库：目前只有 `media`。
   /// 决定读哪一支文件夹树（`folders.library`）与导入落到哪个库
-  /// （`AppState.importDirectory(dir, library: ...)`）。默认图片库，行为与迁移时一致。
+  /// （`AppState.importDirectory(dir, library: ...)`）。
   final String library;
 
-  const FolderPanel({super.key, this.library = kImageLibrary});
+  const FolderPanel({super.key, this.library = kMediaLibrary});
 
   @override
   State<FolderPanel> createState() => _FolderPanelState();
@@ -42,12 +41,11 @@ class _FolderPanelState extends State<FolderPanel> {
   final _pathController = TextEditingController();
   final _pathFocus = FocusNode();
 
-  bool get _isVideo => widget.library == kVideoLibrary;
-
   /// 「浏览文件」用的扩展名白名单，直接取 `media_rules.dart` 的唯一来源
-  /// （去掉前导点，`FileType.custom` 要的是不带点的形式）
+  /// （去掉前导点，`FileType.custom` 要的是不带点的形式）。
+  /// 多媒体库同时收图片与视频。
   List<String> get _allowedExtensions =>
-      (_isVideo ? videoExtensions : imageExtensions)
+      <String>[...imageExtensions, ...videoExtensions]
           .map((e) => e.startsWith('.') ? e.substring(1) : e)
           .toList();
 
@@ -140,7 +138,14 @@ class _FolderPanelState extends State<FolderPanel> {
   Future<void> _reloadRoots() async {
     final library = widget.library;
     try {
-      final roots = await _folderDao.listRoot(library: library);
+      // 多媒体栏也列出音频作品，左栏的文件夹树就跟着一起给：音频根与多媒体根
+      // 都是这一栏能点进去的目录。音频栏自己的 FolderBrowser 不受影响。
+      final roots = library == kMediaLibrary
+          ? <VirtualFolder>[
+              ...await _folderDao.listRoot(library: 'audio'),
+              ...await _folderDao.listRoot(library: library),
+            ]
+          : await _folderDao.listRoot(library: library);
       if (!mounted) return;
       setState(() {
         _roots = roots;
@@ -164,14 +169,14 @@ class _FolderPanelState extends State<FolderPanel> {
         child: Row(
           children: [
             Icon(
-              _isVideo ? Icons.movie_outlined : Icons.photo_library_outlined,
+              Icons.photo_library_outlined,
               size: 16,
               color: selected ? AppColors.accent : AppColors.blue,
             ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                _isVideo ? '全部视频' : '全部图片',
+                '全部媒体',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight:
@@ -455,7 +460,7 @@ class _FolderPanelState extends State<FolderPanel> {
   Future<void> _pickFolder(AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
-      dialogTitle: _isVideo ? '选择包含视频的文件夹' : '选择包含图片的文件夹',
+      dialogTitle: '选择包含图片或视频的文件夹',
     );
     if (result != null && mounted) {
       await appState.importDirectory(result, library: widget.library);
@@ -468,7 +473,7 @@ class _FolderPanelState extends State<FolderPanel> {
   Future<void> _pickBatchFolder(AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
-      dialogTitle: _isVideo ? '选择父文件夹（每个子文件夹一个视频作品）' : '选择父文件夹（每个子文件夹一个图片作品）',
+      dialogTitle: '选择父文件夹（每个子文件夹一个作品）',
     );
     if (result == null || !mounted) return;
     final created = await appState.importSubdirectoriesAsWorks(
@@ -490,7 +495,7 @@ class _FolderPanelState extends State<FolderPanel> {
     final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: _allowedExtensions,
-      dialogTitle: _isVideo ? '选择视频文件' : '选择图片文件',
+      dialogTitle: '选择图片或视频文件',
     );
     if (files.isEmpty || !mounted) return;
     // AppState 没有「按文件导入」，只能把它们所在的目录各导入一次
@@ -759,7 +764,7 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
                         value: 'move',
                         child: Text('移动到...', style: TextStyle(fontSize: 12)),
                       ),
-                      if (widget.library == kImageLibrary)
+                      if (widget.library == kMediaLibrary)
                         PopupMenuItem(
                           value: 'volume',
                           child:

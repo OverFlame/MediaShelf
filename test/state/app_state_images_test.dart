@@ -63,9 +63,9 @@ void main() {
 
   /// 造一个图片库作品 + 一个挂到 [photoDir] 的文件夹，返回 (work, folder)。
   Future<(Work, VirtualFolder)> makeImageLibrary() async {
-    final work = await workDao.create('图库', library: 'image');
+    final work = await workDao.create('图库', library: 'media');
     final folder = await folderDao.create('照片',
-        workId: work.id, library: 'image');
+        workId: work.id, library: 'media');
     await folderDao.addPath(folder.id!, photoDir);
     return (work, folder);
   }
@@ -128,12 +128,12 @@ void main() {
     expect(app.totalCount, 0);
   });
 
-  test('视频库文件夹层按视频类型装填，默认排除筛选不会把视频滤掉', () async {
+  test('多媒体栏文件夹层平铺所有类型，默认排除筛选不会把视频滤掉', () async {
     final videoDir =
         await Directory(p.join(tmp.path, 'video')).create(recursive: true);
-    final videoWork = await workDao.create('片库', library: 'video');
+    final videoWork = await workDao.create('片库', library: 'media');
     final videoFolder = await folderDao.create('片库',
-        workId: videoWork.id, library: 'video');
+        workId: videoWork.id, library: 'media');
     await folderDao.addPath(videoFolder.id!, videoDir.path);
     const rows = <(String, MediaType)>[
       ('a.mp4', MediaType.video),
@@ -156,15 +156,15 @@ void main() {
     await app.enterFolder(videoFolder.id!);
     await settle();
 
-    expect(app.images.map((i) => i.filename).toList(), ['a.mp4'],
-        reason: '视频库只平铺视频；同一目录里的图片行不进来');
-    expect(app.tracks, isEmpty, reason: '视频上下文不应填曲目列表');
+    expect(app.images.map((i) => i.filename).toList(), ['a.mp4', 'b.jpg'],
+        reason: '多媒体栏把本层的视频与图片一起平铺出来');
+    expect(app.tracks, isEmpty, reason: '多媒体上下文不应填曲目列表');
 
-    // 搜索同样按视频类型查：以前视频库的搜索落在曲目查询上，永远搜不到
+    // 搜索不限类型：以前视频库的搜索落在曲目查询上，永远搜不到
     app.setSearchQuery('a.mp4');
     await settle();
     expect(app.images.map((i) => i.filename).toList(), ['a.mp4'],
-        reason: '视频库搜索走 media 表的视频类型');
+        reason: '多媒体栏搜索走 media 表且不限媒体类型');
     app.setSearchQuery('');
     await settle();
   });
@@ -172,9 +172,9 @@ void main() {
   test('视频打标签后能被标签筛选命中，也能被 NOT 排除', () async {
     final clipDir =
         await Directory(p.join(tmp.path, 'clips')).create(recursive: true);
-    final work = await workDao.create('片库', library: 'video');
+    final work = await workDao.create('片库', library: 'media');
     final folder =
-        await folderDao.create('片库', workId: work.id, library: 'video');
+        await folderDao.create('片库', workId: work.id, library: 'media');
     await folderDao.addPath(folder.id!, clipDir.path);
     final tagged = await mediaDao.insertRow(MediaItem(
       path: p.join(clipDir.path, 'a.mp4'),
@@ -490,11 +490,11 @@ void main() {
 
     final created = await app.importSubdirectoriesAsWorks(
       parent.path,
-      library: 'image',
+      library: 'media',
     );
     expect(created, 2);
 
-    final works = await workDao.listAll(library: 'image');
+    final works = await workDao.listAll(library: 'media');
     expect(works.map((w) => w.name).toSet(), {
       '作品一',
       '作品二',
@@ -506,17 +506,17 @@ void main() {
 
     // 再导一次：媒体都已在库里，不该重复建作品
     expect(
-      await app.importSubdirectoriesAsWorks(parent.path, library: 'image'),
+      await app.importSubdirectoriesAsWorks(parent.path, library: 'media'),
       0,
     );
-    expect((await workDao.listAll(library: 'image')).length, 2);
+    expect((await workDao.listAll(library: 'media')).length, 2);
 
     // 子目录里没有媒体时退回按单目录导入
     final solo = Directory(p.join(tmp.path, '单目录'))
       ..createSync(recursive: true);
     File(p.join(solo.path, 'x.png')).writeAsBytesSync(_pngBytes);
     expect(
-      await app.importSubdirectoriesAsWorks(solo.path, library: 'image'),
+      await app.importSubdirectoriesAsWorks(solo.path, library: 'media'),
       1,
     );
   });

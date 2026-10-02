@@ -15,11 +15,8 @@ import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/utils/filter_expression.dart';
 import 'support/test_env.dart';
 
-/// 建一个空的 v5 库。
-///
-/// v5 是合并后的第一版结构，老库不做就地升级（走第 8 节的导入流程），
-/// 所以这里直接从 Tables.createStatements 建库，不再模拟 v2 -> v4 的旧链路。
-Future<Database> openV5(String path) async {
+/// 建一个空的当前版本库，直接从 Tables.createStatements 建。
+Future<Database> openFresh(String path) async {
   return databaseFactoryFfi.openDatabase(
     path,
     options: OpenDatabaseOptions(
@@ -28,9 +25,7 @@ Future<Database> openV5(String path) async {
         await db.execute('PRAGMA foreign_keys=ON');
       },
       onCreate: (db, version) async {
-        for (final sql in Tables.createStatements) {
-          await db.execute(sql);
-        }
+        await Tables.createAll(db);
       },
     ),
   );
@@ -42,10 +37,10 @@ Future<Set<String>> _columns(Database db, String table) async {
   return rows.map((r) => r['name'] as String).toSet();
 }
 
-/// v6 的老结构（阶段 12 之后、阶段 4 之前），只保留升级用例用到的部分。
+/// v6 的老结构，只保留升级用例用到的部分。
 ///
-/// works 的 library 只认 audio / video，media 没有 sort_key，
-/// folders 没有阅读模式四列，这些正是 v7 要补的东西。
+/// works 的 library 只认 audio / video，media 连 sort_key 都没有。
+/// 删表重建的升级路径跟老结构长什么样无关，拿它当更老的样本。
 const List<String> _v6Statements = [
   '''
   CREATE TABLE works (
@@ -81,8 +76,22 @@ const List<String> _v6Statements = [
   ''',
 ];
 
-/// v8 的 media 表（v9 之前），只有升级用例用到的部分：没有 play_position_ms。
-const List<String> _v8MediaStatements = [
+/// v9 的老结构（本轮之前的真实形态），只保留升级用例用到的部分。
+///
+/// works 与 folders 的 library 还认 image / video，media 还有 hash 与 note，
+/// 库里还留着 images 视图：v10 删表重建后这些都不该再出现。
+const List<String> _v9Statements = [
+  '''
+  CREATE TABLE works (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    library     TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
+    cover_path  TEXT,
+    cover_crop  TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+  )
+  ''',
   '''
   CREATE TABLE media (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,20 +101,50 @@ const List<String> _v8MediaStatements = [
     name_lower   TEXT    NOT NULL DEFAULT '',
     filename     TEXT    NOT NULL,
     added_at     INTEGER NOT NULL,
+    play_position_ms INTEGER NOT NULL DEFAULT 0,
+    hash         TEXT,
+    note         TEXT,
     cover_path   TEXT,
-    sort_key     TEXT,
-    duration_ms  INTEGER,
-    subtitle_of  INTEGER REFERENCES media(id) ON DELETE SET NULL,
-    is_default_subtitle INTEGER NOT NULL DEFAULT 0
+    sort_key     TEXT
   )
   ''',
   '''
-  CREATE VIEW tracks AS SELECT * FROM media WHERE media_type = 'audio'
+  CREATE TABLE folders (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL,
+    parent     INTEGER REFERENCES folders(id),
+    library    TEXT    NOT NULL CHECK (library IN ('audio', 'image', 'video')),
+    work_id    INTEGER REFERENCES works(id) ON DELETE SET NULL,
+    cover_path TEXT,
+    cover_crop TEXT,
+    UNIQUE(name, parent)
+  )
   ''',
+  "CREATE VIEW images AS SELECT * FROM media WHERE media_type = 'image'",
+  "CREATE VIEW tracks AS SELECT * FROM media WHERE media_type = 'audio'",
 ];
 
-/// 按真实迁移路径打开老库：onUpgrade 逐版本跑 Tables.migrations。
-Future<Database> reopenWithMigrations(String path) async {
+/// 造一个指定版本号与结构的老库。
+Future<Database> openLegacy(
+    String path, int version, List<String> statements) async {
+  return databaseFactoryFfi.openDatabase(
+    path,
+    options: OpenDatabaseOptions(
+      version: version,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys=ON');
+      },
+      onCreate: (db, v) async {
+        for (final sql in statements) {
+          await db.execute(sql);
+        }
+      },
+    ),
+  );
+}
+
+/// 按真实开库路径重开：onUpgrade 走 Tables.applyMigrations。
+Future<Database> reopenLatest(String path) async {
   return databaseFactoryFfi.openDatabase(
     path,
     options: OpenDatabaseOptions(
@@ -114,18 +153,10 @@ Future<Database> reopenWithMigrations(String path) async {
         await db.execute('PRAGMA foreign_keys=ON');
       },
       onCreate: (db, version) async {
-        for (final sql in Tables.createStatements) {
-          await db.execute(sql);
-        }
+        await Tables.createAll(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        for (var v = oldVersion + 1; v <= newVersion; v++) {
-          final migrations = Tables.migrations[v];
-          if (migrations == null) continue;
-          for (final sql in migrations) {
-            await db.execute(sql);
-          }
-        }
+        await Tables.applyMigrations(db, oldVersion, newVersion);
       },
     ),
   );
@@ -144,10 +175,10 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  test('v5 建库：media 四值、library 约束、路径唯一与过渡视图', () async {
-    final db = await openV5('${dir.path}/v5.db');
+  test('v10 建库：media 四值、库归属只认 audio 与 media、路径唯一', () async {
+    final db = await openFresh('${dir.path}/fresh.db');
 
-    // ── 表与视图分离：tracks / images 是只读视图，不是表 ──
+    // ── 表与视图分离：tracks 是只读视图，不是表 ──
     final objs = await db.rawQuery(
         "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')");
     final tables = objs
@@ -170,7 +201,9 @@ void main() {
         ]));
     expect(tables, isNot(contains('tracks')));
     expect(tables, isNot(contains('images')));
-    expect(views, {'tracks', 'images'});
+    expect(views, {'tracks'});
+    expect(tables, isNot(contains('reading_spreads')),
+        reason: 'v10 删掉这张从没写过的表');
 
     // ── media_type 四个值都能落库，第五个被 CHECK 挡掉 ──
     for (final type in MediaType.allValues) {
@@ -192,37 +225,43 @@ void main() {
       throwsA(anything),
     );
 
-    // ── works.library 认 audio / image / video（v7 起图片侧也是作品） ──
+    // ── works.library 只认 audio 与 media（v10 起图片与视频合进多媒体栏） ──
     await db.insert('works',
         {'name': '专辑', 'library': 'audio', 'sort_order': 0, 'created_at': 1});
     await db.insert('works',
-        {'name': '剧集', 'library': 'video', 'sort_order': 0, 'created_at': 1});
-    await db.insert('works',
-        {'name': '图集', 'library': 'image', 'sort_order': 0, 'created_at': 1});
-    await expectLater(
-      db.insert('works', {
-        'name': '文档集',
-        'library': 'document',
-        'sort_order': 0,
-        'created_at': 1,
-      }),
-      throwsA(anything),
-    );
+        {'name': '剧集', 'library': 'media', 'sort_order': 0, 'created_at': 1});
+    for (final gone in ['image', 'video', 'document']) {
+      await expectLater(
+        db.insert('works', {
+          'name': '该被挡掉的 $gone',
+          'library': gone,
+          'sort_order': 0,
+          'created_at': 1,
+        }),
+        throwsA(anything),
+        reason: '$gone 不再是合法的库归属',
+      );
+    }
 
-    // ── v7 新增结构：media.sort_key、folders 四列、reading_spreads ──
-    expect(await _columns(db, 'media'), contains('sort_key'));
+    // ── media 与 works 的列：v10 删掉 hash、note 与 works.cover_crop ──
+    final mediaColumns = await _columns(db, 'media');
+    expect(mediaColumns, isNot(contains('hash')));
+    expect(mediaColumns, isNot(contains('note')));
+    expect(mediaColumns, contains('sort_key'));
+    expect(mediaColumns, contains('play_position_ms'));
+    expect(await _columns(db, 'works'), isNot(contains('cover_crop')));
     expect(await _columns(db, 'folders'), containsAll(
         ['cover_path', 'cover_crop', 'reading_direction', 'reading_fit']));
-    expect(tables, contains('reading_spreads'));
     final idxNames = (await db.rawQuery("SELECT name FROM sqlite_master "
             "WHERE type = 'index'"))
         .map((r) => r['name'])
         .toSet();
     expect(idxNames, contains('idx_media_sort_key'));
+    expect(idxNames, isNot(contains('idx_media_hash')));
 
     // folders 的阅读模式列有默认值
     final folderId = await db.insert('folders',
-        {'name': '阅读根', 'parent': null, 'library': 'image', 'work_id': null});
+        {'name': '阅读根', 'parent': null, 'library': 'media', 'work_id': null});
     final folderRow =
         (await db.query('folders', where: 'id = ?', whereArgs: [folderId])).first;
     expect(folderRow['reading_direction'], 'rtl');
@@ -230,18 +269,21 @@ void main() {
     expect(folderRow['cover_path'], isNull);
     expect(folderRow['cover_crop'], isNull);
 
-    // ── folders.library 只认 audio / image / video ──
+    // ── folders.library 只认 audio 与 media ──
     await db.insert('folders',
         {'name': '根', 'parent': null, 'library': 'audio', 'work_id': null});
-    await expectLater(
-      db.insert('folders', {
-        'name': '字幕根',
-        'parent': null,
-        'library': 'subtitle',
-        'work_id': null,
-      }),
-      throwsA(anything),
-    );
+    for (final gone in ['image', 'video', 'subtitle']) {
+      await expectLater(
+        db.insert('folders', {
+          'name': '该被挡掉的 $gone',
+          'parent': null,
+          'library': gone,
+          'work_id': null,
+        }),
+        throwsA(anything),
+        reason: '$gone 不再是合法的库归属',
+      );
+    }
 
     // ── media.path 唯一：同一个文件不会进两行 ──
     await expectLater(
@@ -259,7 +301,7 @@ void main() {
   });
 
   test('folder_paths 默认 recursive=1，唯一索引挡住重复路径', () async {
-    final db = await openV5('${dir.path}/paths.db');
+    final db = await openFresh('${dir.path}/paths.db');
     await db.insert('folders', {'name': '根', 'library': 'audio'});
     await db
         .insert('folder_paths', {'folder_id': 1, 'path': '/m/x', 'recursive': 1});
@@ -283,8 +325,8 @@ void main() {
     await db.close();
   });
 
-  test('MediaDao 补全 ext 与 name_lower，视图按类型分流', () async {
-    final db = await openV5('${dir.path}/media.db');
+  test('MediaDao 补全 ext 与 name_lower，tracks 视图只读', () async {
+    final db = await openFresh('${dir.path}/media.db');
     final media = MediaDao(db);
 
     await media.insertRow({
@@ -307,7 +349,11 @@ void main() {
     expect(item.mediaType, MediaType.audio);
 
     expect(await db.query('tracks'), hasLength(1));
-    expect((await db.query('images')).single['filename'], 'p.png');
+    expect(
+        (await db.query('media',
+                    where: 'media_type = ?', whereArgs: ['image']))
+            .single['filename'],
+        'p.png');
     await expectLater(
       db.insert('tracks', {'path': '/x', 'filename': 'x', 'added_at': 1}),
       throwsA(anything),
@@ -335,7 +381,7 @@ void main() {
   });
 
   test('规则标签翻成列条件，普通标签仍走 media_tags', () async {
-    final db = await openV5('${dir.path}/rules.db');
+    final db = await openFresh('${dir.path}/rules.db');
     final media = MediaDao(db);
     final tags = TagDao(db);
     final tracks = TrackDao(db);
@@ -388,26 +434,75 @@ void main() {
     await db.close();
   });
 
-  test('v6 升 v7：重建 works 保住数据与归属，新列新表就位', () async {
+  test('v9 升 v10：结构不兼容就删表重建，老行与旧结构一起清掉', () async {
+    final path = '${dir.path}/v9.db';
+    final old = await openLegacy(path, 9, _v9Statements);
+    await old.insert('works', {
+      'name': '图集',
+      'library': 'image',
+      'cover_path': '/m/c.png',
+      'cover_crop': '0,0,1,1',
+      'sort_order': 3,
+      'created_at': 11,
+    });
+    await old.insert('folders', {
+      'name': '第1卷',
+      'parent': null,
+      'library': 'image',
+      'work_id': 1,
+    });
+    await old.insert('media', {
+      'path': '/m/第10话.png',
+      'media_type': 'image',
+      'filename': '第10话.png',
+      'added_at': 5,
+      'hash': 'deadbeef',
+      'note': '老备注',
+    });
+    expect(await old.getVersion(), 9);
+    await old.close();
+
+    final db = await reopenLatest(path);
+    expect(await db.getVersion(), Tables.version);
+
+    // 老行清空：非兼容式升级按删表重建处理
+    expect(await db.query('works'), isEmpty);
+    expect(await db.query('folders'), isEmpty);
+    expect(await db.query('media'), isEmpty);
+
+    // 结构是新版：旧列与旧视图都不在了
+    final mediaColumns = await _columns(db, 'media');
+    expect(mediaColumns, isNot(contains('hash')));
+    expect(mediaColumns, isNot(contains('note')));
+    expect(mediaColumns, contains('play_position_ms'));
+    expect(await _columns(db, 'works'), isNot(contains('cover_crop')));
+    final objs = await db.rawQuery(
+        "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view')");
+    final views =
+        objs.where((r) => r['type'] == 'view').map((r) => r['name']).toSet();
+    expect(views, {'tracks'}, reason: '老的 images 视图要跟着删掉');
+    final tables = objs
+        .where((r) => r['type'] == 'table')
+        .map((r) => r['name'])
+        .toSet();
+    expect(tables, isNot(contains('reading_spreads')));
+
+    // 新库能直接收下多媒体作品与多媒体文件夹
+    await db.insert('works',
+        {'name': '混合集', 'library': 'media', 'sort_order': 0, 'created_at': 12});
+    await db.insert('folders',
+        {'name': '混合根', 'parent': null, 'library': 'media', 'work_id': 1});
+    expect(
+        (await db.rawQuery('PRAGMA integrity_check')).first.values.first, 'ok');
+    await db.close();
+  });
+
+  test('更老的 v6 库走同一条删表重建，不依赖版本链', () async {
     final path = '${dir.path}/v6.db';
-    final old = await databaseFactoryFfi.openDatabase(
-      path,
-      options: OpenDatabaseOptions(
-        version: 6,
-        onConfigure: (db) async {
-          await db.execute('PRAGMA foreign_keys=ON');
-        },
-        onCreate: (db, version) async {
-          for (final sql in _v6Statements) {
-            await db.execute(sql);
-          }
-        },
-      ),
-    );
-    final workId = await old.insert('works', {
+    final old = await openLegacy(path, 6, _v6Statements);
+    await old.insert('works', {
       'name': '专辑A',
       'library': 'audio',
-      'cover_path': '/m/c.png',
       'sort_order': 3,
       'created_at': 11,
     });
@@ -415,9 +510,9 @@ void main() {
       'name': '卷1',
       'parent': null,
       'library': 'audio',
-      'work_id': workId,
+      'work_id': 1,
     });
-    final mediaId = await old.insert('media', {
+    await old.insert('media', {
       'path': '/m/第10话.mp3',
       'media_type': 'audio',
       'filename': '第10话.mp3',
@@ -426,108 +521,51 @@ void main() {
     expect(await old.getVersion(), 6);
     await old.close();
 
-    final db = await reopenWithMigrations(path);
+    final db = await reopenLatest(path);
     expect(await db.getVersion(), Tables.version);
-
-    // works 换过表，但主键与各列的值原样保留，新列可用
-    final work = (await db.query('works')).single;
-    expect(work['id'], workId);
-    expect(work['name'], '专辑A');
-    expect(work['library'], 'audio');
-    expect(work['sort_order'], 3);
-    expect(work['created_at'], 11);
-    expect(work['cover_path'], '/m/c.png');
-    expect(work['cover_crop'], isNull);
-    await db.insert('works', {
-      'name': '图集',
-      'library': 'image',
-      'sort_order': 0,
-      'created_at': 12,
-    });
-
-    // folders 的归属与外键关系没被重建打断
-    final folder = (await db.query('folders')).single;
-    expect(folder['work_id'], workId);
-    expect(folder['reading_direction'], 'rtl');
-    expect(folder['reading_fit'], 'page');
-    expect(folder['cover_path'], isNull);
-    expect(await db.rawQuery('PRAGMA foreign_key_check'), isEmpty,
-        reason: '重建 works 后不能留下悬空外键');
-
-    // 老 media 行只多了一列，值不动
-    final mediaRow = (await db.query('media',
-            where: 'id = ?', whereArgs: [mediaId]))
-        .single;
-    expect(mediaRow['filename'], '第10话.mp3');
-    expect(mediaRow['sort_key'], isNull);
-    final names = (await db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"))
-        .map((r) => r['name'])
-        .toSet();
-    expect(names, contains('reading_spreads'));
+    expect(await db.query('works'), isEmpty);
+    expect(await db.query('media'), isEmpty);
     expect(await _columns(db, 'media'), contains('sort_key'));
-
-    // works 重建后，folders.work_id 的 ON DELETE SET NULL 仍然生效
-    await db.delete('works', where: 'id = ?', whereArgs: [workId]);
-    expect((await db.query('folders')).single['work_id'], isNull,
-        reason: '摘归属的级联行为不该因为重建父表而失效');
-
+    expect(await _columns(db, 'media'), isNot(contains('hash')));
     expect(
         (await db.rawQuery('PRAGMA integrity_check')).first.values.first, 'ok');
     await db.close();
   });
 
-  test('v8 升 v9：media 多出播放位置列，老行与图片行都按 0 处理', () async {
-    final path = '${dir.path}/v8.db';
-    final old = await databaseFactoryFfi.openDatabase(
-      path,
-      options: OpenDatabaseOptions(
-        version: 8,
-        onConfigure: (db) async {
-          await db.execute('PRAGMA foreign_keys=ON');
-        },
-        onCreate: (db, version) async {
-          for (final sql in _v8MediaStatements) {
-            await db.execute(sql);
-          }
-        },
-      ),
-    );
-    final audioId = await old.insert('media', {
-      'path': '/m/听过一半.mp3',
+  test('版本号没变就不动库：重开同版本不清数据', () async {
+    final path = '${dir.path}/same.db';
+    final db = await openFresh(path);
+    await db.insert('media', {
+      'path': '/m/留着的.mp3',
       'media_type': 'audio',
-      'ext': 'mp3',
-      'name_lower': '听过一半.mp3',
-      'filename': '听过一半.mp3',
-      'added_at': 7,
-      'duration_ms': 200000,
+      'filename': '留着的.mp3',
+      'added_at': 1,
     });
-    final imageId = await old.insert('media', {
+    await db.close();
+
+    final again = await reopenLatest(path);
+    expect(await again.query('media'), hasLength(1), reason: '同版本不该被清库');
+    await again.close();
+  });
+
+  test('setPlayPosition 只写音频行，tracks 视图跟着读出新列', () async {
+    final db = await openFresh('${dir.path}/playpos_write.db');
+    final media = MediaDao(db);
+    final tracks = TrackDao(db);
+
+    final audioId = await tracks.insert(const TrackItem(
+      path: '/m/听过一半.mp3',
+      filename: '听过一半.mp3',
+      addedAt: 7,
+      durationMs: 200000,
+    ));
+    final imageId = await media.insertRow({
       'path': '/m/封面.png',
       'media_type': 'image',
-      'ext': 'png',
-      'name_lower': '封面.png',
       'filename': '封面.png',
       'added_at': 8,
     });
-    expect(await old.getVersion(), 8);
-    await old.close();
 
-    final db = await reopenWithMigrations(path);
-    expect(await db.getVersion(), Tables.version);
-    expect(await _columns(db, 'media'), contains('play_position_ms'));
-
-    // 老行拿默认值 0，其余列一个字都不动
-    final audio = (await db.query('media',
-            where: 'id = ?', whereArgs: [audioId]))
-        .single;
-    expect(audio['play_position_ms'], 0);
-    expect(audio['duration_ms'], 200000);
-    expect(audio['filename'], '听过一半.mp3');
-    expect(TrackItem.fromMap(audio).playPositionMs, 0);
-
-    // 写入只在音频行上生效：图片行的 id 撞上了也不动
-    final media = MediaDao(db);
     await media.setPlayPosition(audioId, 83000);
     expect(
         (await db.query('media', where: 'id = ?', whereArgs: [audioId]))
@@ -539,19 +577,13 @@ void main() {
             .single['play_position_ms'],
         0,
         reason: '播放位置是音频的事，不该写到图片行上');
-
-    final viaView = await TrackDao(db).getById(audioId);
-    expect(viaView, isNotNull);
-    expect(viaView!.playPositionMs, 83000,
+    expect((await tracks.getById(audioId))!.playPositionMs, 83000,
         reason: 'tracks 视图是 SELECT *，新列要能跟着读出来');
-
-    expect(
-        (await db.rawQuery('PRAGMA integrity_check')).first.values.first, 'ok');
     await db.close();
   });
 
   test('TrackItem 的播放位置能往返，copyWith 能改也能清零', () async {
-    final db = await openV5('${dir.path}/playpos.db');
+    final db = await openFresh('${dir.path}/playpos.db');
     final tracks = TrackDao(db);
 
     final id = await tracks.insert(const TrackItem(
@@ -586,7 +618,7 @@ void main() {
   });
 
   test('MediaDao 落 sort_key，查询按自然序返回', () async {
-    final db = await openV5('${dir.path}/sort.db');
+    final db = await openFresh('${dir.path}/sort.db');
     final media = MediaDao(db);
     for (final name in ['第10话.mp3', '第2话.mp3', '第1话.mp3', '封面.png']) {
       await media.insertRow({
@@ -622,7 +654,7 @@ void main() {
   });
 
   test('WorkDao.delete 在一个事务里摘归属并删作品', () async {
-    final db = await openV5('${dir.path}/delete.db');
+    final db = await openFresh('${dir.path}/delete.db');
 
     final dao = WorkDao(db);
     final work = await dao.create('待删专辑');

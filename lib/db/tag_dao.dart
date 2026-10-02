@@ -243,11 +243,12 @@ class TagDao {
   Future<Map<int, List<Tag>>> getTagsForImages(List<int> imageIds) =>
       getTagsForTracks(imageIds);
 
-  /// 按标签 AND/OR/NOT 筛选指定媒体类型，返回匹配的 media id 集合。
+  /// 按标签 AND/OR/NOT 筛选，返回匹配的 media id 集合。
   ///
-  /// 音频与图片那两个便捷入口只是固定类型的包装；视频等其它类型用本方法。
+  /// [type] 传 null 表示不限媒体类型（多媒体栏用）；音频与图片那两个便捷
+  /// 入口只是固定类型的包装。
   Future<Set<int>> getIdsByTags(
-    MediaType type, {
+    MediaType? type, {
     List<int> andTagIds = const [],
     List<int> orTagIds = const [],
     List<int> notTagIds = const [],
@@ -274,7 +275,7 @@ class TagDao {
           andTagIds: andTagIds, orTagIds: orTagIds, notTagIds: notTagIds);
 
   Future<Set<int>> _getIdsByTags(
-    MediaType type, {
+    MediaType? type, {
     List<int> andTagIds = const [],
     List<int> orTagIds = const [],
     List<int> notTagIds = const [],
@@ -286,51 +287,80 @@ class TagDao {
     if (and.isEmpty && or.isEmpty && not.isEmpty) {
       final rows = await _db.query('media',
           columns: ['id'],
-          where: 'media_type = ?',
-          whereArgs: [type.value]);
+          where: type == null ? null : 'media_type = ?',
+          whereArgs: type == null ? null : [type.value]);
       return rows.map((r) => r['id'] as int).toSet();
     }
 
     final conds = <String>[];
     final args = <Object?>[];
 
-    if (and.isNotEmpty) {
-      final ph = and.map((_) => '?').join(',');
+    // kind / ext 这类规则标签在库里只有定义行，不写 media_tags，所以要翻成
+    // media 的列条件。列表按类型 null 查询时（多媒体栏）类型范围挡不住字幕，
+    // 「默认用 tag 反选掉字幕」全靠这一步。
+    final ruleSql = await _ruleSqlByIds(<int>{...and, ...or, ...not});
+    final andRule = and.where(ruleSql.containsKey).toList();
+    final orRule = or.where(ruleSql.containsKey).toList();
+    final notRule = not.where(ruleSql.containsKey).toList();
+    final andPlain = and.where((id) => !ruleSql.containsKey(id)).toList();
+    final orPlain = or.where((id) => !ruleSql.containsKey(id)).toList();
+    final notPlain = not.where((id) => !ruleSql.containsKey(id)).toList();
+
+    for (final id in andRule) {
+      conds.add('(${ruleSql[id]})');
+    }
+
+    if (andPlain.isNotEmpty) {
+      final ph = andPlain.map((_) => '?').join(',');
       conds.add('''
         id IN (
           SELECT media_id FROM media_tags
           WHERE tag_id IN ($ph)
           GROUP BY media_id
-          HAVING COUNT(DISTINCT tag_id) = ${and.length}
+          HAVING COUNT(DISTINCT tag_id) = ${andPlain.length}
         )
       ''');
-      args.addAll(and);
+      args.addAll(andPlain);
     }
 
-    if (or.isNotEmpty) {
-      final ph = or.map((_) => '?').join(',');
-      conds.add(
-          'id IN (SELECT DISTINCT media_id FROM media_tags WHERE tag_id IN ($ph))');
-      args.addAll(or);
+    if (orPlain.isNotEmpty || orRule.isNotEmpty) {
+      final parts = <String>[];
+      if (orPlain.isNotEmpty) {
+        final ph = orPlain.map((_) => '?').join(',');
+        parts.add(
+            '(id IN (SELECT DISTINCT media_id FROM media_tags WHERE tag_id IN ($ph)))');
+        args.addAll(orPlain);
+      }
+      for (final id in orRule) {
+        parts.add('(${ruleSql[id]})');
+      }
+      conds.add(parts.length == 1 ? parts.single : '(${parts.join(' OR ')})');
     }
 
-    if (not.isNotEmpty) {
-      final ph = not.map((_) => '?').join(',');
+    for (final id in notRule) {
+      conds.add('NOT (${ruleSql[id]})');
+    }
+
+    if (notPlain.isNotEmpty) {
+      final ph = notPlain.map((_) => '?').join(',');
       conds.add(
           'id NOT IN (SELECT DISTINCT media_id FROM media_tags WHERE tag_id IN ($ph))');
-      args.addAll(not);
+      args.addAll(notPlain);
     }
 
+    final typeSql = type == null ? '' : 'media_type = ? AND ';
     final rows = await _db.rawQuery(
-      'SELECT id FROM media WHERE media_type = ? AND ${conds.join(' AND ')}',
-      [type.value, ...args],
+      'SELECT id FROM media WHERE $typeSql${conds.join(' AND ')}',
+      type == null ? args : [type.value, ...args],
     );
     return rows.map((r) => r['id'] as int).toSet();
   }
 
-  /// 按布尔表达式筛选指定媒体类型，返回匹配的 media id 集合。
+  /// 按布尔表达式筛选，返回匹配的 media id 集合。
+  ///
+  /// [type] 传 null 表示不限媒体类型（多媒体栏用）。
   Future<Set<int>> getIdsByExpression(
-          MediaType type, String expression, List<Tag> allTags) =>
+          MediaType? type, String expression, List<Tag> allTags) =>
       _getIdsByExpression(type, expression, allTags);
 
   /// 按布尔表达式筛选曲目
@@ -344,14 +374,36 @@ class TagDao {
       getIdsByExpression(MediaType.image, expression, allTags);
 
   Future<Set<int>> _getIdsByExpression(
-      MediaType type, String expression, List<Tag> allTags) async {
+      MediaType? type, String expression, List<Tag> allTags) async {
     final ast = FilterExpressionParser.parse(expression);
     final sub =
         buildTrackIdSubquery(ast, (ref) => _resolveTagRefSql(ref, allTags));
-    final rows = await _db.rawQuery(
-        'SELECT id FROM media WHERE media_type = ? AND id IN ($sub)',
-        [type.value]);
+    final rows = type == null
+        ? await _db.rawQuery('SELECT id FROM media WHERE id IN ($sub)')
+        : await _db.rawQuery(
+            'SELECT id FROM media WHERE media_type = ? AND id IN ($sub)',
+            [type.value]);
     return rows.map((r) => r['id'] as int).toSet();
+  }
+
+  /// 规则标签 id → 它对应的 media 列条件；普通标签不在结果里。
+  Future<Map<int, String>> _ruleSqlByIds(Set<int> ids) async {
+    if (ids.isEmpty) return const <int, String>{};
+    final ph = ids.map((_) => '?').join(',');
+    final rows = await _db.query(
+      'tags',
+      columns: ['id', 'namespace', 'name'],
+      where: 'id IN ($ph)',
+      whereArgs: ids.toList(),
+    );
+    final out = <int, String>{};
+    for (final r in rows) {
+      final ns = r['namespace'] as String?;
+      if (ns == null || !ruleNamespaces.contains(ns)) continue;
+      final sql = ruleTagSql(TagRef('$ns:${r['name']}'));
+      if (sql != null) out[r['id'] as int] = sql;
+    }
+    return out;
   }
 
   /// 规则标签的命名空间。库里只放定义行，不写关联行。

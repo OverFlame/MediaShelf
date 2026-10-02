@@ -14,25 +14,27 @@ import 'tag_picker_dialog.dart';
 
 /// 主页作品集网格。
 ///
-/// [library] 为空与 `audio` 等价，都表示音频库；只展示本库自己的作品。
-/// 传 `image` / `video` 时同样只展示该库作品，并给出对应库的导入入口。
+/// [library] 为空与 `audio` 等价，都表示音频页。
+/// 传 `media` 时列出多媒体作品与音频作品：音频只导一次，两个页签看到的是同一份
+/// 数据，删一处另一处同步消失。
 class WorksGrid extends StatelessWidget {
   final String? library;
 
   const WorksGrid({super.key, this.library});
 
-  /// 空值与 audio 都按音频库处理（音频页显式传 audio）。
+  /// 空值与 audio 都按音频页处理（音频页显式传 audio）。
   String get _lib => library ?? 'audio';
 
   bool get _isAudio => _lib == 'audio';
 
-  bool get _isImage => _lib == 'image';
+  /// 本页签列出的作品归属。多媒体页把音频作品也列进来。
+  Set<String> get _libs =>
+      _isAudio ? const <String>{'audio'} : const <String>{'audio', 'media'};
 
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    // 三个库各看各的：音频页只列音频作品，不再把图片、视频作品混进来。
-    final works = appState.works.where((w) => w.library == _lib).toList();
+    final works = appState.works.where((w) => _libs.contains(w.library)).toList();
 
     if (works.isEmpty) {
       return Center(
@@ -40,27 +42,19 @@ class WorksGrid extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-                _isAudio
-                    ? Icons.album_outlined
-                    : (_isImage
-                        ? Icons.photo_library_outlined
-                        : Icons.movie_outlined),
+                _isAudio ? Icons.album_outlined : Icons.photo_library_outlined,
                 size: 56,
                 color: AppColors.mutedOf(context)),
             const SizedBox(height: 12),
             Text(
-                _isAudio
-                    ? '还没有作品'
-                    : (_isImage ? '还没有图片作品' : '还没有视频作品'),
+                '还没有作品',
                 style: TextStyle(
                     color: AppColors.textSecondaryOf(context), fontSize: 14)),
             const SizedBox(height: 4),
             Text(
                 _isAudio
                     ? '在左侧点击「添加文件夹」导入音频，自动生成作品'
-                    : (_isImage
-                        ? '点击下面的「添加文件夹」导入图片，自动生成作品'
-                        : '点击下面的「添加文件夹」导入视频，自动生成作品'),
+                    : '点击下面的「添加文件夹」导入图片或视频，自动生成作品',
                 style: TextStyle(color: AppColors.mutedOf(context), fontSize: 12)),
             // 音频页的导入入口在左栏，这里不再重复给按钮。
             if (!_isAudio) ...[
@@ -121,7 +115,7 @@ class WorksGrid extends StatelessWidget {
     final appState = context.read<AppState>();
     if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
-      dialogTitle: _isImage ? '选择包含图片的文件夹' : '选择包含视频的文件夹',
+      dialogTitle: '选择包含图片或视频的文件夹',
     );
     if (result != null && result.isNotEmpty && context.mounted) {
       await appState.importDirectory(result, library: lib);
@@ -135,7 +129,7 @@ class WorksGrid extends StatelessWidget {
     final appState = context.read<AppState>();
     if (!await ensureScanAccessOrPrompt(context)) return;
     final result = await FilePicker.getDirectoryPath(
-      dialogTitle: _isImage ? '选择父文件夹（每个子文件夹一个图片作品）' : '选择父文件夹（每个子文件夹一个视频作品）',
+      dialogTitle: '选择父文件夹（每个子文件夹一个作品）',
     );
     if (result == null || result.isEmpty || !context.mounted) return;
     final created = await appState.importSubdirectoriesAsWorks(
@@ -164,9 +158,8 @@ class _WorkCard extends StatelessWidget {
   /// 「播放全部」只对音频有效（视频不做应用内解码）
   bool get _playAll => library == null || library == 'audio';
 
-  /// 「用外部播放器播放」对音频与视频都成立（图片没有播放语义）
-  bool get _playExternal =>
-      library == null || library == 'audio' || library == 'video';
+  /// 「用外部播放器播放」只在可能含视频的作品上给：外链只推视频。
+  bool get _playExternal => library == null || library == 'audio' || work.library != 'audio';
 
   @override
   Widget build(BuildContext context) {

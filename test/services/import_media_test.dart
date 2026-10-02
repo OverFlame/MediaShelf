@@ -90,10 +90,10 @@ void main() {
       ..writeAsBytesSync(List.filled(9, 0));
     File(p.join(dir.path, '第2话.png')).writeAsBytesSync(List.filled(5, 0));
 
-    final work = await state.importDirectory(dir.path, library: 'image');
+    final work = await state.importDirectory(dir.path, library: 'media');
 
     expect(work, isNotNull);
-    expect(work!.library, 'image');
+    expect(work!.library, 'media');
     final rows = await mediaRows('image');
     expect(rows, hasLength(2));
     final first = rows.firstWhere((r) => r['filename'] == '第10话.png');
@@ -110,7 +110,7 @@ void main() {
 
     final folders = await db.query('folders', where: 'work_id = ?', whereArgs: [work.id]);
     expect(folders, hasLength(1));
-    expect(folders.first['library'], 'image');
+    expect(folders.first['library'], 'media');
     final paths = await db.query('folder_paths',
         where: 'folder_id = ?', whereArgs: [folders.first['id']]);
     expect(paths.map((r) => r['path']).toList(), [dir.path]);
@@ -123,7 +123,7 @@ void main() {
     final work = await state.importDirectory(dir.path);
 
     expect(work, isNotNull);
-    expect(work!.library, 'image');
+    expect(work!.library, 'media');
     expect(await mediaRows('image'), hasLength(1));
   });
 
@@ -135,7 +135,7 @@ void main() {
     final work = await state.importDirectory(dir.path);
 
     expect(work, isNotNull);
-    expect(work!.library, 'video');
+    expect(work!.library, 'media');
     final rows = await mediaRows('video');
     expect(rows.map((r) => r['filename']).toList(), ['01.mkv', '02.mp4']);
     expect(rows.every((r) => r['duration_ms'] == null), isTrue);

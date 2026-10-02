@@ -46,8 +46,6 @@ class MediaItem {
   final int? durationMs;
   final int? width;
   final int? height;
-  final String? hash;
-  final String? note;
   final String? alias;
   final String? subtitlePath;
   final String? coverPath;
@@ -71,8 +69,6 @@ class MediaItem {
     this.durationMs,
     this.width,
     this.height,
-    this.hash,
-    this.note,
     this.alias,
     this.subtitlePath,
     this.coverPath,
@@ -96,8 +92,6 @@ class MediaItem {
         'duration_ms': durationMs,
         'width': width,
         'height': height,
-        'hash': hash,
-        'note': note,
         'alias': alias,
         'subtitle_path': subtitlePath,
         'cover_path': coverPath,
@@ -122,8 +116,6 @@ class MediaItem {
         durationMs: map['duration_ms'] as int?,
         width: map['width'] as int?,
         height: map['height'] as int?,
-        hash: map['hash'] as String?,
-        note: map['note'] as String?,
         alias: map['alias'] as String?,
         subtitlePath: map['subtitle_path'] as String?,
         coverPath: map['cover_path'] as String?,
@@ -250,8 +242,8 @@ class MediaDao {
 
   /// 按 id 批量删媒体记录（批量多选的「从软件移除」走这里）。
   ///
-  /// 只删库里的行，磁盘文件不动。media_tags、media_segments、reading_spreads
-  /// 都按外键级联清掉；reading_progress.media_id 是 SET NULL，阅读质量不受影响。
+  /// 只删库里的行，磁盘文件不动。media_tags 与 media_segments 都按外键级联
+  /// 清掉；reading_progress.media_id 是 SET NULL，阅读进度不受影响。
   Future<int> deleteByIds(Iterable<int> ids, {MediaType? type}) async {
     final list = ids.toSet().toList();
     if (list.isEmpty) return 0;

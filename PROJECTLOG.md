@@ -1267,3 +1267,83 @@ P2-23 的处置：`lib/widgets/color_picker_dialog.dart` 在 `lib` 里确实没�
 平均值与 16x16 采样应当接近，但没有在真机上对比过。
 
 用户同批提出的「图片视频栏合并为多媒体栏」本轮只做探索，没有改代码。
+
+## 2026-09-30 图片栏与视频栏合并为多媒体栏（schema v10，非兼容式）
+
+同一批用户需求里的第二项：把图片栏与视频栏合并成一个「多媒体栏」。文件浏览逻辑按
+图片/视频侧那套来（缩略图预览），音频单文件可以指定缩略图；阅读方式不变，图片仍是
+漫画模式，视频仍拉起系统播放器（推送播放列表只推视频），音频仍是专辑式列表播放。
+方案先出报告（`docs/多媒体栏合并方案.md`），用户拍板三条后开工：数据库可以做非兼容式
+更新（软件还没对外发布）、视频封面「先读系统封面，没有就取第一帧」、批量操作与工具条取并集。
+
+| 变更 | 原来 | 现在 |
+| --- | --- | --- |
+| 库归属 | `audio` / `image` / `video` 三值，三个页签 | `audio` / `media` 两值，音频栏与多媒体栏两个页签 |
+| 一个文件几行 | 图片与视频各走自己的导入链 | `media.path` 本来就 UNIQUE，一个文件一行；两个栏目共用同一行，删一处另一处同步消失 |
+| 迁移 | `Tables.migrations` 逐版本 `ALTER TABLE` 链 | 整张 `migrations` 表删掉；`Tables.applyMigrations` 版本不同就 `dropAll` + `createAll`（`Tables.tableNames` 子表在前、`viewNames`） |
+| 顺带删掉的旧结构 | — | `reading_spreads` 表、`images` 视图、`media.hash` 与 `media.note`、`works.cover_crop`、跨库迁移工具（`lib/services/migration_service.dart`、`migration_check.dart`、`tool/migrate*.dart` 与三个测试文件） |
+| 中心区装填 | 按库二选一（图片/视频类型过滤） | 页签决定：多媒体栏 `type: null` 平铺所有类型，音频栏仍走 `tracks` 视图 |
+| 视频封面 | 只有 `Icons.movie` | 三级链：Linux 系统缩略图 → 容器内嵌封面 → ffmpeg 取首帧，全失败退回图标（`lib/services/video_cover_service.dart`） |
+| 音频缩略图 | 音频栏不显示封面 | 多媒体栏的音频磁贴显示封面，⋮ 菜单可「设置缩略图...」与「清除缩略图」 |
+| 外链播放列表 | 没有视频就退回全部媒体 | 按作品/卷的库归属推送：音频作品推音频、多媒体作品推视频，该类型一行都没有就直接算失败 |
+| 工具条 | 视觉栏与音频栏各一套 | 取并集：多媒体栏作品层能「添加文件夹」到本作品，进目录后能「播放本目录的音频」 |
+| 规则标签筛选 | 只把标签 id 拼进 `media_tags` 子查询 | `kind:` / `ext:` 这类规则标签回查 `tags` 表后翻成列条件（`media_type = '...'` / `ext = '...'`） |
+
+验证：
+
+- `flutter test`：**576 用例全过**（本批开始前 554 全过；期间删掉跨库迁移与老结构的
+  三个测试文件，`test/db_migration_test.dart` 按 v10 重写为 12 条）。
+- `flutter analyze`：5 条既有 info（`lib/services/import_service.dart:45/46/47`
+  的 `prefer_initializing_formals`、`lib/widgets/cover_image.dart:34:27` 与 `:34:31`
+  的 `unnecessary_underscores`）。
+- 新增用例：`test/services/video_cover_service_test.dart` 13 条、
+  `test/state/app_state_video_cover_test.dart` 3 条、
+  `test/state/app_state_audio_album_test.dart` 3 条、
+  `test/state/app_state_external_play_test.dart` 3 条、
+  `test/state/app_state_media_tab_test.dart` 5 条；改写
+  `test/widget/image_grid_test.dart`（5 → 9 条）、`test/widget/home_page_test.dart`
+  （18 → 19 条，图片栏与视频栏用例合并进多媒体栏）；其余受库名影响的 10 个测试文件
+  把夹具的 `library:` 改成 `'media'`。
+- 变异验证六处，都如期变红：规则标签不翻列条件（多媒体栏里 `song.srt` 漏进来）、
+  `_fillsImages` 改回只看作品库归属（`Expected: Set:['song.mp3', 'cover.jpg'] Actual: Set:[]`）、
+  `queueStartIndex` 恒返回 0、去掉 `playAudioInDir` 的空队列早退（引擎报
+  `Failed to load dynamic library 'libflutter_soloud_plugin.so'`）、去掉封面 mtime 新鲜度判断、
+  一二级取图对调。
+
+踩坑：
+
+- 规则标签（`kind:` / `ext:`）在库里只有 `tags` 定义行，不写 `media_tags` 关联行
+  （`lib/db/tag_dao.dart:363-368`）。旧的 `_getIdsByTags` 只拼 `media_tags` 子查询，对
+  规则标签等于空集，`NOT IN (空)` 谁都挡不住。以前没暴露是因为每个列表都被类型范围圈住
+  （音频栏走 `tracks` 视图，图片/视频栏按 `type` 过滤），多媒体栏按 `type: null` 一查，
+  字幕就漏出来了。修法是新增 `_ruleSqlByIds`，把规则标签用 `ruleTagSql` 翻成列条件，
+  AND / OR / NOT 三种都要翻。
+- 中心区不能按当前作品的库归属装填。多媒体栏里点进一个音频作品时
+  `AppState.currentLibrary` 取到 `'audio'`，`_loadCenter` 就改走 `tracks`，而中心区那一栏
+  是 `ImageGrid`（渲染 `AppState.images`），文件夹层一片空白。现在由页签显式告诉状态层：
+  `setBrowsingLibrary(String)` + `bool get _fillsImages => _browsingLibrary == 'media' || isVisualLibrary;`，
+  `HomePage._switchLibrary` 里跟着页签调用。
+- `setMediaCover` 只写库不换内存行，磁贴还是旧封面。改成写完 `getById` 回填 `_images`
+  （照 `setImageAlias` 的写法）；子 agent 临时加的 `refresh()` 折中已删掉。
+- `flutter test` 环境里没有 `libflutter_soloud_plugin.so`，`PlayerController.playQueue`
+  必抛 `ArgumentError: Failed to load dynamic library 'libflutter_soloud_plugin.so'`。
+  所以队列构造抽成可测的三件套：`audioQueueInDir`（纯查询）、
+  `static int queueStartIndex(List<TrackItem>, int?)`、`playAudioInDir`（队列空直接返回）。
+  真要测「点了播放」的用例就用 `class _NoEnginePlayer extends PlayerController { @override Future<void> init() async {} }`。
+- 视频封面服务在 widget 测试里会留下 20 秒的 `FakeTimer`（`which ffmpeg` 探测加
+  `exitCode.timeout(20s)`），夹具必须注入 `VideoCoverService(os: 'windows', systemCover: (_) async => null, embeddedCover: (_) async => null)`，
+  否则用例挂在「A Timer is still pending even after the widget tree was disposed」。
+- 真实文件 IO 必须写在 `setUp`：`testWidgets` 的方法体跑在假时钟里，
+  `Directory.systemTemp.createTemp` 写在方法体里会直接挂死。
+
+未验证的部分：真机 ffmpeg 取首帧没跑过（开发机没有 ffmpeg），三级取图只有替身测试；
+Windows 系统缩略图没实现（只做了 Linux 的 `~/.cache/thumbnails/normal`），Windows 上视频
+封面会走内嵌封面或 ffmpeg；列表态（紧凑行）的音频磁贴只有 analyze 与人工比对，没有 widget
+用例；`MediaType.subtitle` 行仍走图片式卡片兜底渲染（默认被 tag 反选挡掉，用户改过排除集
+时才会出现），双击不进查看器，这条没有用例。
+
+本轮没有升版本号：`pubspec.yaml:19` 仍是 `version: 1.4.0+21`，与紧挨着的两批一致。
+
+历史文档 `BUILD_GUIDE.md` 与 `PROJECT_STEPS.md` 里还留着「新建 migration_service.dart」
+「跑 tool/migrate_check.dart」这类步骤，它们记的是当时的跨库迁移计划。本轮把那套工具删了，
+文件已经不在了，读到那几段按本节为准。

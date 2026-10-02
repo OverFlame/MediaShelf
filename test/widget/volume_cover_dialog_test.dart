@@ -58,9 +58,9 @@ void main() {
     extraPng = p.join(tmp.path, 'extra.png');
     await File(extraPng).writeAsBytes(base64Decode(_tinyPngBase64));
 
-    final work = await WorkDao(db).create('图库', library: 'image');
+    final work = await WorkDao(db).create('图库', library: 'media');
     final folder =
-        await FolderDao(db).create('卷A', workId: work.id, library: 'image');
+        await FolderDao(db).create('卷A', workId: work.id, library: 'media');
     folderId = folder.id!;
     await FolderDao(db).addPath(folderId, volDir);
 
