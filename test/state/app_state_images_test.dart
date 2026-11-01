@@ -406,6 +406,49 @@ void main() {
     expect(app.visualSortKey, 'added');
   });
 
+  test('作品层排序独立于文件层：默认加入时间倒序，可切名称自然序', () async {
+    final app = AppState(player: PlayerController());
+    final works = [
+      Work(id: 1, name: '第10卷', createdAt: 100),
+      Work(id: 2, name: '第2卷', createdAt: 300),
+      Work(id: 3, name: '第1卷', createdAt: 200),
+    ];
+    List<String> sortedNames() {
+      final copy = [...works]..sort(app.worksComparator);
+      return copy.map((w) => w.name).toList();
+    }
+
+    expect(AppState.worksSortLabels.keys, ['name', 'added']);
+    expect(app.worksSortKey, 'added');
+    expect(app.worksSortDescending, isTrue);
+    expect(sortedNames(), ['第2卷', '第1卷', '第10卷'], reason: '默认新作品在前，与改造前列表顺序一致');
+
+    await app.setWorksSortKey('name');
+    await app.setWorksSortDescending(false);
+    expect(sortedNames(), ['第1卷', '第2卷', '第10卷'], reason: '名称走自然序：第2卷排在第10卷前');
+
+    // 文件层排序换掉，作品层不受影响
+    await app.setVisualSortKey('mtime');
+    expect(app.visualSortKey, 'mtime');
+    expect(app.worksSortKey, 'name');
+    expect(sortedNames(), ['第1卷', '第2卷', '第10卷']);
+
+    await app.setWorksSortDescending(true);
+    expect(sortedNames(), ['第10卷', '第2卷', '第1卷']);
+
+    // 落盘：重开可读回
+    expect(SettingsService.instance.worksSortKey, 'name');
+    expect(SettingsService.instance.worksSortDescending, isTrue);
+    final app2 = AppState(player: PlayerController());
+    await app2.loadSettings();
+    expect(app2.worksSortKey, 'name');
+    expect(app2.worksSortDescending, isTrue);
+
+    // 未知字段忽略
+    await app.setWorksSortKey('size');
+    expect(app.worksSortKey, 'name');
+  });
+
   test('查看器翻页时「图片详情」跟着走', () async {
     final (work, folder) = await makeImageLibrary();
     for (var i = 0; i < 3; i++) {

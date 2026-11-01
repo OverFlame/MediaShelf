@@ -317,6 +317,51 @@ class AppState extends ChangeNotifier {
   /// 多媒体库是否降序。
   bool get visualSortDescending => _imageSortDesc;
 
+  /// 作品层可用的排序字段。作品没有文件大小与修改时间，只留名称与加入时间。
+  static const Map<String, String> worksSortLabels = {
+    'name': '文件名',
+    'added': '加入时间',
+  };
+
+  /// 作品层排序独立于文件层：默认按加入时间倒序，与列表原有的「新作品在前」一致。
+  String _worksSortKey = 'added';
+  bool _worksSortDesc = true;
+
+  String get worksSortKey =>
+      worksSortLabels.containsKey(_worksSortKey) ? _worksSortKey : 'added';
+
+  bool get worksSortDescending => _worksSortDesc;
+
+  Future<void> setWorksSortKey(String key) async {
+    if (!worksSortLabels.containsKey(key)) return;
+    _worksSortKey = key;
+    await SettingsService.instance.setWorksSortKey(key);
+    notifyListeners();
+  }
+
+  Future<void> setWorksSortDescending(bool desc) async {
+    _worksSortDesc = desc;
+    await SettingsService.instance.setWorksSortDescending(desc);
+    notifyListeners();
+  }
+
+  /// 作品层排序比较器。同值时按加入时间、id 兜底，降序整体取负。
+  int Function(Work, Work) get worksComparator {
+    final key = worksSortKey;
+    final desc = worksSortDescending;
+    return (a, b) {
+      int cmp;
+      if (key == 'added') {
+        cmp = a.createdAt.compareTo(b.createdAt);
+      } else {
+        cmp = naturalCompare(a.name, b.name);
+      }
+      if (cmp == 0) cmp = a.createdAt.compareTo(b.createdAt);
+      if (cmp == 0) cmp = (a.id ?? 0).compareTo(b.id ?? 0);
+      return desc ? -cmp : cmp;
+    };
+  }
+
   /// 当前视觉库的排序比较器。
   ///
   /// `name` 走自然序（`sort_key` 补零，见 BUILD_GUIDE 第 20.2 节），其余字段
@@ -506,6 +551,8 @@ class AppState extends ChangeNotifier {
       _sortDescending = ss.sortDescending;
       _imageSortKey = ss.imageSortKey;
       _imageSortDesc = ss.imageSortDescending;
+      _worksSortKey = ss.worksSortKey;
+      _worksSortDesc = ss.worksSortDescending;
       _gridColumns = ss.gridColumns;
       _viewMode = ss.viewMode;
       _subtitleOpacityAuto = ss.subtitleOpacityAuto;

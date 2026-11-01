@@ -34,6 +34,7 @@ class WorksGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
     final works = appState.works.where((w) => _libs.contains(w.library)).toList();
+    works.sort(appState.worksComparator);
 
     if (works.isEmpty) {
       return Center(

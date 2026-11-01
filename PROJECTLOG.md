@@ -1528,3 +1528,23 @@ GitHub compare 显示 master 落后 main 六个提交。检查确认六个都是
 main；删除本地与远端 master；README、BUILD_GUIDE、PROJECT_STEPS 的分支说明同步改成 main。
 
 验证：`git ls-remote --heads origin` 只剩 `refs/heads/main`；本地只有 main；`git status` 干净。
+
+## 2026-11-02 作品层排序与音频栏工具栏
+
+作品层此前只消费视图与列数，排序菜单改的是文件层设置，卡片顺序不动。现在 `WorksGrid`
+在过滤后按 `AppState.worksComparator` 排序。作品没有文件大小与修改时间，所以作品层只
+暴露「文件名 / 加入时间」两项：名称走 `naturalCompare` 自然序，加入时间取
+`works.created_at`，同值按加入时间与 id 兜底，降序整体取负。
+
+作品层排序单独保存，键 `works_sort_key` / `works_sort_desc`，默认 `added` + 降序，与改造
+前「新作品在前」一致。文件层的 `image_sort_key` 等设置不受影响。
+
+音频栏的作品层原先没有工具栏，视图与列数只能去多媒体栏改。现在音频栏未进入作品时也渲染
+`_VisualToolbar`，复用列数（2 到 10）、网格 / 列表切换、排序与更多菜单；进入音频作品后仍
+由 `FolderBrowser` 自己的曲目工具栏接管，避免两条工具栏叠在一起。工具栏按
+`currentWork == null` 判断作品层，排序菜单与写入目标随之切换。
+
+验证：`dart analyze` 无问题；全量 `flutter test` 600 条全过。新增 2 例：
+`test/state/app_state_images_test.dart` 的「作品层排序独立于文件层：默认加入时间倒序，可切名称
+自然序」；`test/widget/home_page_test.dart` 的「音频作品层使用多媒体工具栏，排序菜单只给作品
+字段」。变异两处均按预期变红后恢复（`WorksGrid` 不调用比较器、作品层仍显示文件层四个排序项）。

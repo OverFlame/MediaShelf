@@ -155,6 +155,21 @@ class SettingsService {
     await _save();
   }
 
+  // 作品层排序：作品只有名称与加入时间，默认「加入时间倒序」保持新作品在前。
+  String get worksSortKey => (_data['works_sort_key'] as String?) ?? 'added';
+
+  Future<void> setWorksSortKey(String key) async {
+    _data['works_sort_key'] = key;
+    await _save();
+  }
+
+  bool get worksSortDescending => (_data['works_sort_desc'] as bool?) ?? true;
+
+  Future<void> setWorksSortDescending(bool desc) async {
+    _data['works_sort_desc'] = desc;
+    await _save();
+  }
+
   // ── 高级筛选表达式历史 ──
   List<String> get expressionHistory {
     final raw = _data['expr_history'];

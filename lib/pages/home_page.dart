@@ -202,15 +202,19 @@ class _HomePageState extends State<HomePage> {
         return const Center(
             child: CircularProgressIndicator(color: AppColors.accent));
       }
-      return appState.currentWork == null
-          ? Column(
-              children: [
-                if (appState.recentTracks.isNotEmpty)
-                  _RecentBar(appState: appState),
-                const Expanded(child: WorksGrid(library: 'audio')),
-              ],
-            )
-          : const FolderBrowser();
+      if (appState.currentWork != null) return const FolderBrowser();
+      return Column(
+        children: [
+          _VisualToolbar(
+            library: _library,
+            detailOpen: false,
+            onToggleDetail: () {},
+          ),
+          const Divider(height: 1),
+          if (appState.recentTracks.isNotEmpty) _RecentBar(appState: appState),
+          const Expanded(child: WorksGrid(library: 'audio')),
+        ],
+      );
     }
 
     final centerColumn = Column(
@@ -387,6 +391,32 @@ class _VisualToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
+    // 作品层只排作品：作品没有文件大小与修改时间，菜单只给名称与加入时间。
+    // 文件层仍用完整四档。
+    final worksLayer = appState.currentWork == null;
+    final sortLabels = worksLayer
+        ? AppState.worksSortLabels
+        : AppState.visualSortLabels;
+    final sortKey = worksLayer ? appState.worksSortKey : appState.visualSortKey;
+    final sortDesc = worksLayer
+        ? appState.worksSortDescending
+        : appState.visualSortDescending;
+    void setSort(String key) {
+      if (worksLayer) {
+        appState.setWorksSortKey(key);
+      } else {
+        appState.setVisualSortKey(key);
+      }
+    }
+
+    void toggleSort() {
+      if (worksLayer) {
+        appState.setWorksSortDescending(!appState.worksSortDescending);
+      } else {
+        appState.setVisualSortDescending(!appState.visualSortDescending);
+      }
+    }
+
     return SizedBox(
       height: 44,
       child: LayoutBuilder(
@@ -465,18 +495,16 @@ class _VisualToolbar extends StatelessWidget {
                   style: sideStyle,
                   onSelected: (v) {
                     if (v == 'toggle') {
-                      appState.setVisualSortDescending(
-                        !appState.visualSortDescending,
-                      );
+                      toggleSort();
                     } else {
-                      appState.setVisualSortKey(v);
+                      setSort(v);
                     }
                   },
                   itemBuilder: (_) => [
-                    for (final entry in AppState.visualSortLabels.entries)
+                    for (final entry in sortLabels.entries)
                       CheckedPopupMenuItem(
                         value: entry.key,
-                        checked: appState.visualSortKey == entry.key,
+                        checked: sortKey == entry.key,
                         child: Text(
                           entry.value,
                           style: const TextStyle(fontSize: 13),
@@ -486,7 +514,7 @@ class _VisualToolbar extends StatelessWidget {
                     PopupMenuItem(
                       value: 'toggle',
                       child: Text(
-                        appState.visualSortDescending ? '改为升序' : '改为降序',
+                        sortDesc ? '改为升序' : '改为降序',
                         style: const TextStyle(fontSize: 13),
                       ),
                     ),
@@ -584,10 +612,10 @@ class _VisualToolbar extends StatelessWidget {
                           ),
                         ),
                       ),
-                      for (final entry in AppState.visualSortLabels.entries)
+                      for (final entry in sortLabels.entries)
                         CheckedPopupMenuItem(
                           value: 'sort:${entry.key}',
-                          checked: appState.visualSortKey == entry.key,
+                          checked: sortKey == entry.key,
                           child: Text(
                             entry.value,
                             style: const TextStyle(fontSize: 13),
@@ -596,7 +624,7 @@ class _VisualToolbar extends StatelessWidget {
                       PopupMenuItem(
                         value: 'sortDir',
                         child: Text(
-                          appState.visualSortDescending ? '改为升序' : '改为降序',
+                          sortDesc ? '改为升序' : '改为降序',
                           style: const TextStyle(fontSize: 13),
                         ),
                       ),
@@ -669,7 +697,11 @@ class _VisualToolbar extends StatelessWidget {
         onToggleDetail();
         break;
       case 'sortDir':
-        appState.setVisualSortDescending(!appState.visualSortDescending);
+        if (appState.currentWork == null) {
+          appState.setWorksSortDescending(!appState.worksSortDescending);
+        } else {
+          appState.setVisualSortDescending(!appState.visualSortDescending);
+        }
         break;
       case 'playAll':
         _playAllAudio(context);
@@ -680,7 +712,12 @@ class _VisualToolbar extends StatelessWidget {
       default:
         // 极窄时排序项挂在「更多」里，值形如 sort:name
         if (action.startsWith('sort:')) {
-          appState.setVisualSortKey(action.substring(5));
+          final key = action.substring(5);
+          if (appState.currentWork == null) {
+            appState.setWorksSortKey(key);
+          } else {
+            appState.setVisualSortKey(key);
+          }
         }
     }
   }

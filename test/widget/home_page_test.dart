@@ -838,4 +838,48 @@ void main() {
     expect(tester.takeException(), isNull,
         reason: '窄屏也严格按用户列数排，卡片不能溢出');
   });
+
+  testWidgets('音频作品层使用多媒体工具栏，排序菜单只给作品字段', (tester) async {
+    late int aId;
+    late int zId;
+    await tester.runAsync(() async {
+      aId = (await WorkDao(db).create('A卷', library: 'audio')).id!;
+      zId = (await WorkDao(db).create('Z卷', library: 'audio')).id!;
+      await app.refresh();
+    });
+    await pumpHome(tester);
+
+    expect(find.byKey(const ValueKey('audio-toolbar-columns')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('audio-toolbar-viewmode')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('audio-toolbar-sort')), findsOneWidget);
+
+    double dx(int id) =>
+        tester.getTopLeft(find.byKey(ValueKey('work-card-$id'))).dx;
+
+    // 默认加入时间倒序：后建的 Z卷 在前
+    expect(dx(zId), lessThan(dx(aId)));
+
+    await tester.tap(find.byKey(const ValueKey('audio-toolbar-sort')));
+    await tester.pumpAndSettle();
+    expect(find.text('文件名'), findsOneWidget);
+    expect(find.text('加入时间'), findsOneWidget);
+    expect(find.text('修改时间'), findsNothing, reason: '作品没有文件修改时间，菜单不该给这个选项');
+    expect(find.text('文件大小'), findsNothing);
+
+    await tester.tap(find.widgetWithText(CheckedPopupMenuItem<String>, '文件名'));
+    await settleIo(tester);
+    expect(app.worksSortKey, 'name');
+    expect(app.worksSortDescending, isTrue, reason: '换字段不偷偷改方向，仍保持加入时间那套降序');
+    expect(dx(zId), lessThan(dx(aId)), reason: '名称降序：Z卷 在前');
+
+    await tester.tap(find.byKey(const ValueKey('audio-toolbar-sort')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, '改为升序'));
+    await settleIo(tester);
+    expect(app.worksSortDescending, isFalse);
+    expect(dx(aId), lessThan(dx(zId)), reason: '名称升序把 A卷 排到 Z卷 前');
+  });
 }
