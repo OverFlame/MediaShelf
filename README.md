@@ -214,9 +214,9 @@ Android 端内置前台服务（`PlaybackService.kt`）、MediaSession 与 Media
 
 ## 分支与协作
 
-- `master`：开发分支。日常提交的推送目标，`git push` 默认推它。
-- `main`：稳定分支。**仅由维护者通过 PR 从 master 合并**，不接受直接推送。
-- CI：`.github/workflows/ci.yml`。push 与 PR 都跑，固定 Flutter 3.47.5，先装 `libsqlite3-dev`，再跑 `flutter analyze --no-fatal-infos` 与 `flutter test`。
+- `main`：唯一开发分支，也是默认分支。日常提交直接推它。
+- `master` 已退役，历史提交与文件内容全部在 `main`。
+- CI：`.github/workflows/ci.yml`。push 与 PR 都跑，固定 Flutter 3.47.5，先装 `libsqlite3-dev`，再跑 `flutter analyze` 与 `flutter test`。
 
 开发历程、技术决策与跨平台踩坑记录见 [PROJECTLOG.md](PROJECTLOG.md)。
 

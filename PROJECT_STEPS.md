@@ -466,7 +466,7 @@ python3 ~/.dsh/skills/asd-ste100-zh/scripts/ste-lint-zh.py --shape <文件>
 
 已确认：项目名 MediaShelf，骨架 AudioShelf，单库加迁移脚本，Windows 与 Linux 优先，视频 v1 只拉外部播放器。
 
-远端是 `git@github.com:OverFlame/MediaShelf.git`。`master` 由我推，`main` 由用户把 `master` PR 进来。
+远端是 `git@github.com:OverFlame/MediaShelf.git`。`main` 是唯一开发分支，直接推送。`master` 已退役。
 
 分类查找走规则标签加 `media` 列条件，库归属走 `folders.library` 与 `works.library`，口径见 BUILD_GUIDE 第 18 节。
 

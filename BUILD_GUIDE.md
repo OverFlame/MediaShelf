@@ -164,7 +164,7 @@ test/perf/library_scale_test.dart，291 行。
 | Android namespace | com.mediashelf.mediashelf |
 | Android applicationId | com.mediashelf.mediashelf |
 | 远端建议 | git@github.com:<用户名>/MediaShelf.git |
-| 默认分支 | master |
+| 默认分支 | main |
 
 改名步骤见下表。
 
@@ -1057,7 +1057,7 @@ flutter build apk --release
 |---|---|---|
 | UI 布局 | 未给 | 布局与交互细节 |
 | 许可证 | 暂定 MIT | 是否保留 BSD 3-Clause 的署名 |
-| 远端仓库 | git@github.com:OverFlame/MediaShelf.git | 推送口径已定：master 直推，main 由用户 PR |
+| 远端仓库 | git@github.com:OverFlame/MediaShelf.git | 推送口径已定：main 直推，master 已退役 |
 | 主题 | 暂用原创主题 | 还是 Catppuccin |
 | Android | 首版不验收 | 何时补 |
 | 数据目录 | 暂用 AudioShelf 的支持目录 | 是否统一到新目录名 |

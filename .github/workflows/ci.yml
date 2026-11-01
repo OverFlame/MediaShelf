@@ -4,7 +4,7 @@ name: CI
 # 打包与发布不在 CI 里（脚本依赖各自的桌面与 Android 工具链，见 scripts/）。
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
