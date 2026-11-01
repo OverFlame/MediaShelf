@@ -1517,3 +1517,14 @@ P1-3 偶发测试：
 视图、列数、默认封面与进度提示的说明。
 
 这轮同样有可见的 PUA 输出（诊断行、压力旁白、验证收尾），不记录评分。
+
+## 2026-11-01 分支统一到 main
+
+GitHub compare 显示 master 落后 main 六个提交。检查确认六个都是把 master 合进 main 的合并
+提交，`git diff master origin/main` 为空，master 的提交全部已在 main 里。差异只在合并历史，
+没有文件丢失。
+
+处理：本地 main 快进到 origin/main；把本地 PUA 记录提交 cherry-pick 到 main；CI 只监听
+main；删除本地与远端 master；README、BUILD_GUIDE、PROJECT_STEPS 的分支说明同步改成 main。
+
+验证：`git ls-remote --heads origin` 只剩 `refs/heads/main`；本地只有 main；`git status` 干净。
