@@ -1,3 +1,7 @@
+// 命名参数不能以下划线开头，字段 `_workDao` 等无法写成 `this._workDao`
+// 的初始化形参。这 3 条 prefer_initializing_formals 是 lint 误报。
+// ignore_for_file: prefer_initializing_formals
+
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -61,7 +65,11 @@ class ImportService {
   /// 目录里有音频）。
   Stream<ImportProgress> importDirectory(String dirPath,
       {required int workId, ScanResult? scan, String library = 'audio'}) async* {
-    if (_isImporting) return;
+    if (_isImporting) {
+      // 静默返回会让直接调用方以为导入成功。AppState 的主守卫会先挡住，
+      // 这里兜住绕过 AppState 的调用，把拒绝理由显式交给调用方。
+      throw StateError('已有导入任务进行中');
+    }
     _isImporting = true;
     try {
       final scanned = scan ?? await FileScanner.scanDirectoryOffThread(dirPath);
@@ -94,6 +102,7 @@ class ImportService {
             : newPaths.length;
         final metas = await MetadataService.readAll(newPaths.sublist(start, end));
 
+        final items = <TrackItem>[];
         for (int i = start; i < end; i++) {
           final path = newPaths[i];
           final file = File(path);
@@ -124,7 +133,7 @@ class ImportService {
           final subtitlePath =
               (matched == null || matched.isEmpty) ? null : matched.first;
 
-          final item = TrackItem(
+          items.add(TrackItem(
             path: path,
             filename: filename,
             title: meta.title,
@@ -136,16 +145,25 @@ class ImportService {
             fileMtime: mtime > 0 ? mtime : null,
             subtitlePath: subtitlePath,
             addedAt: now,
-          );
+          ));
+        }
 
-          final id = await _trackDao.insert(item);
+        // 整批写库放一个事务：中途失败不会留下半批曲目，
+        // 也避免每首各开一次事务（报告第 26 项）。
+        final ids = await _trackDao.insertMany(items);
+
+        // 内嵌封面是文件 IO，留在事务外逐张写，避免长事务卡住数据库。
+        for (int i = start; i < end; i++) {
+          final id = ids[i - start];
+          final meta = metas[i - start];
           if (id > 0 && meta.pictureBytes != null) {
             final coverPath = await CoverService.writeEmbedded(
                 id, meta.pictureBytes!, meta.pictureMimetype ?? 'image/jpeg');
             if (coverPath != null) await _trackDao.setCoverPath(id, coverPath);
           }
 
-          yield ImportProgress(current: i + 1, total: total, currentFile: path);
+          yield ImportProgress(
+              current: i + 1, total: total, currentFile: newPaths[i]);
         }
       }
 

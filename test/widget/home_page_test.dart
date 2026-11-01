@@ -78,6 +78,7 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    SettingsService.instance.resetForTest();
     tmp = await Directory.systemTemp.createTemp('mediashelf_home_page');
     albumDir = await Directory(p.join(tmp.path, 'media', '相册'))
         .create(recursive: true);
@@ -789,5 +790,52 @@ void main() {
 
     expect(tester.takeException(), isNull,
         reason: '相册里没有音频行，播放动作应该什么都不做而不是抛异常');
+  });
+
+  testWidgets('作品层跟随视图切换，窄屏 10 列不溢出', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await pumpHome(tester);
+    await switchLibrary(tester, kMediaLibrary);
+
+    expect(
+      find.descendant(
+        of: find.byType(WorksGrid),
+        matching: find.byType(GridView),
+      ),
+      findsOneWidget,
+      reason: '默认是网格视图',
+    );
+
+    await tester.tap(find.byKey(const ValueKey('media-toolbar-viewmode')));
+    await settleIo(tester);
+    expect(app.viewMode, 'list');
+
+    expect(
+      find.descendant(
+        of: find.byType(WorksGrid),
+        matching: find.byType(ListView),
+      ),
+      findsOneWidget,
+      reason: '作品层要消费 viewMode，不能只让作品内部切',
+    );
+    expect(
+      find.descendant(
+        of: find.byType(WorksGrid),
+        matching: find.byType(GridView),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('media-toolbar-viewmode')));
+    await settleIo(tester);
+    await tester.runAsync(() => app.setGridColumns(10));
+    await settleIo(tester);
+
+    expect(app.gridColumns, 10);
+    expect(tester.takeException(), isNull,
+        reason: '窄屏也严格按用户列数排，卡片不能溢出');
   });
 }

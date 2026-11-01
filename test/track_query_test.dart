@@ -96,6 +96,26 @@ void main() {
     expect((await dao.queryDirectInDir('C:')).map((t) => t.filename), ['a.mp3']);
   });
 
+  test('目录前缀不命中同名前缀的相邻目录', () async {
+    await add('/m/vol/1.mp3');
+    await add('/m/vol/extra/2.mp3');
+    await add('/m/vol2/3.mp3');
+
+    final found = await dao.queryByDirs(['/m/vol']);
+    expect(found.map((t) => t.filename).toSet(), {'1.mp3', '2.mp3'});
+  });
+
+  test('目录区间查询走 path 的 NOCASE 索引', () async {
+    await add('/m/vol/1.mp3');
+    final rows = await db.rawQuery(
+      'EXPLAIN QUERY PLAN SELECT * FROM tracks '
+      'WHERE path COLLATE NOCASE >= ? AND path COLLATE NOCASE < ?',
+      ['/m/vol/', '/m/vol0'],
+    );
+    final plan = rows.map((r) => r['detail']).join(' ');
+    expect(plan, contains('idx_media_type_path_nocase'));
+  });
+
   test('目录数超过一批时仍然查得到，并按文件名排序', () async {
     final dirs = List.generate(600, (i) => '/m/d$i');
     await add('/m/d0/z.mp3');

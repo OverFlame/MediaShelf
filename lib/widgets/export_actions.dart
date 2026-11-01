@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+
+import 'dialogs.dart';
 import 'package:path/path.dart' as p;
 
 import '../db/media_dao.dart';
@@ -66,9 +67,7 @@ class ExportActions extends StatelessWidget {
     if (img == null) return;
 
     final messenger = ScaffoldMessenger.of(context);
-    final String? destDir = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择保存目录',
-    );
+    final String? destDir = await pickDirectory(title: '选择保存目录');
 
     if (destDir == null || !context.mounted) return;
 

@@ -151,14 +151,22 @@ class FileScanner {
   /// 占位格式（.ass 等）只入库，不参与匹配。
   static Map<String, List<String>> _matchSubtitles(
       List<String> audio, List<String> subs) {
+    // 先按目录分组。旧实现每首音频都遍历整个字幕列表，库里几千张图/字幕时
+    // 是 O(音频×字幕)；分组后只处理同目录的候选。
+    final byDir = <String, List<String>>{};
+    for (final s in subs) {
+      byDir.putIfAbsent(p.dirname(s), () => <String>[]).add(s);
+    }
+
     final result = <String, List<String>>{};
     for (final a in audio) {
       final dir = p.dirname(a);
+      final candidates = byDir[dir];
+      if (candidates == null) continue;
       final base = p.basenameWithoutExtension(a);
       final full = p.basename(a);
       final ranked = <(int, String)>[];
-      for (final s in subs) {
-        if (p.dirname(s) != dir) continue;
+      for (final s in candidates) {
         final name = p.basename(s);
         final ext = p.extension(name).toLowerCase();
         if (!subtitleExtensions.contains(ext)) continue;

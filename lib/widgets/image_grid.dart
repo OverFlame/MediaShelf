@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -18,6 +17,7 @@ import '../utils/format.dart';
 import '../utils/latest_only_runner.dart';
 import '../utils/log_util.dart';
 import 'cover_image.dart';
+import 'dialogs.dart';
 import 'folder_panel.dart';
 import 'launch_result_snack.dart';
 import 'scan_access_snack.dart';
@@ -97,11 +97,7 @@ class _ImageGridState extends State<ImageGrid> {
   Future<void> _setAudioCover(AppState appState, MediaItem audio) async {
     final id = audio.id;
     if (id == null) return;
-    final picked = await FilePicker.pickFile(
-      type: FileType.image,
-      dialogTitle: '选择缩略图',
-    );
-    final path = picked?.path;
+    final path = await pickImagePath(title: '选择缩略图');
     if (path == null || path.isEmpty) return;
     await appState.setMediaCover(id, path);
   }
@@ -470,9 +466,7 @@ class _ImageGridState extends State<ImageGrid> {
 
   Future<void> _pickFolder(BuildContext context, AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择包含图片、视频或音频的文件夹',
-    );
+    final result = await pickDirectory(title: '选择包含图片、视频或音频的文件夹');
     if (result != null && result.isNotEmpty && context.mounted) {
       await appState.importDirectory(result, library: widget.library);
     }
@@ -481,9 +475,7 @@ class _ImageGridState extends State<ImageGrid> {
   /// 批量导入：选父目录，里面的每个子文件夹各建一个作品。
   Future<void> _pickBatchFolder(BuildContext context, AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择父文件夹（每个子文件夹一个作品）',
-    );
+    final result = await pickDirectory(title: '选择父文件夹（每个子文件夹一个作品）');
     if (result == null || result.isEmpty || !context.mounted) return;
     final created = await appState.importSubdirectoriesAsWorks(
       result,

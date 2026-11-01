@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,7 +5,7 @@ import '../services/thumbnail_cache.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/cover_image.dart';
-import '../widgets/dialogs.dart' show confirmDialog;
+import '../widgets/dialogs.dart' show confirmDialog, pickDirectory;
 import '../widgets/filter_dialog.dart';
 import '../widgets/folder_browser.dart';
 import '../widgets/folder_panel.dart';
@@ -15,6 +14,7 @@ import '../widgets/image_grid.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/player_bar.dart';
 import '../widgets/tag_panel.dart';
+import '../widgets/thumb_backfill_chip.dart';
 import '../widgets/tag_picker_dialog.dart';
 import '../widgets/works_grid.dart';
 import 'settings_page.dart';
@@ -107,6 +107,12 @@ class _HomePageState extends State<HomePage> {
               : _buildCenter(appState, isWide),
           bottomNavigationBar: const PlayerBar(),
         ),
+        if (appState.backfillingThumbs)
+          Positioned(
+            left: 12,
+            bottom: MediaQuery.of(context).padding.bottom + 76,
+            child: const ThumbBackfillChip(),
+          ),
         // 查看器是覆盖层：双击图片磁贴后由 ImageGrid -> AppState.openViewer 打开
         if (_isVisual && appState.showViewer) ImageViewer(state: appState),
       ],
@@ -425,7 +431,7 @@ class _VisualToolbar extends StatelessWidget {
                 style: sideStyle,
                 onSelected: (v) => appState.setGridColumns(v),
                 itemBuilder: (_) => [
-                  for (var c = 2; c <= 8; c++)
+                  for (var c = 2; c <= 10; c++)
                     PopupMenuItem(
                         value: c,
                         child:
@@ -693,9 +699,7 @@ class _VisualToolbar extends StatelessWidget {
     final appState = context.read<AppState>();
     final workId = appState.currentWork?.id;
     if (workId == null) return;
-    final dir = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择要加入本作品的文件夹',
-    );
+    final dir = await pickDirectory(title: '选择要加入本作品的文件夹');
     if (dir == null) return;
     await appState.importDirectoryIntoWork(dir, workId);
   }

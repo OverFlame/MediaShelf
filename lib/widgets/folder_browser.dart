@@ -283,7 +283,7 @@ class FolderBrowser extends StatelessWidget {
     final work = appState.currentWork;
     if (work == null) return;
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final path = await pickDirectoryPath(title: '选择要加入「${work.name}」的文件夹');
+    final path = await pickDirectory(title: '选择要加入「${work.name}」的文件夹');
     if (path == null) return;
     await appState.importDirectoryIntoWork(path, work.id!);
     // 导入的调用方是按钮回调，没有错误边界：失败原因只能在这里弹出来。

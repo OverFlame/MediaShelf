@@ -12,6 +12,7 @@ import 'package:mediashelf/db/tag_dao.dart';
 import 'package:mediashelf/db/track_dao.dart';
 import 'package:mediashelf/db/work_dao.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
+import 'package:mediashelf/services/cover_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/services/thumbnail_cache.dart';
 import 'package:mediashelf/state/app_state.dart';
@@ -521,7 +522,7 @@ void main() {
     );
   });
 
-  test('导入后后台补齐缩略图，并让已建的占位卡片重新检查', () async {
+  test('导入后后台补齐缩略图，不重置已就绪的卡片', () async {
     Directory(photoDir).createSync(recursive: true);
     final pathA = p.join(photoDir, 'a.png');
     final pathB = p.join(photoDir, 'b.png');
@@ -543,12 +544,59 @@ void main() {
     expect(File(service.thumbPath(pathB, size: 300)).existsSync(), isTrue);
     expect(
       app.thumbEpoch,
-      greaterThan(before),
-      reason: '补出来的图要让网格里已建的占位卡片重新检查',
+      before,
+      reason: '补齐过程不能改 epoch，否则整屏卡片退回占位图并闪烁',
     );
+    expect(app.backfillingThumbs, isFalse);
 
     // 已经有了就不重复生成
     await app.backfillThumbnails([pathA]);
     expect(File(service.thumbPath(pathA, size: 300)).existsSync(), isTrue);
+  });
+
+  test('导入图片作品时按当前排序写默认封面', () async {
+    Directory(photoDir).createSync(recursive: true);
+    File(p.join(photoDir, 'b.png')).writeAsBytesSync(_pngBytes);
+    File(p.join(photoDir, 'a.png')).writeAsBytesSync(_pngBytes);
+    final app = AppState(player: PlayerController());
+    await app.init();
+
+    final work = await app.importDirectory(photoDir, library: 'media');
+
+    expect(work, isNotNull);
+    final saved = await workDao.getById(work!.id!);
+    expect(saved!.coverPath, p.join(photoDir, 'a.png'),
+        reason: '默认封面取当前排序的第一张，不是扫描顺序');
+  });
+
+  test('存量作品启动补封面，手动封面不覆盖，首图没了改选下一张', () async {
+    final (work, _) = await makeImageLibrary();
+    Directory(photoDir).createSync(recursive: true);
+    final first = await addImage('a.jpg');
+    final second = await addImage('b.jpg');
+    File(first.path).writeAsBytesSync(_pngBytes);
+    File(second.path).writeAsBytesSync(_pngBytes);
+
+    final app = AppState(player: PlayerController());
+    await app.init();
+
+    String? cover;
+    for (var i = 0; i < 40; i++) {
+      cover = (await workDao.getById(work.id!))!.coverPath;
+      if (cover != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    expect(cover, first.path, reason: '存量作品启动时补一次默认封面');
+
+    // 自动封面指向的首图被删：进作品时改选下一张。
+    File(first.path).deleteSync();
+    await app.enterWork(work.id!);
+    expect((await workDao.getById(work.id!))!.coverPath, second.path);
+
+    // covers/ 下的手动封面即使文件缺失也不动。
+    final manual = p.join(await CoverService.coversDir(), 'work_${work.id}.jpg');
+    await workDao.setCover(work.id!, manual);
+    await app.enterWork(work.id!);
+    expect((await workDao.getById(work.id!))!.coverPath, manual);
   });
 }

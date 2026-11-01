@@ -459,9 +459,7 @@ class _FolderPanelState extends State<FolderPanel> {
 
   Future<void> _pickFolder(AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择包含图片或视频的文件夹',
-    );
+    final result = await pickDirectory(title: '选择包含图片或视频的文件夹');
     if (result != null && mounted) {
       await appState.importDirectory(result, library: widget.library);
     }
@@ -472,9 +470,7 @@ class _FolderPanelState extends State<FolderPanel> {
   /// 一个子文件夹 = 一个作品，比一个个目录点进去导入快得多。
   Future<void> _pickBatchFolder(AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择父文件夹（每个子文件夹一个作品）',
-    );
+    final result = await pickDirectory(title: '选择父文件夹（每个子文件夹一个作品）');
     if (result == null || !mounted) return;
     final created = await appState.importSubdirectoriesAsWorks(
       result,
@@ -492,17 +488,16 @@ class _FolderPanelState extends State<FolderPanel> {
 
   Future<void> _pickFiles(AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final files = await FilePicker.pickFiles(
+    final files = await pickFilePaths(
       type: FileType.custom,
       allowedExtensions: _allowedExtensions,
-      dialogTitle: '选择图片或视频文件',
+      title: '选择图片或视频文件',
     );
     if (files.isEmpty || !mounted) return;
     // AppState 没有「按文件导入」，只能把它们所在的目录各导入一次
     final dirs = <String>{};
-    for (final f in files) {
-      final p = f.path;
-      if (p != null && p.isNotEmpty) dirs.add(File(p).parent.path);
+    for (final p in files) {
+      dirs.add(File(p).parent.path);
     }
     for (final d in dirs) {
       await appState.importDirectory(d, library: widget.library);

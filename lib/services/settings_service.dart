@@ -198,6 +198,15 @@ class SettingsService {
     await _save();
   }
 
+  /// 存量多媒体作品是否已补过默认封面。只跑一次，避免每次启动都扫库。
+  bool get autoCoverBackfillDone =>
+      (_data['auto_cover_backfill_done'] as bool?) ?? false;
+
+  Future<void> setAutoCoverBackfillDone(bool done) async {
+    _data['auto_cover_backfill_done'] = done;
+    await _save();
+  }
+
   // ── 图片视图 ──
 
   /// 网格列数，默认 4

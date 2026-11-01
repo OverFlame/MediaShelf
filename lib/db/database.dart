@@ -34,16 +34,22 @@ class DatabaseManager {
 
   bool get isOpen => _db != null;
 
+  /// 桌面端切到 ffi 工厂。启动前的 [MigrationGuard] 要先开库检查版本，
+  /// 它比 [init] 更早，所以单独公开。
+  static void ensureFactory() {
+    if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+  }
+
   Future<void> init() async {
     if (_db != null) {
       logWarn('Database', 'Already initialized, skip duplicate init()');
       return;
     }
     logInfo('Database', 'Initializing...');
-    if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
-    }
+    ensureFactory();
 
     final dir = await DataDirService.instance.dataDir;
     final dbPath = p.join(dir, 'mediashelf.db');
@@ -64,6 +70,13 @@ class DatabaseManager {
         await Tables.applyMigrations(db, oldVersion, newVersion);
       },
     );
+
+    // 目录查询用 `path COLLATE NOCASE` 的区间比较。索引建在打开库之后，
+    // 老库不用升 schema 也能拿到；新库由 Tables.createAll 一并创建。
+    await _db!.execute('CREATE INDEX IF NOT EXISTS idx_media_path_nocase '
+        'ON media(path COLLATE NOCASE)');
+    await _db!.execute('CREATE INDEX IF NOT EXISTS idx_media_type_path_nocase '
+        'ON media(media_type, path COLLATE NOCASE)');
 
     // journal_mode=WAL 会返回一行结果，Android 端 execSQL 不允许，需用 rawQuery。
     // （Android 8+ 本身默认 WAL，此处桌面端开启；Android 端该语句会被安全执行。）

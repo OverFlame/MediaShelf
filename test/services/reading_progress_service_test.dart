@@ -60,6 +60,18 @@ class _FakeScheduler implements ThrottleScheduler {
   }
 }
 
+/// 等待后台补写落盘。`pumpEventQueue` 的轮数固定，全量并发跑或覆盖率
+/// 插桩下事务回调可能晚到，这里按条件等，超时才失败。
+Future<void> _waitForWrite(ReadingProgressService service, int count) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (service.writeCount < count) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('等待落盘超时：writeCount=${service.writeCount}，期望 $count');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -181,6 +193,7 @@ void main() {
 
       clock.advance(const Duration(milliseconds: 200)); // 到 t0 + 1s
       await scheduler.fire();
+      await _waitForWrite(service, 2);
 
       expect(service.writeCount, 2);
       expect((await rowOf(volumeA))!['page_index'], 4);
@@ -220,6 +233,7 @@ void main() {
 
       clock.advance(const Duration(seconds: 1));
       await scheduler.fire();
+      await _waitForWrite(service, 2);
 
       expect(service.writeCount, 2, reason: '两个卷在一次补写里一起落盘');
       expect((await rowOf(volumeA))!['page_index'], 2);

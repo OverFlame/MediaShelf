@@ -122,11 +122,14 @@ class PlayerController extends ChangeNotifier {
     final h = _handle;
     if (h == null) return;
     try {
-      _position = _engine.getPosition(h);
+      final next = _engine.getPosition(h);
+      // 暂停时位置不变，旧实现每 250ms 还是通知一次，整页跟着重建。
+      final changed = next != _position;
+      _position = next;
       if (_playing && hasTrack) {
         onPositionChanged?.call(_queue[_index], _position);
       }
-      notifyListeners();
+      if (changed) notifyListeners();
     } catch (_) {
       // handle 已失效（例如刚播完），忽略
     }
@@ -498,7 +501,9 @@ class PlayerController extends ChangeNotifier {
   }
 
   Future<void> setVolume(double v) async {
-    _volume = v.clamp(0.0, 1.0);
+    final next = v.clamp(0.0, 1.0);
+    if (next == _volume) return;
+    _volume = next;
     final h = _handle;
     if (h != null) {
       try {

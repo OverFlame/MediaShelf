@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import '../utils/log_util.dart';
 import 'media_dao.dart';
+import 'path_range.dart';
 import 'sql_like.dart';
 
 /// 音频曲目
@@ -119,6 +120,11 @@ class TrackDao {
     return _mediaDao.insertRow(_mediaRow(track));
   }
 
+  /// 一个事务插入多首，返回与输入同序的 id；重复路径为 0。
+  Future<List<int>> insertMany(Iterable<TrackItem> tracks) {
+    return _mediaDao.insertRowsReturningIds(tracks.map(_mediaRow));
+  }
+
   Future<TrackItem?> getById(int id) async {
     final rows = await _db.query('tracks', where: 'id = ?', whereArgs: [id]);
     if (rows.isEmpty) return null;
@@ -206,9 +212,17 @@ class TrackDao {
           ? dirPaths.length
           : i + _queryBatchSize;
       final batch = dirPaths.sublist(i, end);
-      final conditions =
-          batch.map((_) => "path LIKE ? $sqlLikeEscape").join(' OR ');
-      final args = batch.map((p) => '${escapeLike(p)}%').toList();
+      final conditions = batch
+          .map((_) =>
+              '(path COLLATE NOCASE >= ? AND path COLLATE NOCASE < ?)')
+          .join(' OR ');
+      final args = <Object?>[];
+      for (final dir in batch) {
+        final (lower, upper) = dirPathRange(dir);
+        args
+          ..add(lower)
+          ..add(upper);
+      }
       final rows = await _db.query('tracks',
           where: conditions, whereArgs: args, orderBy: orderBy);
       for (final item in rows.map(TrackItem.fromMap)) {

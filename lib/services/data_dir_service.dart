@@ -94,6 +94,8 @@ class DataDirService {
     await _copyDirStrict(p.join(oldDir, 'covers'), p.join(newD, 'covers'));
     // 外链播放写出的 m3u8 也在这里，一起搬走，用户能在新目录找到刚生成的列表。
     await _copyDirStrict(p.join(oldDir, 'playlist'), p.join(newD, 'playlist'));
+    // 升级前的库备份也搬走：换盘之后用户还得能找回旧版本数据。
+    await _copyDirStrict(p.join(oldDir, 'backup'), p.join(newD, 'backup'));
 
     // 指针最后写。这里绝不能「先删旧指针、再改名」：删完成功而改名之前被打断，
     // 指针就没了，应用会回落默认目录并建一个空库，用户以为数据丢了。

@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -86,16 +85,39 @@ class WorksGrid extends StatelessWidget {
       );
     }
 
+    if (appState.viewMode == 'list') {
+      return ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: works.length,
+        itemBuilder: (_, i) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: _WorkCard(
+            key: ValueKey('work-card-${works[i].id}'),
+            work: works[i],
+            library: library,
+            row: true,
+          ),
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cols = (constraints.maxWidth / 200).floor().clamp(2, 8);
+        final cols = appState.gridColumns.clamp(2, 10);
+        // 高列数时缩小间距，窄屏 10 列也留得下标题和菜单。
+        final spacing = cols >= 8 ? 8.0 : 16.0;
+        final cellWidth =
+            (constraints.maxWidth - 32 - spacing * (cols - 1)) / cols;
+        // 宽卡片保持 0.82；窄到放不下标题时改为固定留出文字高度，避免溢出。
+        final cellHeight =
+            cellWidth < 120 ? cellWidth + 34 : cellWidth / 0.82;
         return GridView.builder(
           padding: const EdgeInsets.all(16),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: cols,
-            mainAxisSpacing: 16,
-            crossAxisSpacing: 16,
-            childAspectRatio: 0.82,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
+            childAspectRatio: cellWidth / cellHeight,
           ),
           itemCount: works.length,
           itemBuilder: (_, i) => _WorkCard(
@@ -114,9 +136,7 @@ class WorksGrid extends StatelessWidget {
     final lib = _lib;
     final appState = context.read<AppState>();
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择包含图片或视频的文件夹',
-    );
+    final result = await pickDirectory(title: '选择包含图片或视频的文件夹');
     if (result != null && result.isNotEmpty && context.mounted) {
       await appState.importDirectory(result, library: lib);
     }
@@ -128,9 +148,7 @@ class WorksGrid extends StatelessWidget {
     final lib = _lib;
     final appState = context.read<AppState>();
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择父文件夹（每个子文件夹一个作品）',
-    );
+    final result = await pickDirectory(title: '选择父文件夹（每个子文件夹一个作品）');
     if (result == null || result.isEmpty || !context.mounted) return;
     final created = await appState.importSubdirectoriesAsWorks(
       result,
@@ -153,7 +171,15 @@ class _WorkCard extends StatelessWidget {
   /// 所属库：null = 音频库（行为与改造前一致）。
   final String? library;
 
-  const _WorkCard({super.key, required this.work, this.library});
+  /// 列表视图：封面、名称、菜单一行显示。
+  final bool row;
+
+  const _WorkCard({
+    super.key,
+    required this.work,
+    this.library,
+    this.row = false,
+  });
 
   /// 「播放全部」只对音频有效（视频不做应用内解码）
   bool get _playAll => library == null || library == 'audio';
@@ -164,6 +190,39 @@ class _WorkCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = context.read<AppState>();
+    if (row) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => appState.enterWork(work.id!),
+        child: SizedBox(
+          height: 64,
+          child: Row(
+            children: [
+              CoverImage(
+                path: work.coverPath,
+                width: 56,
+                height: 56,
+                borderRadius: 8,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  work.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.textPrimaryOf(context),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              _menu(context, appState),
+            ],
+          ),
+        ),
+      );
+    }
     return InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: () => appState.enterWork(work.id!),

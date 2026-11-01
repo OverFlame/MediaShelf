@@ -1380,3 +1380,138 @@ v9 结构，断言升级后 `sqlite_master` 除 `sqlite_*` 外只剩 v10 的 10 
 做变异验证要备份**改后**版本，否则 `cp` 回去会把修复冲掉（这轮踩过一次）。
 
 老库数据没有被改坏：升级事务失败后整体回滚，用户的 v9 库原样保留，装上新版后会正常清空重建。
+
+## 2026-10-31 结构升级前备份与确认（P1-1）
+
+只读审查记的 P1-1：`Tables.applyMigrations` 只要版本不一致就 `dropAll` + `createAll`，
+v9→v10 已经这样发布过，用户库会被静默清空。这轮两条建议一起做：升级前备份，启动时确认。
+
+实现：
+- 新增 `lib/services/migration_guard.dart`。`inspect()` 不带 version 打开库（sqflite 只有显式传
+  version 才调 onCreate/onUpgrade），读 `PRAGMA user_version`，与 `Tables.version` 不一致就返回计划；
+  `backup()` 先 `PRAGMA wal_checkpoint(TRUNCATE)` 把 -wal 并回主库，再复制到
+  `<数据目录>/backup/db-v<旧版本>-<时间戳>.db`，回读校验字节数与 user_version，失败就抛异常、
+  不覆盖原库。两份连接都用 `singleInstance: false`，避免 close() 把应用自己的连接一起关掉
+  （调试时踩过：测试里第二次 openDatabase 默认共享实例，close 之后 `DatabaseManager.db` 报
+  `database_closed`）。`_prune` 按文件名排序，只留最近 10 份。
+- `DatabaseManager.init` 的 ffi 工厂初始化抽成 `ensureFactory()`，守卫在 init 之前也能开库。
+- `lib/main.dart` 在 `SettingsService.init()` 之后、`DatabaseManager.init()` 之前插入守卫：
+  有备份就 `runApp` 确认页（`lib/widgets/startup_gate.dart`），点「重建」才继续启动，点「取消」
+  停在 `MigrationCancelledPage`，库一行没动。确认页写明版本、会清空什么、备份路径，
+  并提示先拷走备份。
+- `DataDirService.migrateTo` 把 `backup/` 也搬走，换盘后旧库备份仍在。
+- `Tables.applyMigrations` 的注释改成「确认后才走到这里」，不再写「软件未发布，清空可接受」。
+
+验证：`flutter test test/services/migration_guard_test.dart`（5 条：无库、同版本、旧库备份可打开且
+数据在、确认后才升级、备份数量上限）与 `test/widget/startup_gate_test.dart`（3 条：文案、
+两个按钮各自回报、取消页）全过；`test/data_dir_migration_test.dart` 新增 1 条「备份跟着搬走」全过；
+全量 `flutter test` 585 条全过；`dart analyze` 仍是 5 条既有 info。变异验证三处：不复制备份文件、
+取消按钮回报 true、migrateTo 少搬 backup 目录，分别让对应用例变红，改回后恢复全绿。
+
+这轮有可见的 PUA 输出（方法路由、诊断行、压力旁白），不记录评分。
+
+仍未做的：没有真机验证升级弹窗（桌面启动要接一个 v9 库才能看到）；取消分支不提供「重试」，
+用户要关闭窗口再启动；备份还原没有一键入口，目前靠手工把 backup 文件拷回数据目录。
+
+## 待办（优先级最低）：安卓选封面图不要唤起小米「安全浏览」
+
+用户在小米手机上选封面图，系统先弹「安全浏览」，只能看到相册，选不了别的目录，体验很差。
+现在封面选图走 `lib/widgets/dialogs.dart:42` 的 `pickImagePath()`，
+用 `FilePicker.pickFile(type: FileType.image)`，Android 端因此落到相册类入口。先记录，不排期。
+
+修法方向：封面选图改成 `FileType.any` / `FileType.custom` 这类文档选择器入口，或改成应用内目录浏览；
+按 Android 版本与厂商 ROM 验证。`showImportCoverDialog` 已经优先列作品内图片，只有没图时才退回
+系统选图，可以再把这个优先顺序往前挪。
+
+## 2026-10-31 取消页重试与一键还原备份（P1-1 收尾）
+
+上次留的两条：取消后只能关窗口重启；还原备份只能手工拷文件。这轮补上。
+
+实现：
+- `lib/services/migration_guard.dart` 增加 `BackupEntry`、`listBackups()`、`restore()`。
+  还原顺序固定：先验证备份能打开并读出版本，再删当前库的 `-wal` / `-shm`，最后用
+  `writeFileAtomic` 把备份复制成临时文件再改名覆盖。旧 WAL 留到替换之后会被套到新文件上，
+  库会坏。还原后校验字节数，返回备份版本。
+- `lib/widgets/startup_gate.dart` 增加 `MigrationRestorePage`：列 `backup/` 下的备份
+  （文件名、版本、大小、时间），点「还原」即替换。成功页写明「请关闭应用，安装与备份版本
+  一致的应用版本再打开」。确认页与取消页都可以进列表。
+- 取消页加「重试」。`lib/main.dart` 的 `_resolveUpgrade` 改成循环：确认后继续启动，
+  取消后停在取消页，点重试回到确认页。守卫页的外壳收成 `_gateApp()`。
+
+验证：`test/services/migration_guard_test.dart` 8 条（新增备份列表倒序、还原替换并清掉旧 WAL、
+备份不存在时报错不动库）；`test/widget/startup_gate_test.dart` 6 条（新增重试回调、从确认页
+还原成功、空列表文案）；全量 `flutter test` 592 条全过；`dart analyze` 仍是 5 条既有 info。
+变异两处：还原前不删旧 WAL、备份列表改正序，分别让对应用例变红，改回后恢复全绿。
+
+仍未做：`main.dart` 的确认/重试循环没有自动化用例（依赖 `runApp` 与桌面窗口），页面回调与
+数据层已覆盖。升级弹窗本身仍没有真机验证。
+
+这轮同样有可见的 PUA 输出，不记录评分。
+
+
+## 2026-10-31 清掉审查剩余问题（P1-2、P1-3 与 P2）
+
+上一轮审查留下的两条 P1 与 P2 逐项处理。工作区此前的 P1 收尾改动也一并留在本轮提交里。
+
+P1-2 目录前缀查询：
+- 新增 `lib/db/path_range.dart`。`dirPathRange` 把目录补成带分隔符的闭开区间，
+  `/m/vol` 不再命中 `/m/vol2`。
+- `MediaDao.queryByDirs` 与 `TrackDao.queryByDirs` 从 `path LIKE ?` 改成
+  `path COLLATE NOCASE >= ? AND path COLLATE NOCASE < ?`。
+- `DatabaseManager.init` 与 `Tables.createStatements` 增加
+  `idx_media_path_nocase`、`idx_media_type_path_nocase`。没有升 schema 版本：
+  版本号一变就会触发重建库，这两条索引用 `IF NOT EXISTS` 在老库上补建即可。
+- `tracks` 视图自带 `media_type='audio'`，规划器会先走 `idx_media_type`。补复合索引后
+  `EXPLAIN QUERY PLAN` 走 `idx_media_type_path_nocase`。测试同时断言 `vol2` 边界。
+
+P1-3 偶发测试：
+- `test/services/reading_progress_service_test.dart` 在 `scheduler.fire()` 后轮询等待
+  `writeCount`，不再依赖 `pumpEventQueue` 的固定轮数。全量并发与覆盖率插桩下都能稳定通过。
+
+其余修复：
+- 音频导入按 32 首一个事务写库。`MediaDao.insertRowsReturningIds` 返回同序 id，
+  `TrackDao.insertMany` 复用它；内嵌封面仍在事务外逐张写。
+- 绕过 AppState 的并发导入改为抛 `StateError`，不再静默结束。
+- 字幕匹配先按目录分组，复杂度从 O(音频×字幕) 降到按目录。
+- 播放器暂停时位置不变就不再每 250ms 通知；音量不变不通知。
+- 缩略图先抢并发名额再读原图，压住内存峰值。
+- `safeCopyFile` 去掉改名前的删除，直接 `rename` 覆盖。
+- 文件夹筛选一次取全部路径，命中路径排序后二分查找，去掉 O(F×M) 扫描。
+- `CoverImage` 改成有状态组件，build 里不再 `existsSync`；封面 getter 也不再 stat，
+  文件失效由图片组件的 `errorBuilder` 兜底。
+- 8 处 `FilePicker` 直调收进 `lib/widgets/dialogs.dart` 的 `pickDirectory`、
+  `pickImagePath`、`pickFilePaths`。
+- CI 的 `flutter analyze` 去掉 `--no-fatal-infos`。`prefer_initializing_formals`
+  三处是 lint 误报：命名参数不能以下划线开头，无法写成 `this._workDao`，按文件 ignore 并注明。
+- `flutter pub upgrade` 在现有约束内升级 34 个包，包含 sqlite3 3.8.0、sqflite 2.4.5、
+  shared_preferences 2.5.6、xml 7.1.0。
+
+验证：`dart analyze` 无问题；全量 `flutter test` 595 条全过；变异两处均按预期变红后恢复
+（去掉路径下界的分隔符、把并发导入的抛错改回静默返回）。
+
+仍未做：
+- 全量 i18n。728 处中文串需要抽 arb 并逐条翻译，`en` 目前只兜底系统控件文案，
+  这是 `test/widget/app_localization_test.dart` 明确覆盖的行为。整项属于产品功能，单独排期。
+- `file_picker` 13、`flutter_soloud` 5、`cupertino_icons` 2 三个 major 升级需要真机回归，
+  不随本轮推送。
+- `cover_pick`、`queue_panel`、`exif_service`、`export_actions` 的覆盖率补测未做。
+
+## 2026-11-01 作品层视图、默认封面与缩略图闪烁
+
+作品层补上视图与列数的消费。`WorksGrid` 现在读 `viewMode` 与 `gridColumns`。列表模式每行
+只显示封面、名称与菜单。网格列数取用户设置（2 到 10），窄屏也按设置排，不再回落成固定
+列数。工具栏的列数菜单同步扩到 10。
+
+图片作品导入后写默认封面：取当前排序的第一张图，存原图路径。只手填空封面，`covers/` 下
+的手动封面不覆盖。存量作品由启动后台任务补一次，标记键 `auto_cover_backfill_done`。
+进作品时检查自动封面指向的文件，文件没了就改选当前第一张存在的图。启动补齐只更新作品
+列表的封面，不调 `refresh()`，避免和用户立刻发起的导航抢写。
+
+缩略图补齐不再每 8 张自增 `thumbEpoch`。卡片收到新 epoch 会清空已就绪状态，整屏退回
+占位图，这就是进入图片文件夹后闪烁的来源。补齐改为独立进度：`thumbBackfillTotal`、
+`thumbBackfillDone`、`backfillingThumbs`，通知按 250 毫秒节流。主页在播放条上方显示
+`ThumbBackfillChip`。
+
+验证：`dart analyze` 无问题；全量 `flutter test` 598 条全过；变异三处均按预期变红后恢复
+（补齐时自增 epoch、改选封面时不查文件存在、作品层忽略列表模式）。README 更新作品层
+视图、列数、默认封面与进度提示的说明。

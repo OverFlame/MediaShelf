@@ -157,4 +157,22 @@ void main() {
 
     await sub.asFuture<void>().catchError((Object _) {});
   });
+
+  test('绕过 AppState 的第二次导入收到 StateError，而不是静默成功', () async {
+    final dir = await makeDir('reject', ['1.mp3']);
+    final work = await WorkDao(db).create('显式拒绝');
+
+    final s1 = ImportService.fromDB();
+    final s2 = ImportService.fromDB();
+
+    final sub = s1.importDirectory(dir.path, workId: work.id!).listen((_) {});
+    await Future<void>.delayed(Duration.zero);
+
+    await expectLater(
+      s2.importDirectory(dir.path, workId: work.id!).toList(),
+      throwsStateError,
+    );
+
+    await sub.asFuture<void>().catchError((Object _) {});
+  });
 }

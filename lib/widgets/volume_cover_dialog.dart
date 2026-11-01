@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -10,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../utils/crop_math.dart';
 import '../utils/log_util.dart';
 import 'cover_crop_editor.dart';
+import 'dialogs.dart';
 import 'cover_pick.dart';
 
 /// 卷封面选择与裁剪（BUILD_GUIDE 第 19.2、21.4 节）。
@@ -164,11 +164,7 @@ class _VolumeCoverDialogState extends State<VolumeCoverDialog> {
   }
 
   Future<String?> _pickWithSystem() async {
-    final picked = await FilePicker.pickFiles(
-      type: FileType.image,
-      dialogTitle: '选择封面图片',
-    );
-    return picked.isEmpty ? null : picked.first.path;
+    return pickImagePath(title: '选择封面图片');
   }
 
   void _toast(String text) {
