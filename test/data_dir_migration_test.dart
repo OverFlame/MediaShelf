@@ -54,6 +54,22 @@ void main() {
         reason: '临时指针文件不该留下');
   });
 
+  test('升级备份跟着搬走，换盘后还能找回旧库', () async {
+    await seed(defaultDir);
+    await Directory(p.join(defaultDir, 'backup')).create(recursive: true);
+    await File(p.join(defaultDir, 'backup', 'db-v9-20260101-000000-000.db'))
+        .writeAsString('OLD-DB');
+    final newD = p.join(tmp.path, 'with-backup');
+
+    await DataDirService.instance.migrateTo(newD);
+
+    expect(
+      File(p.join(newD, 'backup', 'db-v9-20260101-000000-000.db'))
+          .readAsStringSync(),
+      'OLD-DB',
+    );
+  });
+
   test('目标已有不同内容的库：抛异常，且不写指针、不改缓存', () async {
     await seed(defaultDir);
     final newD = p.join(tmp.path, 'occupied');

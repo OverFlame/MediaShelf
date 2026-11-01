@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,7 +5,7 @@ import '../services/thumbnail_cache.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/cover_image.dart';
-import '../widgets/dialogs.dart' show confirmDialog;
+import '../widgets/dialogs.dart' show confirmDialog, pickDirectory;
 import '../widgets/filter_dialog.dart';
 import '../widgets/folder_browser.dart';
 import '../widgets/folder_panel.dart';
@@ -693,9 +692,7 @@ class _VisualToolbar extends StatelessWidget {
     final appState = context.read<AppState>();
     final workId = appState.currentWork?.id;
     if (workId == null) return;
-    final dir = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择要加入本作品的文件夹',
-    );
+    final dir = await pickDirectory(title: '选择要加入本作品的文件夹');
     if (dir == null) return;
     await appState.importDirectoryIntoWork(dir, workId);
   }

@@ -63,6 +63,12 @@ class Tables {
     'CREATE INDEX IF NOT EXISTS idx_media_added_at ON media(added_at DESC)',
     'CREATE INDEX IF NOT EXISTS idx_media_title ON media(title)',
     'CREATE INDEX IF NOT EXISTS idx_media_sort_key ON media(sort_key)',
+    'CREATE INDEX IF NOT EXISTS idx_media_path_nocase '
+        'ON media(path COLLATE NOCASE)',
+    // tracks 视图固定带 media_type 条件；复合索引让「类型 + 目录区间」
+    // 一次走完，不用先按类型取全部音频再逐行过滤路径。
+    'CREATE INDEX IF NOT EXISTS idx_media_type_path_nocase '
+        'ON media(media_type, path COLLATE NOCASE)',
     'CREATE INDEX IF NOT EXISTS idx_media_subtitle_of ON media(subtitle_of)',
 
     // 虚拟文件夹（镜像磁盘目录树）。卷封面、裁剪与阅读方向都记在这一行。
@@ -249,8 +255,9 @@ class Tables {
 
   /// 版本号对不上就删表重建：开库时 onUpgrade 用。
   ///
-  /// v10 起不再维护增量迁移链。软件未发布，旧库直接清空重建，代价可以接受；
-  /// 这样改 CHECK 约束、删列都不必再靠重建单表绕开。
+  /// v10 起不再维护增量迁移链。升级前 `MigrationGuard` 会先备份库文件，
+  /// 启动时再由确认页等用户点头；没有确认就根本不会走到这里。
+  /// 这样改 CHECK 约束、删列都不必再靠重建单表绕开，用户数据也还有退路。
   static Future<void> applyMigrations(
       DatabaseExecutor db, int oldVersion, int newVersion) async {
     if (oldVersion == newVersion) return;

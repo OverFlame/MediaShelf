@@ -555,7 +555,7 @@ String _limitLabel(int mb) {
 
 /// 迁移数据目录：选择新目录 → 确认 → 整体迁移 → 提示
 Future<void> _migrateDataDir(BuildContext context, AppState appState) async {
-  final dir = await pickDirectoryPath(title: '选择新的数据目录');
+  final dir = await pickDirectory(title: '选择新的数据目录');
   if (dir == null) return;
   if (!context.mounted) return;
   final ok = await confirmDialog(

@@ -196,9 +196,11 @@ class ThumbnailService {
 
     // 原图解码 → 缩放 → 编码 → 写入磁盘
     logDebug('Thumbnail', 'Generating: ${p.basename(originalPath)} (${size}px)');
-    final rawBytes = await originalFile.readAsBytes();
+    // 先抢名额再读文件：并发上限本来是为了压住内存峰值，
+    // 旧实现先整块 readAsBytes 再等名额，峰值等于「等待者数量 × 原图大小」。
     await _acquireSlot();
     try {
+      final rawBytes = await originalFile.readAsBytes();
       final codec = await ui.instantiateImageCodec(
         rawBytes,
         targetWidth: size,

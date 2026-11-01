@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
-/// 封面图组件：本地文件优先，否则占位
-class CoverImage extends StatelessWidget {
+/// 封面图组件：本地文件优先，否则占位。
+///
+/// build 里不做 `existsSync`。同步 stat 会在滚动时卡主 isolate；
+/// 这里直接交给 [Image.file] 的 errorBuilder 兜底，文件不在时换成占位图。
+class CoverImage extends StatefulWidget {
   final String? path;
   final double width;
   final double height;
@@ -22,32 +25,54 @@ class CoverImage extends StatelessWidget {
   });
 
   @override
+  State<CoverImage> createState() => _CoverImageState();
+}
+
+class _CoverImageState extends State<CoverImage> {
+  /// 加载失败过的路径，避免同一路径反复触发文件读取。
+  String? _failedPath;
+
+  @override
+  void didUpdateWidget(covariant CoverImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path) _failedPath = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final p = path;
-    Widget child;
-    if (p != null && File(p).existsSync()) {
-      child = Image.file(
-        File(p),
-        width: width,
-        height: height,
-        fit: fit,
-        errorBuilder: (_, __, ___) => _placeholder(context),
-      );
-    } else {
-      child = _placeholder(context);
-    }
+    final p = widget.path;
+    final showImage = p != null && p != _failedPath;
+    final child = showImage
+        ? Image.file(
+            File(p),
+            width: widget.width,
+            height: widget.height,
+            fit: widget.fit,
+            errorBuilder: (_, _, _) {
+              // errorBuilder 在绘制阶段被调用，不能同步 setState；
+              // 下一帧把这一路径标记为失败，build 直接走占位图。
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _failedPath != p) {
+                  setState(() => _failedPath = p);
+                }
+              });
+              return _placeholder(context);
+            },
+          )
+        : _placeholder(context);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: SizedBox(width: width, height: height, child: child),
+      borderRadius: BorderRadius.circular(widget.borderRadius),
+      child: SizedBox(
+          width: widget.width, height: widget.height, child: child),
     );
   }
 
   Widget _placeholder(BuildContext context) {
     // 调用方可能传 double.infinity（作品卡片就是这么用的），图标尺寸要收成有限值
-    final iconSize = width.isFinite ? width * 0.4 : 32.0;
+    final iconSize = widget.width.isFinite ? widget.width * 0.4 : 32.0;
     return Container(
-      width: width,
-      height: height,
+      width: widget.width,
+      height: widget.height,
       color: AppColors.surfaceOf(context),
       child: Icon(
         Icons.music_note,

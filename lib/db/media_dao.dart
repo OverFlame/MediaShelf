@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../services/media_rules.dart';
 import '../utils/log_util.dart';
+import 'path_range.dart';
 import 'sql_like.dart';
 
 /// 媒体类型。音频、图片、视频、字幕共用一张 media 表。
@@ -177,18 +178,30 @@ class MediaDao {
     Iterable<Map<String, Object?>> rows, {
     ConflictAlgorithm conflict = ConflictAlgorithm.ignore,
   }) async {
+    final ids = await insertRowsReturningIds(rows, conflict: conflict);
+    if (ids.isEmpty) return 0;
+    final inserted = ids.where((id) => id > 0).length;
+    logInfo('MediaDao', 'insertRows 落库 $inserted/${ids.length} 行');
+    return inserted;
+  }
+
+  /// 与 [insertRows] 相同，但返回与输入同序的 id；被 UNIQUE 忽略的行为 0。
+  ///
+  /// 导入时需要 id 写内嵌封面，所以不能只拿落库条数。
+  Future<List<int>> insertRowsReturningIds(
+    Iterable<Map<String, Object?>> rows, {
+    ConflictAlgorithm conflict = ConflictAlgorithm.ignore,
+  }) async {
     final list = rows.toList();
-    if (list.isEmpty) return 0;
-    var inserted = 0;
+    if (list.isEmpty) return const <int>[];
+    final ids = <int>[];
     await _db.transaction((txn) async {
       for (final row in list) {
-        final id = await txn.insert('media', rowWithDerived(row),
-            conflictAlgorithm: conflict);
-        if (id > 0) inserted++;
+        ids.add(await txn.insert('media', rowWithDerived(row),
+            conflictAlgorithm: conflict));
       }
     });
-    logInfo('MediaDao', 'insertRows 落库 $inserted/${list.length} 行');
-    return inserted;
+    return ids;
   }
 
   /// 按 id 更新。给了 type 就顺带校验这一行的类型，避免跨类型误改。
@@ -314,9 +327,19 @@ class MediaDao {
     for (var i = 0; i < dirPaths.length; i += _batchSize) {
       final batch = dirPaths.sublist(
           i, i + _batchSize > dirPaths.length ? dirPaths.length : i + _batchSize);
-      final conditions =
-          batch.map((_) => "path LIKE ? $sqlLikeEscape").join(' OR ');
-      final args = batch.map((p) => '${escapeLike(p)}%').toList();
+      // 区间比较走 idx_media_path_nocase，且 lower 自带分隔符，
+      // `/m/vol` 不会命中 `/m/vol2`（旧 LIKE 前缀写法会）。
+      final conditions = batch
+          .map((_) =>
+              '(path COLLATE NOCASE >= ? AND path COLLATE NOCASE < ?)')
+          .join(' OR ');
+      final args = <Object?>[];
+      for (final dir in batch) {
+        final (lower, upper) = dirPathRange(dir);
+        args
+          ..add(lower)
+          ..add(upper);
+      }
       final rows = await _db.rawQuery(
           'SELECT * FROM media WHERE ($conditions)$typeSql ORDER BY $orderBy',
           [...args, ...typeArg]);

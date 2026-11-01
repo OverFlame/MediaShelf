@@ -39,10 +39,27 @@ Future<bool?> confirmDialog(BuildContext context,
 }
 
 /// 选择封面图片文件，返回路径
-Future<String?> pickImagePath() async {
+Future<String?> pickImagePath({String? title}) async {
   final f = await FilePicker.pickFile(
-      type: FileType.image, dialogTitle: '选择封面图片');
+      type: FileType.image, dialogTitle: title ?? '选择封面图片');
   return f?.path;
+}
+
+/// 选择多个文件，返回非空路径列表；取消时为空列表。
+Future<List<String>> pickFilePaths({
+  required FileType type,
+  List<String>? allowedExtensions,
+  String? title,
+}) async {
+  final files = await FilePicker.pickFiles(
+    type: type,
+    allowedExtensions: allowedExtensions,
+    dialogTitle: title,
+  );
+  return [
+    for (final f in files)
+      if (f.path != null && f.path!.isNotEmpty) f.path!,
+  ];
 }
 
 /// 选择字幕文件，返回路径
@@ -55,7 +72,7 @@ Future<String?> pickSubtitlePath() async {
 }
 
 /// 选择文件夹，返回路径
-Future<String?> pickDirectoryPath({String? title}) async {
+Future<String?> pickDirectory({String? title}) async {
   return FilePicker.getDirectoryPath(dialogTitle: title ?? '选择文件夹');
 }
 

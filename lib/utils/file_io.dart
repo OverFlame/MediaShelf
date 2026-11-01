@@ -96,6 +96,7 @@ Future<void> safeCopyFile(String src, String dst) async {
     throw FileSystemException('复制结果为空，已中止', src);
   }
 
-  if (await target.exists()) await target.delete();
+  // rename 覆盖目标本身是原子的；先 delete 再 rename 的话，
+  // 两步之间进程被杀会留下「目标已删」的窗口（报告 P2）。
   await tmp.rename(dst);
 }

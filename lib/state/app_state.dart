@@ -993,11 +993,17 @@ class AppState extends ChangeNotifier {
           await _tagDao.getTagsForFolders(folders.map((f) => f.id!).toList());
     }
 
+    // 一次取全部目录路径，再把命中路径排好序做二分查找。
+    // 旧实现每个文件夹查一次库，再对每个匹配路径做 O(F×M) 的 any。
+    final allPaths = await _folderDao.getAllPaths();
+    final matchingLower = matchingPaths.map((p) => p.toLowerCase()).toList()
+      ..sort();
+
     final result = <VirtualFolder>[];
     for (final f in folders) {
-      final paths = await _folderDao.getPaths(f.id!);
+      final paths = allPaths[f.id!] ?? const <FolderPath>[];
       final containsTrack =
-          paths.any((p) => matchingPaths.any((mp) => _isUnderPath(mp, p.path)));
+          paths.any((p) => _hasPathUnder(matchingLower, p.path));
       if (containsTrack) {
         result.add(f);
         continue;
@@ -1021,14 +1027,29 @@ class AppState extends ChangeNotifier {
     return true;
   }
 
-  bool _isUnderPath(String path, String dir) {
-    final a = path.toLowerCase();
-    var b = dir.toLowerCase();
-    if (b.endsWith('\\') || b.endsWith('/')) {
-      b = b.substring(0, b.length - 1);
+  /// [sortedLower] 必须已按字典序排好，且全部转小写。
+  bool _hasPathUnder(List<String> sortedLower, String dir) {
+    var d = dir.toLowerCase();
+    while (d.endsWith('\\') || d.endsWith('/')) {
+      d = d.substring(0, d.length - 1);
     }
-    if (a == b) return false;
-    return a.startsWith('$b\\') || a.startsWith('$b/');
+    for (final sep in const ['/', '\\']) {
+      final prefix = '$d$sep';
+      var lo = 0;
+      var hi = sortedLower.length;
+      while (lo < hi) {
+        final mid = (lo + hi) >> 1;
+        if (sortedLower[mid].compareTo(prefix) >= 0) {
+          hi = mid;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      if (lo < sortedLower.length && sortedLower[lo].startsWith(prefix)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   List<VirtualFolder> _sortFolders(List<VirtualFolder> list) {
@@ -2836,9 +2857,11 @@ class AppState extends ChangeNotifier {
   /// [VideoCoverService] 的三级取图（系统缩略图 → 容器内嵌封面 → 首帧）。
   ///
   /// 同一个路径只取一次，结果留在内存里；取不到返回 null，由界面退回图标。
+  /// 这里不 stat 文件：路径失效时由图片组件的 errorBuilder 兜住，
+  /// build 路径上不做同步文件 IO。
   Future<String?> videoCoverFor(MediaItem item) {
     final own = item.coverPath;
-    if (own != null && own.isNotEmpty && File(own).existsSync()) {
+    if (own != null && own.isNotEmpty) {
       return Future<String?>.value(own);
     }
     return _videoCoverFutures.putIfAbsent(item.path, () async {
@@ -2856,9 +2879,9 @@ class AppState extends ChangeNotifier {
   /// 只管库里已经记下来的路径；音频内嵌封面与视频首帧由各自的取图通道负责。
   String? coverForMedia(MediaItem item) {
     final own = item.coverPath;
-    if (own != null && own.isNotEmpty && File(own).existsSync()) return own;
+    if (own != null && own.isNotEmpty) return own;
     final workCover = _currentWork?.coverPath;
-    if (workCover != null && File(workCover).existsSync()) return workCover;
+    if (workCover != null && workCover.isNotEmpty) return workCover;
     return null;
   }
 
@@ -2868,18 +2891,14 @@ class AppState extends ChangeNotifier {
   /// 播放中切换浏览对象不会把播放栏与通知栏的封面换掉。
   String? coverForTrack(TrackItem track) {
     final wc = _playingWorkCover;
-    if (wc != null && File(wc).existsSync()) return wc;
-    if (track.coverPath != null && File(track.coverPath!).existsSync()) {
-      return track.coverPath;
-    }
-    return null;
+    if (wc != null && wc.isNotEmpty) return wc;
+    final own = track.coverPath;
+    return own != null && own.isNotEmpty ? own : null;
   }
 
   /// 记下这次播放队列对应的作品封面。
   void _rememberQueueCover() {
-    final cover = _currentWork?.coverPath;
-    _playingWorkCover =
-        (cover != null && File(cover).existsSync()) ? cover : null;
+    _playingWorkCover = _currentWork?.coverPath;
   }
 
   /// 按当前浏览的作品记录播放队列来源封面。

@@ -150,7 +150,7 @@ class _TagPanelState extends State<TagPanel> {
 
   Future<void> _pickFolder(AppState appState) async {
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await pickDirectoryPath(title: '选择包含音频的文件夹');
+    final result = await pickDirectory(title: '选择包含音频的文件夹');
     if (result != null) {
       await appState.importDirectory(result);
       _showImportError(appState);

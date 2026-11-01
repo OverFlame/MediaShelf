@@ -1,4 +1,3 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -114,9 +113,7 @@ class WorksGrid extends StatelessWidget {
     final lib = _lib;
     final appState = context.read<AppState>();
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择包含图片或视频的文件夹',
-    );
+    final result = await pickDirectory(title: '选择包含图片或视频的文件夹');
     if (result != null && result.isNotEmpty && context.mounted) {
       await appState.importDirectory(result, library: lib);
     }
@@ -128,9 +125,7 @@ class WorksGrid extends StatelessWidget {
     final lib = _lib;
     final appState = context.read<AppState>();
     if (!await ensureScanAccessOrPrompt(context)) return;
-    final result = await FilePicker.getDirectoryPath(
-      dialogTitle: '选择父文件夹（每个子文件夹一个作品）',
-    );
+    final result = await pickDirectory(title: '选择父文件夹（每个子文件夹一个作品）');
     if (result == null || result.isEmpty || !context.mounted) return;
     final created = await appState.importSubdirectoriesAsWorks(
       result,
