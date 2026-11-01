@@ -1567,3 +1567,5 @@ mtime。`showImportCoverDialog` 写完封面后驱逐目标路径，旧路径不
 `test/utils/image_cache_util_test.dart` 的「invalidate 第一次见到也驱逐」；
 `test/widget/image_dialogs_test.dart` 的「音频作品换封面：候选来自目录，固定路径的旧解码缓存
 被驱逐」。变异三处按预期变红后恢复（不扫目录、不驱逐缓存、缓存驱逐工具改回按 mtime 判断）。
+
+这轮有可见的 PUA 输出（诊断行、压力旁白、验证收尾），不记录评分。
