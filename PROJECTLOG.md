@@ -1495,3 +1495,23 @@ P1-3 偶发测试：
 - `file_picker` 13、`flutter_soloud` 5、`cupertino_icons` 2 三个 major 升级需要真机回归，
   不随本轮推送。
 - `cover_pick`、`queue_panel`、`exif_service`、`export_actions` 的覆盖率补测未做。
+
+## 2026-11-01 作品层视图、默认封面与缩略图闪烁
+
+作品层补上视图与列数的消费。`WorksGrid` 现在读 `viewMode` 与 `gridColumns`。列表模式每行
+只显示封面、名称与菜单。网格列数取用户设置（2 到 10），窄屏也按设置排，不再回落成固定
+列数。工具栏的列数菜单同步扩到 10。
+
+图片作品导入后写默认封面：取当前排序的第一张图，存原图路径。只手填空封面，`covers/` 下
+的手动封面不覆盖。存量作品由启动后台任务补一次，标记键 `auto_cover_backfill_done`。
+进作品时检查自动封面指向的文件，文件没了就改选当前第一张存在的图。启动补齐只更新作品
+列表的封面，不调 `refresh()`，避免和用户立刻发起的导航抢写。
+
+缩略图补齐不再每 8 张自增 `thumbEpoch`。卡片收到新 epoch 会清空已就绪状态，整屏退回
+占位图，这就是进入图片文件夹后闪烁的来源。补齐改为独立进度：`thumbBackfillTotal`、
+`thumbBackfillDone`、`backfillingThumbs`，通知按 250 毫秒节流。主页在播放条上方显示
+`ThumbBackfillChip`。
+
+验证：`dart analyze` 无问题；全量 `flutter test` 598 条全过；变异三处均按预期变红后恢复
+（补齐时自增 epoch、改选封面时不查文件存在、作品层忽略列表模式）。README 更新作品层
+视图、列数、默认封面与进度提示的说明。

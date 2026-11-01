@@ -223,6 +223,26 @@ class AppState extends ChangeNotifier {
   int _thumbEpoch = 0;
   int get thumbEpoch => _thumbEpoch;
 
+  /// 后台缩略图补齐进度，只用于界面提示。
+  ///
+  /// 补齐过程不改 [thumbEpoch]：卡片自己会在生成完成后刷新，整屏重置只会
+  /// 造成闪烁。进度通知按 [_thumbBackfillNotifyGap] 节流。
+  int _thumbBackfillTotal = 0;
+  int _thumbBackfillDone = 0;
+  bool get backfillingThumbs => _thumbBackfillRunning;
+  int get thumbBackfillTotal => _thumbBackfillTotal;
+  int get thumbBackfillDone => _thumbBackfillDone;
+
+  double get thumbBackfillProgress => _thumbBackfillTotal <= 0
+      ? 0
+      : (_thumbBackfillDone / _thumbBackfillTotal).clamp(0.0, 1.0);
+
+  String get thumbBackfillLabel =>
+      '缩略图补齐 $_thumbBackfillDone/$_thumbBackfillTotal';
+
+  static const Duration _thumbBackfillNotifyGap = Duration(milliseconds: 250);
+  DateTime? _thumbBackfillLastNotify;
+
   // ── 全屏查看器 ──
   List<MediaItem> _viewerImages = [];
   List<MediaItem> get viewerImages => _viewerImages;
@@ -388,6 +408,8 @@ class AppState extends ChangeNotifier {
     await loadRecentTracks();
     await loadCoverCacheLimit();
     await refresh();
+    // 存量老库没有默认封面：后台补一次，不挡首屏。
+    unawaited(backfillAutoCovers());
     logInfo('AppState', 'Initialized OK');
   }
 
@@ -1121,6 +1143,9 @@ class AppState extends ChangeNotifier {
     _currentFolder = null;
     _currentFolderPath = null;
     _breadcrumb = [VirtualFolder(id: -1, name: work.name, workId: work.id)];
+    // 自动封面指向的原图可能被删了，进来时顺手改选当前第一张。
+    await _autoAssignWorkCover(workId);
+    _currentWork = await _workDao.getById(workId) ?? work;
     await refresh();
   }
 
@@ -1617,6 +1642,7 @@ class AppState extends ChangeNotifier {
       // 目录本身挂成一个虚拟文件夹，ensureByPath 内部会补 folder_paths。
       await _folderDao.ensureByPath(dirPath,
           name: _baseName(dirPath), workId: workId, library: library);
+      if (imported > 0) await _autoAssignWorkCover(workId);
       logInfo('AppState',
           '$library 导入落库 $imported 条（扫描 ${paths.length} 条）: $dirPath');
     } catch (e) {
@@ -1634,6 +1660,74 @@ class AppState extends ChangeNotifier {
     return imported;
   }
 
+  /// 补齐存量作品的默认封面。导入当时没写封面的老库，启动后台跑一次。
+  ///
+  /// 标记写在设置里：跑完就不再扫，之后新增的作品由导入链负责。失败不写标记，
+  /// 下次启动还会再试。
+  Future<void> backfillAutoCovers() async {
+    final settings = SettingsService.instance;
+    if (settings.autoCoverBackfillDone) return;
+    try {
+      final works = await _workDao.listAll(library: 'media');
+      var changed = 0;
+      for (final work in works) {
+        if (work.id == null) continue;
+        if (await _autoAssignWorkCover(work.id!)) changed++;
+      }
+      await settings.setAutoCoverBackfillDone(true);
+      // 这里不能 refresh()：启动补齐是后台任务，refresh 会按当时的分区状态
+      // 重写列表，和用户立刻发起的导航抢写。只把作品列表的封面换掉。
+      if (changed > 0) {
+        _works = await _workDao.listAll();
+        notifyListeners();
+      }
+      logInfo('AppState', '存量作品默认封面补齐完成（${works.length} 个）');
+    } catch (e) {
+      logWarn('AppState', '存量作品默认封面补齐失败: $e');
+    }
+  }
+
+  /// 当前排序下作品里的第一张图片。没有图片（纯视频作品）返回 null。
+  ///
+  /// [mustExist] 为 true 时跳过已经不在磁盘上的行：媒体行要等下次刷新才会
+  /// 消失，选封面时不能把已删文件又选回来。
+  Future<String?> _firstImageUnderWork(int workId,
+      {bool mustExist = false}) async {
+    final dirs = await _folderDao.getPathsByWork(workId);
+    if (dirs.isEmpty) return null;
+    final images = await _mediaDao.queryByDirs(dirs, type: MediaType.image);
+    if (images.isEmpty) return null;
+    images.sort(visualSortComparator);
+    for (final image in images) {
+      if (!mustExist || await File(image.path).exists()) return image.path;
+    }
+    return null;
+  }
+
+  /// 只给没有封面的多媒体作品补默认封面，不覆盖用户手动设置的封面。
+  ///
+  /// 默认封面存原图路径，导入时按当时的排序取第一张，之后不跟着排序变化。
+  /// 自动封面指向的原图被删掉时，这里会改选当前第一张；`covers/` 下的手动
+  /// 封面即使文件没了也不动，留给用户自己重设。
+  Future<bool> _autoAssignWorkCover(int workId) async {
+    final work = await _workDao.getById(workId);
+    if (work == null || work.library == 'audio') return false;
+    final current = work.coverPath;
+    var coverMissing = false;
+    if (current != null && current.isNotEmpty) {
+      if (await File(current).exists()) return false;
+      coverMissing = true;
+      final coversDir = await CoverService.coversDir();
+      if (p.isWithin(coversDir, current)) return false;
+    }
+    final first =
+        await _firstImageUnderWork(workId, mustExist: coverMissing);
+    if (first == null || first == current) return false;
+    await _workDao.setCover(workId, first);
+    logInfo('AppState', '作品 $workId 默认封面 → $first');
+    return true;
+  }
+
   /// 已经排进补齐队列的路径，避免同一批被反复排队。
   final List<String> _thumbBackfillQueue = <String>[];
 
@@ -1648,18 +1742,27 @@ class AppState extends ChangeNotifier {
   /// 在后台把 [paths] 的 300px 缩略图逐张补齐（已存在就跳过）。
   ///
   /// 进库时同步生成会把导入卡住（几百张原图解码很久），所以导入一结束就把
-  /// 新路径丢进来异步跑；每补 8 张自增一次 [thumbEpoch]，已经画出来的占位
-  /// 卡片据此重新检查文件，补完的图不用重启就会出现。
+  /// 新路径丢进来异步跑。补齐过程只推进进度，不动 [thumbEpoch]：可见卡片
+  /// 自己会在生成完成后刷新，整屏重置只会造成闪烁。
   Future<void> backfillThumbnails(Iterable<String> paths) async {
+    var added = 0;
     for (final path in paths) {
       if (path.isNotEmpty && _thumbBackfillPending.add(path)) {
         _thumbBackfillQueue.add(path);
+        added++;
       }
     }
-    if (_thumbBackfillRunning || _thumbBackfillQueue.isEmpty) return;
-    _thumbBackfillRunning = true;
+    if (added == 0) return;
+    if (_thumbBackfillRunning) {
+      _thumbBackfillTotal += added;
+      return;
+    }
     final service = ThumbnailService.instance;
-    var done = 0;
+    _thumbBackfillRunning = true;
+    _thumbBackfillTotal = _thumbBackfillQueue.length;
+    _thumbBackfillDone = 0;
+    _thumbBackfillLastNotify = null;
+    var generated = 0;
     try {
       while (_thumbBackfillQueue.isNotEmpty) {
         // 从尾部取：补齐顺序对用户没有意义，而 removeLast 是 O(1)。
@@ -1667,25 +1770,35 @@ class AppState extends ChangeNotifier {
         _thumbBackfillPending.remove(path);
         try {
           final file = File(service.thumbPath(path, size: 300));
-          if (await file.exists()) continue;
-          await service.ensureThumbnail(path, size: 300);
-          done++;
-          if (done % 8 == 0) {
-            _thumbEpoch++;
-            notifyListeners();
+          if (!await file.exists()) {
+            await service.ensureThumbnail(path, size: 300);
+            generated++;
           }
         } catch (e) {
           logDebug('AppState', '缩略图补齐失败 "$path": $e');
+        } finally {
+          _thumbBackfillDone++;
+          _maybeNotifyThumbBackfill();
         }
       }
     } finally {
       _thumbBackfillRunning = false;
-      if (done > 0) {
-        logInfo('AppState', '缩略图后台补齐 $done 张');
-        _thumbEpoch++;
-        notifyListeners();
+      if (generated > 0) {
+        logInfo('AppState', '缩略图后台补齐 $generated 张');
       }
+      notifyListeners();
     }
+  }
+
+  /// 补齐进度按 [_thumbBackfillNotifyGap] 节流，避免每张图都重建整屏。
+  void _maybeNotifyThumbBackfill() {
+    final now = DateTime.now();
+    final last = _thumbBackfillLastNotify;
+    if (last != null && now.difference(last) < _thumbBackfillNotifyGap) {
+      return;
+    }
+    _thumbBackfillLastNotify = now;
+    notifyListeners();
   }
 
   /// 导入目录到指定作品（合并）

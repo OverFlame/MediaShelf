@@ -14,6 +14,7 @@ import '../widgets/image_grid.dart';
 import '../widgets/image_viewer.dart';
 import '../widgets/player_bar.dart';
 import '../widgets/tag_panel.dart';
+import '../widgets/thumb_backfill_chip.dart';
 import '../widgets/tag_picker_dialog.dart';
 import '../widgets/works_grid.dart';
 import 'settings_page.dart';
@@ -106,6 +107,12 @@ class _HomePageState extends State<HomePage> {
               : _buildCenter(appState, isWide),
           bottomNavigationBar: const PlayerBar(),
         ),
+        if (appState.backfillingThumbs)
+          Positioned(
+            left: 12,
+            bottom: MediaQuery.of(context).padding.bottom + 76,
+            child: const ThumbBackfillChip(),
+          ),
         // 查看器是覆盖层：双击图片磁贴后由 ImageGrid -> AppState.openViewer 打开
         if (_isVisual && appState.showViewer) ImageViewer(state: appState),
       ],
@@ -424,7 +431,7 @@ class _VisualToolbar extends StatelessWidget {
                 style: sideStyle,
                 onSelected: (v) => appState.setGridColumns(v),
                 itemBuilder: (_) => [
-                  for (var c = 2; c <= 8; c++)
+                  for (var c = 2; c <= 10; c++)
                     PopupMenuItem(
                         value: c,
                         child:
