@@ -29,6 +29,7 @@ import '../services/video_cover_service.dart';
 import '../services/video_launcher.dart';
 import '../services/volume_cover_service.dart';
 import '../utils/filter_expression.dart';
+import '../utils/image_cache_util.dart';
 import '../utils/log_util.dart';
 import '../utils/progress_throttle.dart';
 import 'player_controller.dart';
@@ -1413,6 +1414,35 @@ class AppState extends ChangeNotifier {
   /// 作品下的全部图片（按自然序）：作品封面的「从作品图片里选」用它当候选。
   Future<List<MediaItem>> imagesUnderWork(int workId) =>
       _mediaUnderWork(workId, type: MediaType.image);
+
+  /// 作品封面的候选图路径（自然序）。
+  ///
+  /// 图片作品直接取入库的图片行。音频作品的封面图不在媒体表里（导入音频时
+  /// 只写音频行），若仍只查图片行，选择器会空着；这里退回作品根目录做一次
+  /// 递归扫描，把同目录的封面图与扫图也列出来。
+  Future<List<String>> coverCandidatesUnderWork(int workId) async {
+    final images = await imagesUnderWork(workId);
+    final paths = <String>{for (final item in images) item.path};
+    if (paths.isEmpty) {
+      final roots = await _folderDao.listRootsByWork(workId);
+      final rootPaths = await _pathsOfFolders(
+        roots.map((f) => f.id).whereType<int>().toSet(),
+      );
+      for (final root in rootPaths) {
+        try {
+          await for (final entity in Directory(root)
+              .list(recursive: true, followLinks: false)) {
+            if (entity is File && isImageFile(entity.path)) {
+              paths.add(entity.path);
+            }
+          }
+        } catch (e) {
+          logWarn('AppState', '扫描封面候选失败: $root', e);
+        }
+      }
+    }
+    return paths.toList()..sort(naturalCompare);
+  }
 
   /// 作品目录闭包里的媒体行。[type] 非空时只取该类型。
   Future<List<MediaItem>> _mediaUnderWork(int workId, {MediaType? type}) async {
@@ -2986,6 +3016,8 @@ class AppState extends ChangeNotifier {
   /// 音频单文件手选封面就写在这里（`media.cover_path`）；视频的封面走
   /// [videoCoverFor] 的三级取图，不占这列。
   Future<void> setMediaCover(int id, String? path) async {
+    // 同一路径的文件被覆盖后，FileImage 仍会命中旧解码结果；先驱逐再落库。
+    if (path != null) ImageCacheGuard.invalidate(path);
     await _mediaDao.setCoverPath(id, path);
     // 手选的封面要能立刻盖住三级取图的结果，所以把视频封面的内存缓存一起清掉。
     _videoCoverFutures.clear();

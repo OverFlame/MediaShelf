@@ -642,4 +642,30 @@ void main() {
     await app.enterWork(work.id!);
     expect((await workDao.getById(work.id!))!.coverPath, manual);
   });
+
+  test('音频作品封面候选扫描作品目录，不依赖图片行', () async {
+    final work = await workDao.create('音声', library: 'audio');
+    final voiceDir = Directory(p.join(tmp.path, 'voice'))
+      ..createSync(recursive: true);
+    final scans = Directory(p.join(voiceDir.path, 'scans'))
+      ..createSync(recursive: true);
+    final cover = File(p.join(voiceDir.path, 'cover.jpg'))
+      ..writeAsBytesSync(_pngBytes);
+    final first = File(p.join(voiceDir.path, '01.png'))
+      ..writeAsBytesSync(_pngBytes);
+    final nested = File(p.join(scans.path, '02.png'))
+      ..writeAsBytesSync(_pngBytes);
+    File(p.join(voiceDir.path, 'track.mp3')).writeAsBytesSync([1, 2, 3]);
+
+    final folder = await folderDao.create('音声',
+        workId: work.id, library: 'audio');
+    await folderDao.addPath(folder.id!, voiceDir.path);
+
+    final app = AppState(player: PlayerController());
+    final paths = await app.coverCandidatesUnderWork(work.id!);
+
+    expect(paths, containsAll([cover.path, first.path, nested.path]),
+        reason: '音频导入不写图片行，候选要直接扫作品目录，子目录也算');
+    expect(paths, hasLength(3), reason: '只收图片扩展名，不要把 mp3 当封面');
+  });
 }

@@ -33,6 +33,18 @@ class ImageCacheGuard {
     return true;
   }
 
+  /// 立即驱逐 [path] 的解码缓存，并记下当前 mtime。
+  ///
+  /// 与 [evictIfChanged] 的区别：这里不看「是不是第一次见到」。封面被原子写
+  /// 覆盖后路径不变，界面可能已经显示过旧图，必须无条件驱逐一次。
+  static void invalidate(String path) {
+    final file = File(path);
+    if (file.existsSync()) {
+      _stamps[path] = file.statSync().modified.millisecondsSinceEpoch;
+    }
+    imageCache.evict(FileImage(file));
+  }
+
   /// 忘掉某个路径的记账（图片被删除时调用，免得 Map 越积越大）
   static void forget(String path) {
     _stamps.remove(path);

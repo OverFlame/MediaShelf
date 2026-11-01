@@ -1548,3 +1548,22 @@ main；删除本地与远端 master；README、BUILD_GUIDE、PROJECT_STEPS 的�
 `test/state/app_state_images_test.dart` 的「作品层排序独立于文件层：默认加入时间倒序，可切名称
 自然序」；`test/widget/home_page_test.dart` 的「音频作品层使用多媒体工具栏，排序菜单只给作品
 字段」。变异两处均按预期变红后恢复（`WorksGrid` 不调用比较器、作品层仍显示文件层四个排序项）。
+
+## 2026-11-02 音频作品封面候选与换图刷新
+
+音频导入只写音频行，不写图片行。作品封面的选择器只查 `imagesUnderWork`，所以音频作品里
+明明有 `cover.jpg` 或扫图，候选列表也是空的。现在 `AppState.coverCandidatesUnderWork`
+先取入库图片行；没有图片行时扫作品根目录，把图片扩展名的文件递归收进来，再按自然序返回。
+图片作品仍走图片行，不做重复扫描。
+
+换封面后仍显示老封面是另一条链：`CoverService.importCover` 固定写
+`covers/work_<id>.<ext>`，路径不变；Flutter 的 `FileImage` 缓存键只含路径与缩放，
+覆盖写后继续命中旧解码结果。新增 `ImageCacheGuard.invalidate()`，无条件驱逐并记下当前
+mtime。`showImportCoverDialog` 写完封面后驱逐目标路径，旧路径不同时也一并驱逐；
+音频行自己的缩略图 `setMediaCover` 同样先驱逐再落库。
+
+验证：`flutter analyze` 无问题；全量 `flutter test` 603 条全过。新增 3 例：
+`test/state/app_state_images_test.dart` 的「音频作品封面候选扫描作品目录，不依赖图片行」；
+`test/utils/image_cache_util_test.dart` 的「invalidate 第一次见到也驱逐」；
+`test/widget/image_dialogs_test.dart` 的「音频作品换封面：候选来自目录，固定路径的旧解码缓存
+被驱逐」。变异三处按预期变红后恢复（不扫目录、不驱逐缓存、缓存驱逐工具改回按 mtime 判断）。

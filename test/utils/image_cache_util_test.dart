@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mediashelf/utils/image_cache_util.dart';
 
@@ -11,9 +12,13 @@ void main() {
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('pv2_cache_guard');
     ImageCacheGuard.reset();
+    imageCache.clear();
+    imageCache.clearLiveImages();
   });
 
   tearDown(() async {
+    imageCache.clear();
+    imageCache.clearLiveImages();
     if (dir.existsSync()) await dir.delete(recursive: true);
   });
 
@@ -56,5 +61,21 @@ void main() {
     ImageCacheGuard.forget(f.path);
     expect(ImageCacheGuard.evictIfChanged(f.path), isFalse);
     expect(ImageCacheGuard.evictIfChanged(f.path), isFalse);
+  });
+
+  test('invalidate 第一次见到也驱逐，覆盖同一路径换图', () async {
+    final f = File('${dir.path}/a.jpg')..writeAsBytesSync([1, 2, 3]);
+    final provider = FileImage(f);
+    final image = await createTestImage(width: 1, height: 1);
+    imageCache.putIfAbsent(
+      provider,
+      () => OneFrameImageStreamCompleter(
+        Future<ImageInfo>.value(ImageInfo(image: image)),
+      ),
+    );
+    expect(imageCache.containsKey(provider), isTrue);
+
+    ImageCacheGuard.invalidate(f.path);
+    expect(imageCache.containsKey(provider), isFalse);
   });
 }

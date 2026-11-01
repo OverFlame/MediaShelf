@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -11,11 +12,14 @@ import 'package:sqflite/sqflite.dart';
 import 'package:mediashelf/db/database.dart';
 import 'package:mediashelf/db/folder_dao.dart';
 import 'package:mediashelf/db/tag_dao.dart';
+import 'package:mediashelf/db/work_dao.dart';
+import 'package:mediashelf/services/cover_service.dart';
 import 'package:mediashelf/services/data_dir_service.dart';
 import 'package:mediashelf/services/settings_service.dart';
 import 'package:mediashelf/state/app_state.dart';
 import 'package:mediashelf/state/player_controller.dart';
 import 'package:mediashelf/widgets/color_picker_dialog.dart';
+import 'package:mediashelf/widgets/dialogs.dart';
 import 'package:mediashelf/widgets/filter_dialog.dart';
 import 'package:mediashelf/widgets/move_folder_dialog.dart';
 import 'package:mediashelf/widgets/tag_picker_dialog.dart';
@@ -318,5 +322,55 @@ void main() {
     expect(app.advancedFilter, '风景');
     expect(app.hasAdvancedFilter, isTrue);
     expect(find.byType(AlertDialog), findsNothing, reason: '应用成功后应关闭对话框');
+  });
+
+  testWidgets('音频作品换封面：候选来自目录，固定路径的旧解码缓存被驱逐', (tester) async {
+    bigView(tester);
+    late Work work;
+    late String srcPath;
+    late String destPath;
+
+    await tester.runAsync(() async {
+      work = await WorkDao(db).create('音声', library: 'audio');
+      final folder = await FolderDao(db)
+          .create('音声', workId: work.id, library: 'audio');
+      final voiceDir = Directory(p.join(tmp.path, 'voice'))
+        ..createSync(recursive: true);
+      srcPath = p.join(voiceDir.path, '封面.png');
+      File(srcPath).writeAsBytesSync([1, 2, 3]);
+      await FolderDao(db).addPath(folder.id!, voiceDir.path);
+      destPath = p.join(await CoverService.coversDir(), 'work_${work.id}.png');
+    });
+
+    // 模拟界面已经显示过这个固定路径的旧封面。不需要真解码一张图：
+    // 挂一个永不完成的 completer 就足够占住这个缓存键。
+    final destImage = FileImage(File(destPath));
+    imageCache.putIfAbsent(
+      destImage,
+      () => OneFrameImageStreamCompleter(Completer<ImageInfo>().future),
+    );
+    addTearDown(() {
+      imageCache.clear();
+      imageCache.clearLiveImages();
+    });
+    expect(imageCache.containsKey(destImage), isTrue);
+
+    await pumpHost<void>(
+      tester,
+      (ctx) => showImportCoverDialog(ctx, work.id!),
+      (_) {},
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '打开'));
+    await settleIo(tester);
+
+    expect(find.byKey(const ValueKey('cover-pick-grid')), findsOneWidget,
+        reason: '音频作品没有图片行时，也要把目录里的图列出来');
+    await tester.tap(find.byKey(const ValueKey('cover-pick-0')));
+    await settleIo(tester);
+
+    final saved = await tester.runAsync(() => WorkDao(db).getById(work.id!));
+    expect(saved!.coverPath, destPath);
+    expect(imageCache.containsKey(destImage), isFalse,
+        reason: '同一路径覆盖写后必须驱逐旧解码结果，否则卡片还是老封面');
   });
 }

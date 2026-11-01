@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../services/cover_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../utils/image_cache_util.dart';
 import 'cover_pick.dart';
 
 /// 未归类作品哨兵值
@@ -80,9 +81,8 @@ Future<String?> pickDirectory({String? title}) async {
 /// 得多），作品里没有图或都不合适时再退回系统选图。
 Future<void> showImportCoverDialog(BuildContext context, int workId) async {
   final appState = context.read<AppState>();
-  final items = await appState.imagesUnderWork(workId);
+  final paths = await appState.coverCandidatesUnderWork(workId);
   if (!context.mounted) return;
-  final paths = items.map((m) => m.path).toList(growable: false);
   String? current;
   for (final w in appState.works) {
     if (w.id == workId) {
@@ -99,6 +99,12 @@ Future<void> showImportCoverDialog(BuildContext context, int workId) async {
   if (src == null || src.isEmpty) return;
   final dest = await CoverService.importCover(src, workId);
   if (dest != null) {
+    // 作品封面固定写在 work_<id>.<ext>，换图不换路径。Flutter 的 FileImage
+    // 只按路径缓存，必须先驱逐旧解码结果，否则卡片继续显示老封面。
+    ImageCacheGuard.invalidate(dest);
+    if (current != null && current != dest) {
+      ImageCacheGuard.invalidate(current);
+    }
     await appState.setWorkCover(workId, dest);
   }
 }
